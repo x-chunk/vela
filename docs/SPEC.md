@@ -12,7 +12,7 @@
 - **CLI `vela`**: standalone бинарник для управления хранилищем с компьютера: создание файлов из сырого контента, загрузка, удаление, переименование/перемещение, управление метаданными и видимостью, выдача подписанных ссылок.
 - **nginx** стоит перед сервером: TLS/HTTPS, проксирование, отдача байтов файлов через `X-Accel-Redirect`. **Вся логика** (маршрутизация путей, проверка доступа, видимость, индекс, подписи, TTL) — **в Go**. nginx ничего не решает сам, он только терминирует TLS и отдаёт байты по указанию Go.
 - **Монорепо**, один Go-модуль `go.xchunk.org/vela`, общий код (контракт API, валидация путей, клиент) используется и сервером, и CLI.
-- **CI/CD**: GitHub Actions собирает образ и пушит в **приватный** `ghcr.io`. На сервере образ пуллится вручную.
+- **CI/CD**: GitHub Actions собирает образ и пушит в **публичный** Docker Hub (`xchunk/vela`). На сервере образ пуллится вручную. *(Изменено, см. §21.)*
 
 ### Проблема, которую решаем
 
@@ -74,7 +74,7 @@
 - Unlisted-ответы содержат `X-Robots-Tag: noindex, nofollow`.
 - Ответы по подписанным ссылкам содержат `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex, nofollow`.
 - «Unlisted» — это **не защита**, а просто отсутствие в индексе. Это должно быть явно написано в README.
-- Видимость по умолчанию для новых объектов: **`private`** (безопасный дефолт). CLI MAY позволять задать иной дефолт в своём конфиге (§12.2). См. вопрос в §19.
+- Видимость по умолчанию для новых объектов: **`unlisted`** (`VELA_DEFAULT_VISIBILITY`, решение по §19.5). CLI MAY позволять задать иной дефолт в своём конфиге (§12.2).
 
 ---
 
@@ -133,7 +133,7 @@ client ───────────────► nginx ──────
 ├── vela.db            # SQLite (WAL), 0600
 ├── vela.db-wal / -shm
 ├── blobs/             # 0755; содержимое файлов, читается nginx-ом
-│   └── ab/cd/<blobID> # файлы 0644, шардирование по первым 4 символам ID
+│   └── ab/cd/<blobID> # файлы 0644, шардирование по ПОСЛЕДНИМ 4 символам ID (см. §21)
 ├── tmp/               # 0700; временные файлы загрузки (тот же FS, что blobs, для атомарного rename)
 └── secrets/           # 0700
     └── (опционально: ничего, если ключи подписи в БД; см. §8.4)
@@ -290,7 +290,7 @@ docker exec vela velad key revoke <keyID>
 ### 7.6 Защита от перебора
 
 - Rate limit на **неудачные** попытки аутентификации по IP: token bucket в памяти (например, 10 неудач в минуту, burst 10), после превышения `429 rate_limited` с `Retry-After`.
-- Реальный IP клиента берётся из `X-Real-IP` / `X-Forwarded-For` **только** если запрос пришёл от доверенного прокси (`VELA_TRUSTED_PROXIES`, по умолчанию `127.0.0.1/32,::1/128` и docker-подсеть bridge, см. §19). Иначе — `RemoteAddr`.
+- Реальный IP клиента берётся из `X-Real-IP` / `X-Forwarded-For` **только** если запрос пришёл от доверенного прокси (`VELA_TRUSTED_PROXIES`, по умолчанию `127.0.0.1/32,::1/128,172.17.0.1/32` — только шлюз docker bridge, решение по §19.14). Иначе — `RemoteAddr`.
 - Ответ на неверный ключ всегда одинаковый (`401 unauthorized`, без уточнения «нет такого ID» или «неверный секрет»).
 
 ---
@@ -340,7 +340,7 @@ https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature
 
 Помимо TTL ссылок у объекта есть опциональное поле `expires_at` («самоуничтожающийся файл», удобно для временного мусора):
 
-- Проверяется **при каждой отдаче** (просроченный объект сразу 404 для всех каналов, включая API-скачивание: в API `stat` показывает его с флагом `expired: true`, а скачать через API можно, чтобы успеть спасти). См. вопрос в §19.
+- Проверяется **при каждой отдаче**: просроченный объект сразу отдаёт 404 по публичному URL и по подписанным ссылкам и пропадает из индекса. Через API он остаётся доступен до прохода janitor: `stat` показывает его с флагом `expired: true`, скачать можно, чтобы успеть спасти (решение по §19.6).
 - Физически переносится в корзину janitor-ом при ежедневном проходе.
 - Задаётся при создании/загрузке или через метаданные; `null` снимает срок.
 
@@ -571,7 +571,7 @@ Query: `recursive` (для префикса, путь с завершающим 
 | `HEAD` для всего выше | то же без тела |
 | `GET /s/{linkID}/{filename}` | подписанная ссылка (§8.2) |
 | `GET /_vela/assets/*` | статика темы индекса (CSS, шрифты, иконки), embed или из `VELA_THEME_DIR` |
-| `GET /robots.txt` | генерируется сервером: по умолчанию `Allow: /`, `Disallow: /s/`, `Disallow: /api/` |
+| `GET /robots.txt` | генерируется сервером по `VELA_ROBOTS`: `deny` (по умолчанию) → `Disallow: /`; `allow` → `Allow: /`, `Disallow: /s/`, `Disallow: /api/` (решение по §19.9) |
 | `GET /favicon.ico` | из темы |
 | `GET /healthz` | §10.4 |
 | остальные методы на публичных маршрутах | `405` |
@@ -718,7 +718,7 @@ key = "vela_..."
 | `VELA_DATA_DIR` | `/data` | корень данных |
 | `VELA_PUBLIC_URL` | — (**обязательна**) | `https://store.xchunk.org`, без `/` в конце |
 | `VELA_ACCEL_PREFIX` | `/_blobs/` | пусто → direct-режим |
-| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128,172.16.0.0/12` | CIDR, от которых доверяем `X-Real-IP`/`X-Forwarded-*` |
+| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128,172.17.0.1/32` | CIDR, от которых доверяем `X-Real-IP`/`X-Forwarded-*` (§19.14) |
 | `VELA_MAX_UPLOAD` | `2GiB` | лимит загрузки (согласовать с `client_max_body_size` nginx) |
 | `VELA_MAX_CREATE` | `1MiB` | лимит `POST /objects` |
 | `VELA_LINK_DEFAULT_TTL` | `24h` | |
@@ -730,7 +730,8 @@ key = "vela_..."
 | `VELA_THEME_DIR` | пусто | кастомная тема |
 | `VELA_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `VELA_LOG_FORMAT` | `json` | `json`/`text` |
-| `VELA_DEFAULT_VISIBILITY` | `private` | видимость, если клиент не указал |
+| `VELA_DEFAULT_VISIBILITY` | `unlisted` | видимость, если клиент не указал (§19.5) |
+| `VELA_ROBOTS` | `deny` | `deny` → `robots.txt` запрещает всё; `allow` → разрешает индекс (§19.9) |
 
 Подкоманды `velad`:
 
@@ -960,7 +961,8 @@ CMD ["serve"]
 
 - Версия Go — актуальная стабильная на момент реализации (проверить на go.dev), одна и та же в `go.mod` (`go` + `toolchain`), Dockerfile и CI.
 - Labels OCI (`org.opencontainers.image.source`, `version`, `revision`) — через build-args.
-- Архитектура образа — см. §19.
+- Архитектура образа — `linux/amd64` (§19.3).
+- Бинарник кладётся в `/usr/local/bin/velad` (а не `/velad`), чтобы `docker exec vela velad ...` работал: в distroless `/` не входит в `PATH` (см. §21).
 
 ### 15.3 GitHub Actions
 
@@ -972,23 +974,23 @@ CMD ["serve"]
 
 **`release.yml`** — на push тега `v*`:
 1. Те же тесты.
-2. `docker/setup-buildx-action`, `docker/login-action` в `ghcr.io` с `username: ${{ secrets.GHCR_USERNAME }}` и `password: ${{ secrets.GHCR_TOKEN }}` (PAT с `write:packages`, хранится в GitHub Secrets).
+2. `docker/setup-buildx-action`, `docker/login-action` в Docker Hub с `username: ${{ vars.DOCKERHUB_USERNAME }}` (repository variable) и `password: ${{ secrets.DOCKERHUB_TOKEN }}` (Docker Hub PAT с правами Read & Write).
 3. `docker/metadata-action` → теги `X.Y.Z`, `X.Y`, `latest`.
-4. `docker/build-push-action` с build-args `VERSION`, `COMMIT`, `DATE`, push в `ghcr.io/<owner>/vela` (owner — см. §19). Пакет приватный.
-5. (MAY, см. §19) GitHub Release с собранными бинарниками `vela` под linux/darwin/windows × amd64/arm64 + `checksums.txt`.
+4. `docker/build-push-action` с build-args `VERSION`, `COMMIT`, `DATE`, push в `docker.io/xchunk/vela`, платформа `linux/amd64`. Образ **публичный**.
+5. GitHub Release с собранными бинарниками `vela` под linux/darwin/windows × amd64/arm64 + `checksums.txt` (решение по §19.10).
 
-Секреты не выводятся в логи, permissions у workflow минимальные (`contents: read`; `packages: write` только если используется `GITHUB_TOKEN`).
+Секреты не выводятся в логи, permissions у workflow минимальные (`contents: read`; `contents: write` только у job-а, создающего GitHub Release).
 
 ### 15.4 Vanity import
 
 `go.xchunk.org/vela` должен отдавать:
 
 ```html
-<meta name="go-import" content="go.xchunk.org/vela git https://github.com/<owner>/vela">
-<meta name="go-source" content="go.xchunk.org/vela https://github.com/<owner>/vela https://github.com/<owner>/vela/tree/main{/dir} https://github.com/<owner>/vela/blob/main{/dir}/{file}#L{line}">
+<meta name="go-import" content="go.xchunk.org/vela git https://github.com/x-chunk/vela">
+<meta name="go-source" content="go.xchunk.org/vela https://github.com/x-chunk/vela https://github.com/x-chunk/vela/tree/master{/dir} https://github.com/x-chunk/vela/blob/master{/dir}/{file}#L{line}">
 ```
 
-для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на `go.xchunk.org`, вне этого репо, но README MUST это описать. Если репозиторий приватный — см. §19.
+для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на `go.xchunk.org`, вне этого репо, но README MUST это описать. Репозиторий публичный (§19.1), основная ветка — `master`.
 
 ---
 
@@ -996,20 +998,20 @@ CMD ["serve"]
 
 1. На сервере: `sudo mkdir -p /srv/vela && sudo chown 65532:65532 /srv/vela && sudo chmod 755 /srv/vela`.
 2. `/etc/vela/vela.env` (права 600) по образцу `deploy/vela.env.example`, минимум `VELA_PUBLIC_URL=https://store.xchunk.org`.
-3. `docker login ghcr.io -u <user>` с PAT `read:packages`.
+3. (Логин в реестр не нужен: образ публичный.)
 4. Запуск:
    ```
    docker run -d --name vela --restart unless-stopped \
      -p 127.0.0.1:8080:8080 \
      -v /srv/vela:/data \
      --env-file /etc/vela/vela.env \
-     ghcr.io/<owner>/vela:1.0.0
+     xchunk/vela:1.0.0
    ```
 5. DNS A/AAAA для `store.xchunk.org`, nginx-конфиг из `deploy/nginx/`, certbot, `nginx -t && systemctl reload nginx`.
 6. `docker exec vela velad key create --name laptop --scope admin` → ключ в `vela login` на компьютере.
 7. Проверка: `vela whoami`, `vela new hello.txt --content hi --public`, открыть `https://store.xchunk.org/`.
 
-Обновление: `docker pull ghcr.io/<owner>/vela:X.Y.Z && docker stop vela && docker rm vela && docker run ...` (та же команда с новым тегом). Миграции БД применяются автоматически при старте; перед обновлением — `velad backup`.
+Обновление: `docker pull xchunk/vela:X.Y.Z && docker stop vela && docker rm vela && docker run ...` (та же команда с новым тегом). Миграции БД применяются автоматически при старте; перед обновлением — `velad backup`.
 
 Бэкап: `docker exec vela velad backup /data/backups/<date>` или остановка контейнера и копирование `/srv/vela` целиком. Всё состояние — одна папка.
 
@@ -1088,26 +1090,42 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 ## 19. Открытые вопросы (задать до начала реализации)
 
+> **Статус: все вопросы закрыты 2026-10-10** перед этапом 1. Ответы — под каждым вопросом; влияние на остальной текст отражено по месту и в §21.
+
 1. **Репозиторий публичный или приватный?** Если приватный, `go install go.xchunk.org/vela/cmd/vela@latest` потребует `GOPRIVATE=go.xchunk.org/*` и git-доступа к GitHub по SSH/токену на каждой машине; vanity-мета при этом всё равно нужна. Образ в ghcr остаётся приватным в любом случае.
+   - **Ответ:** публичный. `GOPRIVATE` не нужен. Образ тоже публичный (Docker Hub), см. §21.
 2. **GitHub owner** для репо и образа: организация `x-chunk` (`ghcr.io/x-chunk/vela`) или личный аккаунт?
+   - **Ответ:** личный аккаунт `x-chunk` (это user, а не организация): `github.com/x-chunk/vela`. Образ — `docker.io/xchunk/vela` (в Docker Hub дефис в namespace недопустим).
 3. **Архитектура сервера**: amd64 или arm64? Собирать multi-arch образ?
+   - **Ответ:** только `linux/amd64`.
 4. **GHCR-аутентификация в Actions**: использовать PAT из `secrets.GHCR_TOKEN` (как задано) или достаточно встроенного `GITHUB_TOKEN` с `packages: write` (проще, без ротации PAT)? Имя secret-а для username.
+   - **Ответ:** вопрос снят: реестр заменён на Docker Hub. Логин — `vars.DOCKERHUB_USERNAME`, токен — `secrets.DOCKERHUB_TOKEN`.
 5. **Видимость по умолчанию**: `private` (безопасно) или `unlisted`/`public` (удобнее для «свалки»)?
+   - **Ответ:** `unlisted`.
 6. **Просроченные объекты** (`expires_at`): скачивать через API до ежедневной чистки можно (как в спеке) или они недоступны совсем?
+   - **Ответ:** через API скачивать можно до ежедневной чистки; публичный URL и подписанные ссылки — 404 сразу.
 7. **Сроки**: `VELA_TRASH_RETENTION` 14d, `VELA_LINK_MAX_TTL` 30d, `VELA_MAX_UPLOAD` 2 GiB — подходят?
+   - **Ответ:** подходят, оставляем как есть.
 8. **Пользовательские HTML/SVG**: отдавать как есть (страницы работают) или с `Content-Security-Policy: sandbox` (безопаснее, но JS на загруженных страницах не работает)?
+   - **Ответ:** отдавать как есть (без `sandbox`).
 9. **robots.txt**: разрешать поисковикам индексировать публичный индекс или закрыть всё (`Disallow: /`)?
+   - **Ответ:** настраивается через `VELA_ROBOTS=allow|deny`, по умолчанию `deny` (`Disallow: /`).
 10. **GitHub Release с бинарниками CLI**: нужен, или достаточно `go install` / `make install`?
+   - **Ответ:** нужен.
 11. **Индекс директории**: если в директории есть public-объект `index.html`, отдавать его вместо автоиндекса (мини-хостинг статических сайтов) или всегда автоиндекс?
+   - **Ответ:** всегда автоиндекс; `index.html` — обычный файл.
 12. **Язык README**: английский (как комментарии) или русский?
+   - **Ответ:** английский.
 13. **Как именно вызывается Astra** на этапах 2–3 (кто вносит правки по ревью — Astra сама или Claude Code по её отчёту)? Нужен ли определённый формат отчёта ревью в репо (например, `REVIEW.md`)?
+   - **Ответ:** Astra пишет `REVIEW.md` в корне репозитория с нумерованными замечаниями; правки вносит Claude Code и отмечает статус каждого замечания там же (отклонённые — с обоснованием).
 14. **Docker-подсеть** для `VELA_TRUSTED_PROXIES`: при `-p 127.0.0.1:8080:8080` запросы от nginx приходят в контейнер с адреса docker-шлюза (обычно `172.17.0.1`). Оставить `172.16.0.0/12` или зафиксировать конкретный адрес? Альтернатива — `--network host` (тогда достаточно `127.0.0.1`).
+   - **Ответ:** доверять только шлюзу bridge: `127.0.0.1/32,::1/128,172.17.0.1/32`; контейнер запускается с `-p 127.0.0.1:8080:8080`.
 
 ---
 
 ## 20. Критерии готовности v1
 
-- [ ] `make test`, `make lint` зелёные; CI зелёный на `main`; тег `v1.0.0` публикует образ в приватный ghcr.
+- [ ] `make test`, `make lint` зелёные; CI зелёный на `master`; тег `v1.0.0` публикует публичный образ `xchunk/vela` в Docker Hub.
 - [ ] Все эндпоинты §10 реализованы и покрыты тестами, включая ошибки и ограничения scope/префикса.
 - [ ] Три уровня видимости работают по таблице §3; private по прямому URL — 404; индекс показывает только public.
 - [ ] Подписанные ссылки: создаются, работают после переименования, истекают по `exp` (410), отзываются, не продлеваются подменой `exp`; ротация ключа подписи работает.
@@ -1118,3 +1136,18 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 - [ ] Контейнер: distroless, nonroot, healthcheck, работает с bind-mount `/srv/vela`, nginx читает блобы без ручной возни с правами.
 - [ ] Accel-заголовки проверены через реальный nginx (тест или задокументированный чек-лист).
 - [ ] `AGENTS.md` после этапа 1, `README.md` после этапа 4 соответствуют §18.
+
+---
+
+## 21. Изменения спецификации в ходе реализации
+
+Осознанные отступления от исходного текста (дата, что и почему).
+
+| Дата | Раздел | Изменение | Причина |
+|---|---|---|---|
+| 2026-10-10 | §0, §15.3, §16, §20 | Образ публикуется **публично** в Docker Hub `xchunk/vela`, а не в приватный `ghcr.io`. На сервере `docker login` не нужен. | Решение владельца. |
+| 2026-10-10 | §5.2 | Блобы шардируются по **последним** 4 символам ULID (`<id[22:24]>/<id[24:26]>/<id>`), а не по первым. | Первые символы ULID — метка времени: все блобы за ~3 суток попадали бы в одну директорию, шардирование не работало бы. Последние символы — случайная часть. |
+| 2026-10-10 | §15.2 | Бинарник в образе — `/usr/local/bin/velad`. | В distroless `/` не входит в `PATH`, и команды `docker exec vela velad ...` из §7.5/§16 не работали бы. |
+| 2026-10-10 | §11.3, §14 | В accel-режиме velad не шлёт `Cache-Control` напрямую, только `X-Vela-Cache-Control`. | nginx при `X-Accel-Redirect` сам пробрасывает upstream `Cache-Control`; вместе с `add_header` из `X-Vela-Cache-Control` получился бы дубль. |
+| 2026-10-10 | §7.4 | `GET /api/v1/links` требует scope `rw`. | Листинг возвращает рабочие подписанные URL, то есть выдаёт доступ к объектам. |
+| 2026-10-10 | §12.4 | Если повтор `PUT` с `If-None-Match: *` получил `409 already_exists`, клиент сверяет sha256 существующего объекта и при совпадении считает загрузку успешной. | Первый запрос мог дойти до сервера, а ответ — потеряться. |
