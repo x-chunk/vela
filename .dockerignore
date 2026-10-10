@@ -1,0 +1,16 @@
+# Only the Go sources (with embedded theme and migrations) are needed to
+# build velad; keep the build context small and free of local data.
+.git
+.github
+bin
+dist
+.dev-data
+*.test
+*.out
+.idea
+.vscode
+docs
+deploy
+README.md
+AGENTS.md
+REVIEW.md
