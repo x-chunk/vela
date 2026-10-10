@@ -56,7 +56,7 @@ func (o ListOptions) query() url.Values {
 // List returns one page of a directory listing.
 func (c *Client) List(ctx context.Context, opts ListOptions) (*api.Listing, error) {
 	var l api.Listing
-	_, err := c.call(ctx, request{method: http.MethodGet, route: api.RouteObject, query: opts.query(), idempotent: true}, &l)
+	err := c.call(ctx, request{method: http.MethodGet, route: api.RouteObject, query: opts.query(), idempotent: true}, &l)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (c *Client) ListAll(ctx context.Context, opts ListOptions) (*api.Listing, e
 // Stat returns an object's metadata.
 func (c *Client) Stat(ctx context.Context, path string) (*api.Object, error) {
 	var o api.Object
-	_, err := c.call(ctx, request{method: http.MethodGet, route: api.RouteObject + "/" + escape(path), idempotent: true}, &o)
+	err := c.call(ctx, request{method: http.MethodGet, route: api.RouteObject + "/" + escape(path), idempotent: true}, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (c *Client) Create(ctx context.Context, req api.CreateObjectRequest) (*api.
 		return nil, err
 	}
 	var o api.Object
-	_, err = c.call(ctx, request{method: http.MethodPost, route: api.RouteObject, jsonBody: b}, &o)
+	err = c.call(ctx, request{method: http.MethodPost, route: api.RouteObject, jsonBody: b}, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (c *Client) Patch(ctx context.Context, path string, patch api.ObjectPatch, 
 		h.Set("If-Match", api.FormatRevisionETag(ifRevision))
 	}
 	var o api.Object
-	_, err = c.call(ctx, request{method: http.MethodPatch, route: api.RouteObject + "/" + escape(path), header: h, jsonBody: b}, &o)
+	err = c.call(ctx, request{method: http.MethodPatch, route: api.RouteObject + "/" + escape(path), header: h, jsonBody: b}, &o)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (c *Client) Move(ctx context.Context, req api.MoveRequest) (*api.MoveRespon
 		return nil, err
 	}
 	var out api.MoveResponse
-	if _, err := c.call(ctx, request{method: http.MethodPost, route: api.RouteMove, jsonBody: b}, &out); err != nil {
+	if err := c.call(ctx, request{method: http.MethodPost, route: api.RouteMove, jsonBody: b}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -280,7 +280,7 @@ func (c *Client) Delete(ctx context.Context, path string, opts DeleteOptions) (*
 		h.Set("If-Match", api.FormatRevisionETag(opts.IfRevision))
 	}
 	var out api.DeleteResponse
-	_, err := c.call(ctx, request{method: http.MethodDelete, route: api.RouteObject + "/" + escape(path), query: q, header: h, idempotent: true}, &out)
+	err := c.call(ctx, request{method: http.MethodDelete, route: api.RouteObject + "/" + escape(path), query: q, header: h, idempotent: true}, &out)
 	if err != nil {
 		return nil, err
 	}

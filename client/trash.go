@@ -36,7 +36,7 @@ func (c *Client) ListTrash(ctx context.Context, opts TrashOptions) (*api.TrashLi
 		q.Set("cursor", opts.Cursor)
 	}
 	var out api.TrashList
-	if _, err := c.call(ctx, request{method: http.MethodGet, route: api.RouteTrash, query: q, idempotent: true}, &out); err != nil {
+	if err := c.call(ctx, request{method: http.MethodGet, route: api.RouteTrash, query: q, idempotent: true}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -66,7 +66,7 @@ func (c *Client) Restore(ctx context.Context, id string, req api.RestoreRequest)
 	}
 	var o api.Object
 	route := api.RouteTrash + "/" + url.PathEscape(id) + "/restore"
-	if _, err := c.call(ctx, request{method: http.MethodPost, route: route, jsonBody: b}, &o); err != nil {
+	if err := c.call(ctx, request{method: http.MethodPost, route: route, jsonBody: b}, &o); err != nil {
 		return nil, err
 	}
 	return &o, nil
@@ -74,8 +74,7 @@ func (c *Client) Restore(ctx context.Context, id string, req api.RestoreRequest)
 
 // PurgeTrashEntry permanently deletes one trash entry (admin).
 func (c *Client) PurgeTrashEntry(ctx context.Context, id string) error {
-	_, err := c.call(ctx, request{method: http.MethodDelete, route: api.RouteTrash + "/" + url.PathEscape(id), idempotent: true}, nil)
-	return err
+	return c.call(ctx, request{method: http.MethodDelete, route: api.RouteTrash + "/" + url.PathEscape(id), idempotent: true}, nil)
 }
 
 // PurgeTrash permanently deletes trash entries older than olderThan (a
@@ -86,7 +85,7 @@ func (c *Client) PurgeTrash(ctx context.Context, olderThan string) (*api.PurgeRe
 		q.Set("older_than", olderThan)
 	}
 	var out api.PurgeResponse
-	if _, err := c.call(ctx, request{method: http.MethodDelete, route: api.RouteTrash, query: q, idempotent: true}, &out); err != nil {
+	if err := c.call(ctx, request{method: http.MethodDelete, route: api.RouteTrash, query: q, idempotent: true}, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

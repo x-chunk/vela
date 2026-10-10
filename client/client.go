@@ -307,18 +307,18 @@ func codeForStatus(status int) api.ErrorCode {
 }
 
 // call performs a request and decodes a JSON response into out (if non-nil).
-func (c *Client) call(ctx context.Context, rq request, out any) (*http.Response, error) {
+func (c *Client) call(ctx context.Context, rq request, out any) error {
 	res, err := c.send(ctx, rq)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = res.Body.Close() }()
 	if out != nil {
 		if err := json.NewDecoder(res.Body).Decode(out); err != nil {
-			return nil, &NetworkError{Err: fmt.Errorf("decode response: %w", err)}
+			return &NetworkError{Err: fmt.Errorf("decode response: %w", err)}
 		}
 	}
-	return res, nil
+	return nil
 }
 
 func jsonBody(v any) ([]byte, error) {
@@ -332,7 +332,7 @@ func jsonBody(v any) ([]byte, error) {
 // Info returns server and key information.
 func (c *Client) Info(ctx context.Context) (*api.Info, error) {
 	var info api.Info
-	_, err := c.call(ctx, request{method: http.MethodGet, route: api.RouteInfo, idempotent: true}, &info)
+	err := c.call(ctx, request{method: http.MethodGet, route: api.RouteInfo, idempotent: true}, &info)
 	if err != nil {
 		return nil, err
 	}
