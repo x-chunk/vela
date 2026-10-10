@@ -6,7 +6,7 @@
 // Templates are parsed once at startup, so a broken custom theme stops the
 // server from starting instead of breaking pages at request time.
 //
-// The data passed to the templates (IndexPage, ErrorPage and their parts) is
+// The data passed to the templates (Page, ErrorPage and their parts) is
 // the theme contract documented in the README. Renaming or removing a field
 // breaks custom themes.
 package index
@@ -189,7 +189,7 @@ func (t *Theme) funcs() template.FuncMap {
 }
 
 // RenderIndex renders an index page.
-func (t *Theme) RenderIndex(w io.Writer, p IndexPage) error {
+func (t *Theme) RenderIndex(w io.Writer, p Page) error {
 	return render(w, t.indexTmpl, p)
 }
 

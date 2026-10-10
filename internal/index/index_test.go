@@ -20,7 +20,7 @@ func TestRenderIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := BuildIndexPage(Site{Title: "store.xchunk.org", URL: "https://store.xchunk.org"}, "1.0.0", "edu/math/",
+	page := BuildPage(Site{Title: "store.xchunk.org", URL: "https://store.xchunk.org"}, "1.0.0", "edu/math/",
 		[]DirEntry{{Path: "edu/math/q10/", Count: 3, UpdatedAt: now}, {Path: "edu/math/q2/", Count: 1, UpdatedAt: now}},
 		[]domain.Object{
 			{Path: "edu/math/test 2.pdf", Size: 482193, ContentType: "application/pdf", Title: "Контрольная <b>", Tags: []string{"q1"}, UpdatedAt: now},

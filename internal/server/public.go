@@ -77,7 +77,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	for _, d := range listing.Dirs {
 		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt})
 	}
-	page := index.BuildIndexPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now())
+	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now())
 
 	h := w.Header()
 	h.Set("Cache-Control", "public, max-age=60")

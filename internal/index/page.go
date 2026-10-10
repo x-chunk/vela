@@ -52,8 +52,8 @@ type File struct {
 	Kind string `json:"kind"`
 }
 
-// IndexPage is the data of an index page (and of ?format=json).
-type IndexPage struct {
+// Page is the data of an index page (and of ?format=json).
+type Page struct {
 	Site        Site      `json:"site"`
 	Path        string    `json:"path"`
 	Breadcrumbs []Crumb   `json:"breadcrumbs"`
@@ -81,10 +81,10 @@ type DirEntry struct {
 	UpdatedAt time.Time
 }
 
-// BuildIndexPage assembles the template data for a directory. URLs are
+// BuildPage assembles the template data for a directory. URLs are
 // root-relative so that pages work under any host name.
-func BuildIndexPage(site Site, version, prefix string, dirs []DirEntry, files []domain.Object, now time.Time) IndexPage {
-	p := IndexPage{
+func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domain.Object, now time.Time) Page {
+	p := Page{
 		Site:        site,
 		Path:        "/" + prefix,
 		Breadcrumbs: breadcrumbs(site, prefix),
@@ -230,9 +230,9 @@ var codeExts = map[string]bool{
 	".json": true, ".yaml": true, ".yml": true, ".toml": true, ".xml": true, ".html": true, ".css": true, ".sql": true,
 }
 
-func samplePage() IndexPage {
+func samplePage() Page {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	return BuildIndexPage(Site{Title: "sample", URL: "https://example.org"}, "test", "a/",
+	return BuildPage(Site{Title: "sample", URL: "https://example.org"}, "test", "a/",
 		[]DirEntry{{Path: "a/b/", Count: 1, UpdatedAt: now}},
 		[]domain.Object{{Path: "a/c.pdf", ContentType: "application/pdf", Tags: []string{"t"}, UpdatedAt: now}}, now)
 }
