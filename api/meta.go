@@ -29,7 +29,7 @@ func NormalizeTags(tags []string) ([]string, error) {
 			return nil, fmt.Errorf("tag %q is longer than %d characters", t, MaxTagLength)
 		}
 		for _, r := range t {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			if !isTagChar(r) {
 				return nil, fmt.Errorf("tag %q contains %q (allowed: a-z, 0-9, '-', '_', '.')", t, r)
 			}
 		}
@@ -42,6 +42,10 @@ func NormalizeTags(tags []string) ([]string, error) {
 		return nil, fmt.Errorf("too many tags: %d (max %d)", len(out), MaxTags)
 	}
 	return out, nil
+}
+
+func isTagChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
 }
 
 // ValidateTitle checks the title length limit.
