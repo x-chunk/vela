@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"net/http"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,13 @@ type harness struct {
 	env    map[string]string
 	// run overrides App.Run (browser, clipboard, editor).
 	run func(ctx context.Context, stdin io.Reader, interactive bool, name string, args ...string) error
+	// onRequest, if set, sees every HTTP request the CLI sends.
+	onRequest func(*http.Request)
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type result struct {
 	code           int
@@ -82,6 +89,12 @@ func (h *harness) exec(stdin string, args ...string) result {
 			return fmt.Errorf("unexpected program %s", name)
 		},
 		LookPath:     func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if h.onRequest != nil {
+				h.onRequest(r)
+			}
+			return http.DefaultTransport.RoundTrip(r)
+		})},
 		Now:          time.Now,
 		RetryBackoff: func(int) time.Duration { return time.Millisecond },
 	}

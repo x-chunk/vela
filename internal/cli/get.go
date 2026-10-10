@@ -30,8 +30,10 @@ func (a *App) getCommand() *cobra.Command {
 		Use:   "get REMOTE [LOCAL]",
 		Short: "Download files",
 		Long: "Download a file (to the current directory by default, \"-\" for stdout), or with -r a\n" +
-			"whole directory. Existing local files are not overwritten without --force. Downloads\n" +
-			"are written to a temporary file, verified against the SHA-256 and then renamed.",
+			"whole directory. Existing local files are never overwritten without --force, not even\n" +
+			"one that appears while the download runs. Downloads are written to a temporary file,\n" +
+			"verified against the SHA-256 and then moved into place. With -r nothing is written\n" +
+			"outside LOCAL, even through symlinks inside it.",
 		Example: "  vela get edu/math/q1.pdf\n  vela get edu/math/q1.pdf - | less\n  vela get -r edu/math/ ./math",
 		Args:    rangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,14 +69,26 @@ func (a *App) getCommand() *cobra.Command {
 			if local == "-" {
 				return a.download(ctx, c, o, a.Out, false)
 			}
-			if local == "" {
-				local = filepath.Base(filepath.FromSlash(o.Path))
-			} else if fi, err := os.Stat(local); err == nil && fi.IsDir() {
-				local = filepath.Join(local, api.BaseName(o.Path))
+			// The target directory is the user's choice and may be anything,
+			// a symlink included; the file is created inside it, relative to
+			// an opened handle.
+			dir, name := ".", api.BaseName(o.Path)
+			switch fi, err := os.Stat(local); {
+			case local == "":
+			case err == nil && fi.IsDir():
+				dir = local
+			default:
+				dir, name = filepath.Dir(local), filepath.Base(local)
 			}
-			if err := a.downloadFile(ctx, c, o, local, force); err != nil {
+			root, err := os.OpenRoot(dir)
+			if err != nil {
 				return err
 			}
+			defer func() { _ = root.Close() }()
+			if err := a.downloadFile(ctx, c, o, root, name, force); err != nil {
+				return err
+			}
+			local = filepath.Join(dir, name)
 			if a.jsonOut {
 				return a.printer.JSONValue(o)
 			}
@@ -106,29 +120,35 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 	if len(l.Objects) == 0 {
 		return &cliError{code: exitNotFound, slug: "not_found", msg: "no files under " + prefix}
 	}
-	root, err := filepath.Abs(local)
+	// Every write goes through an os.Root opened on LOCAL: symlinks inside
+	// it, existing or swapped in during the download, cannot lead outside.
+	if err := os.MkdirAll(local, 0o755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(local)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
 	errs := make([]error, len(l.Objects))
 	paths := make([]string, len(l.Objects))
 	for i := range l.Objects {
 		o := &l.Objects[i]
 		paths[i] = o.Path
-		dst := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(o.Path, prefix)))
-		// Server paths are validated, but a local write outside the target
-		// directory would be serious enough to check anyway.
-		if rel, err := filepath.Rel(root, dst); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			errs[i] = fmt.Errorf("refusing to write outside %s: %s", root, o.Path)
+		rel := filepath.FromSlash(strings.TrimPrefix(o.Path, prefix))
+		if !filepath.IsLocal(rel) {
+			errs[i] = fmt.Errorf("refusing to write outside %s: %s", local, o.Path)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			errs[i] = err
-			continue
+		if dir := filepath.Dir(rel); dir != "." {
+			if err := root.MkdirAll(dir, 0o755); err != nil {
+				errs[i] = err
+				continue
+			}
 		}
-		errs[i] = a.downloadFile(ctx, c, o, dst, force)
+		errs[i] = a.downloadFile(ctx, c, o, root, rel, force)
 		if errs[i] == nil {
-			a.printer.Infof("%s -> %s", o.Path, dst)
+			a.printer.Infof("%s -> %s", o.Path, filepath.Join(local, rel))
 		}
 	}
 	if err := batchResult("download", len(l.Objects), errs, paths); err != nil {
@@ -145,24 +165,33 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 	return nil
 }
 
-// downloadFile writes an object to a local path atomically: into a
-// temporary file next to it, verified, then renamed over the target.
-func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object, local string, force bool) (err error) {
+// downloadFile writes an object to name inside root: into a temporary file
+// in the same directory, verified, then published. Without force the
+// publication is a hard link, which fails atomically if name exists, so a
+// file that appears during the download is never replaced; with force it is
+// a rename over the target.
+func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object, root *os.Root, name string, force bool) (err error) {
+	display := filepath.Join(root.Name(), name)
+	exists := func() error {
+		return &cliError{code: exitConflict, slug: "already_exists", msg: "local file exists: " + display, hint: "use --force to overwrite"}
+	}
 	if !force {
-		if _, err := os.Lstat(local); err == nil {
-			return &cliError{code: exitConflict, slug: "already_exists", msg: "local file exists: " + local, hint: "use --force to overwrite"}
+		// Fail early in the common case; the publication below is the
+		// authoritative, race-free check.
+		if _, err := root.Lstat(name); err == nil {
+			return exists()
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
-	tmp, err := createTempLike(local)
+	tmp, tmpName, err := createTemp(root, filepath.Dir(name))
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
 			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
+			_ = root.Remove(tmpName)
 		}
 	}()
 	bar := !a.quiet && !a.jsonOut && a.ErrIsTerminal() && o.Size > progressThreshold
@@ -172,28 +201,71 @@ func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object,
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), local)
+	if force {
+		return root.Rename(tmpName, name)
+	}
+	switch err := root.Link(tmpName, name); {
+	case err == nil:
+		_ = root.Remove(tmpName)
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return exists()
+	default:
+		// Some filesystems have no hard links. Exclusive creation still
+		// guarantees that nothing is replaced; the content is copied in.
+		return copyExclusive(root, tmpName, name, exists)
+	}
 }
 
-// createTempLike creates a hidden temporary file next to path. Unlike
+// copyExclusive copies src to a newly created dst inside root, failing if
+// dst exists, and removes src.
+func copyExclusive(root *os.Root, src, dst string, exists func() error) (err error) {
+	out, err := root.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666) // #nosec G302 -- umask applies
+	if errors.Is(err, fs.ErrExist) {
+		return exists()
+	}
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := out.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = root.Remove(dst) // ours: created exclusively above
+		}
+	}()
+	in, err := root.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return root.Remove(src)
+}
+
+// createTemp creates a hidden temporary file in dir inside root. Its name is
+// short and fixed-length rather than derived from the target, so that a
+// target name at the filesystem's length limit still works. Unlike
 // os.CreateTemp, which always uses 0600, it requests 0666 and lets the
 // user's umask decide, so a download gets the same permissions as any other
 // file the user creates.
-func createTempLike(path string) (*os.File, error) {
-	dir, base := filepath.Dir(path), filepath.Base(path)
+func createTemp(root *os.Root, dir string) (*os.File, string, error) {
 	for range 100 {
-		var b [6]byte
+		var b [8]byte
 		if _, err := rand.Read(b[:]); err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		name := filepath.Join(dir, "."+base+".vela-"+hex.EncodeToString(b[:]))
-		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666) // #nosec G302 G304 -- umask applies; path chosen by the user
+		name := filepath.Join(dir, ".vela-"+hex.EncodeToString(b[:])+".part")
+		f, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666) // #nosec G302 -- umask applies
 		if errors.Is(err, fs.ErrExist) {
 			continue
 		}
-		return f, err
+		return f, name, err
 	}
-	return nil, fmt.Errorf("could not create a temporary file next to %s", path)
+	return nil, "", fmt.Errorf("could not create a temporary file in %s", filepath.Join(root.Name(), dir))
 }
 
 // download streams an object to w and verifies its SHA-256 against the
