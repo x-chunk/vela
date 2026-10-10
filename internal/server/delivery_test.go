@@ -272,3 +272,48 @@ func TestShutdownDraining(t *testing.T) {
 		t.Fatal(string(r.body))
 	}
 }
+
+// TestContentValidators covers R-013: the content's SHA-256 is the only
+// validator, in both delivery modes, so same-size content written within
+// one second can never be mistaken for the previous version.
+func TestContentValidators(t *testing.T) {
+	t.Parallel()
+	for _, accel := range []bool{false, true} {
+		var opts []testutil.Option
+		if accel {
+			opts = append(opts, testutil.WithAccel("/_blobs/"))
+		}
+		h := newHarness(t, opts...)
+		first := h.upload("same.txt", "AAAA", api.HeaderVisibility, "public")
+		old := `"sha256:` + first.SHA256 + `"`
+		r := h.do("GET", "/same.txt", "", nil)
+		if r.header.Get("Last-Modified") != "" {
+			t.Errorf("accel=%v: Last-Modified sent: %q", accel, r.header.Get("Last-Modified"))
+		}
+		etagHeader := "ETag"
+		if accel {
+			etagHeader = "X-Vela-ETag"
+		}
+		if r.header.Get(etagHeader) != old {
+			t.Fatalf("accel=%v: %s = %q", accel, etagHeader, r.header.Get(etagHeader))
+		}
+		r = h.do("GET", "/same.txt", "", nil, "If-None-Match", `"other", W/`+old)
+		if r.status != http.StatusNotModified || r.header.Get("ETag") != old || r.header.Get("Cache-Control") != "public, max-age=300" {
+			t.Fatalf("accel=%v: matching If-None-Match: %d %v", accel, r.status, r.header)
+		}
+		h.upload("same.txt", "BBBB")
+		r = h.do("GET", "/same.txt", "", nil, "If-None-Match", old)
+		if r.status != http.StatusOK {
+			t.Fatalf("accel=%v: stale If-None-Match answered %d", accel, r.status)
+		}
+		if !accel {
+			if string(r.body) != "BBBB" {
+				t.Fatalf("body = %q", r.body)
+			}
+			r = h.do("GET", "/same.txt", "", nil, "Range", "bytes=0-1", "If-Range", old)
+			if r.status != http.StatusOK || string(r.body) != "BBBB" {
+				t.Fatalf("stale If-Range: %d %q", r.status, r.body)
+			}
+		}
+	}
+}

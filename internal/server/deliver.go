@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/service"
@@ -18,6 +19,7 @@ const (
 	headerAccelCacheControl = "X-Vela-Cache-Control"
 	headerAccelRobots       = "X-Vela-Robots"
 	headerAccelReferrer     = "X-Vela-Referrer-Policy"
+	headerAccelETag         = "X-Vela-ETag"
 	noIndex                 = "noindex, nofollow"
 	cacheShared             = "public, max-age=300"
 	cachePrivate            = "private, no-store"
@@ -60,8 +62,16 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // deliver serves an object's bytes. The access decision has already been
 // made; this function only chooses how the bytes travel. With an accel
 // prefix the response is empty and nginx streams the blob itself (sendfile,
-// Range, HEAD, conditional requests); otherwise http.ServeContent does the
-// same from Go.
+// Range, HEAD); otherwise http.ServeContent does the same from Go.
+//
+// Validators: the ETag is the content's SHA-256, in both modes. nginx's own
+// ETag (mtime and size) would collide for same-size content written within
+// one second under the same URL, and a client would then keep stale bytes.
+// So velad answers If-None-Match itself before redirecting, and the nginx
+// locations replace their ETag with X-Vela-ETag and never answer 304 on
+// their own. Last-Modified is not sent at all: with one-second resolution it
+// has the same collision, and without it clients revalidate (and send
+// If-Range) with the ETag.
 //
 // User-uploaded HTML and SVG are served with their real type so that pages
 // work. That is acceptable because the origin holds no cookies or sessions:
@@ -69,13 +79,22 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // user's behalf.
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Content, pol deliveryPolicy) {
 	o := c.Object
+	etag := `"sha256:` + o.SHA256 + `"`
 	h := w.Header()
-	h.Set("Content-Type", o.ContentType)
-	h.Set("Content-Disposition", contentDisposition(o.Disposition, api.BaseName(o.Path)))
 	h.Set("X-Content-Type-Options", "nosniff")
 
 	if s.opts.AccelPrefix != "" {
+		if noneMatch(r.Header.Values("If-None-Match"), etag) {
+			// Not redirected, so nginx forwards these headers as they are.
+			h.Set("ETag", etag)
+			setPolicyHeaders(h, pol)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		h.Set("Content-Type", o.ContentType)
+		h.Set("Content-Disposition", contentDisposition(o.Disposition, api.BaseName(o.Path)))
 		h.Set(headerAccelRedirect, s.opts.AccelPrefix+pol.accelPath+c.BlobPath)
+		h.Set(headerAccelETag, etag)
 		h.Set(headerAccelCacheControl, pol.cacheControl)
 		if pol.robots != "" {
 			h.Set(headerAccelRobots, pol.robots)
@@ -87,14 +106,10 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		return
 	}
 
-	h.Set("Cache-Control", pol.cacheControl)
-	if pol.robots != "" {
-		h.Set("X-Robots-Tag", pol.robots)
-	}
-	if pol.referrerPolicy != "" {
-		h.Set("Referrer-Policy", pol.referrerPolicy)
-	}
-	h.Set("ETag", `"sha256:`+o.SHA256+`"`)
+	h.Set("Content-Type", o.ContentType)
+	h.Set("Content-Disposition", contentDisposition(o.Disposition, api.BaseName(o.Path)))
+	setPolicyHeaders(h, pol)
+	h.Set("ETag", etag)
 	f, err := s.svc.OpenContent(c)
 	if err != nil {
 		s.log.Error("open content failed", "request_id", info(r).id, "object_id", o.ID, "error", err)
@@ -104,7 +119,33 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		return
 	}
 	defer func() { _ = f.Close() }()
-	http.ServeContent(w, r, "", o.UpdatedAt, f)
+	// A zero modification time: no Last-Modified, no If-Modified-Since; the
+	// ETag carries all conditional requests (see above).
+	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+func setPolicyHeaders(h http.Header, pol deliveryPolicy) {
+	h.Set("Cache-Control", pol.cacheControl)
+	if pol.robots != "" {
+		h.Set("X-Robots-Tag", pol.robots)
+	}
+	if pol.referrerPolicy != "" {
+		h.Set("Referrer-Policy", pol.referrerPolicy)
+	}
+}
+
+// noneMatch evaluates If-None-Match (RFC 9110, section 13.1.2) with weak
+// comparison: it reports whether any listed tag, or "*", matches etag.
+func noneMatch(values []string, etag string) bool {
+	for _, v := range values {
+		for _, tag := range strings.Split(v, ",") {
+			tag = strings.TrimSpace(tag)
+			if tag == "*" || strings.TrimPrefix(tag, "W/") == etag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // contentDisposition builds the header per RFC 6266: an ASCII fallback in

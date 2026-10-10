@@ -5,11 +5,13 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"go.xchunk.org/vela/api"
 	velaclient "go.xchunk.org/vela/client"
@@ -269,4 +271,47 @@ func TestSingleSecurityHeaders(t *testing.T) {
 	check("nginx 502", n.get("GET", n.https+"/"))
 	check("nginx 502 api", n.get("GET", n.https+"/api/v1/info", auth...))
 	check("nginx 502 link", n.get("GET", n.https+u.RequestURI()))
+}
+
+// TestValidatorsAfterSameSizeOverwrite covers R-013 through nginx: same-size
+// content replaced within the same second (forced by equal mtimes) must not
+// revalidate as the old version, by ETag or by If-Range.
+func TestValidatorsAfterSameSizeOverwrite(t *testing.T) {
+	ts, n, c := setup(t)
+	first := upload(t, c, "same.txt", "AAAA", api.Public, "")
+	r := n.get("GET", n.https+"/same.txt")
+	old := r.header.Get("ETag")
+	if old != `"sha256:`+first.SHA256+`"` || len(r.header.Values("ETag")) != 1 || r.header.Get("Last-Modified") != "" {
+		t.Fatalf("validators: ETag %v, Last-Modified %q", r.header.Values("ETag"), r.header.Get("Last-Modified"))
+	}
+	if r := n.get("GET", n.https+"/same.txt", "If-None-Match", old); r.status != 304 || r.header.Get("ETag") != old {
+		t.Fatalf("unchanged content: %d %v", r.status, r.header)
+	}
+	upload(t, c, "same.txt", "BBBB", "", "")
+	// Give every blob the same mtime, as an overwrite within one second
+	// would; only content-based validators can tell them apart.
+	stamp := time.Now().Truncate(time.Second)
+	_ = filepath.WalkDir(filepath.Join(ts.DataDir, "blobs"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			_ = os.Chtimes(p, stamp, stamp)
+		}
+		return nil
+	})
+	r = n.get("GET", n.https+"/same.txt", "If-None-Match", old)
+	if r.status != 200 || r.body != "BBBB" {
+		t.Fatalf("stale ETag revalidated: %d %q", r.status, r.body)
+	}
+	fresh := r.header.Get("ETag")
+	r = n.get("GET", n.https+"/same.txt", "Range", "bytes=0-1", "If-Range", old)
+	if r.status != 200 || r.body != "BBBB" {
+		t.Fatalf("stale If-Range honored: %d %q", r.status, r.body)
+	}
+	r = n.get("GET", n.https+"/same.txt", "Range", "bytes=0-1", "If-Range", fresh)
+	if r.status != 206 || r.body != "BB" {
+		t.Fatalf("current If-Range: %d %q", r.status, r.body)
+	}
+	r = n.get("GET", n.https+"/same.txt", "If-Modified-Since", time.Now().Add(time.Hour).UTC().Format(http.TimeFormat))
+	if r.status != 200 {
+		t.Fatalf("If-Modified-Since answered %d", r.status)
+	}
 }

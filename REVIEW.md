@@ -139,7 +139,7 @@
 - Verification: Реальный nginx: AAAA заменено на BBBB, обоим blob выставлен mtime в одной секунде. Запрос с прежним ETag получил 304; ETag совпал. Выставление mtime только делает обычную секундную коллизию детерминированной.
 - Suggestion: Обеспечить валидатор, отражающий содержимое/идентичность blob и учитываемый nginx при условных запросах. В direct mode уже используется SHA-256; простого изменения заголовка после принятия nginx решения о 304 недостаточно.
 - Regression: Same-size overwrite в одной секунде, If-None-Match и If-Range через настоящий nginx.
-- Status: open
+- Status: fixed
 
 ## R-014 [severity: medium] nginx отвергает допустимый X-Vela-Description
 
