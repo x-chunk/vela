@@ -44,7 +44,6 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 
 	now := s.now()
 	resp := api.DeleteResponse{TrashIDs: []string{}}
-	var purgedBlobs []string
 	err = s.store.Update(ctx, func(w Writer) error {
 		var objs []domain.Object
 		if !isDir {
@@ -92,7 +91,9 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 				if _, err := w.DeleteLinksByObject(ctx, o.ID); err != nil {
 					return err
 				}
-				purgedBlobs = append(purgedBlobs, o.BlobID)
+				if err := s.queueBlob(ctx, w, o.BlobID, now); err != nil {
+					return err
+				}
 				continue
 			}
 			id, err := s.trashObject(ctx, w, o, p.KeyID, now)
@@ -106,9 +107,6 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 	})
 	if err != nil {
 		return api.DeleteResponse{}, err
-	}
-	for _, b := range purgedBlobs {
-		s.deleteBlob(b)
 	}
 	return resp, nil
 }
@@ -249,28 +247,25 @@ func (s *Service) PurgeTrashEntry(ctx context.Context, p Principal, id string) e
 	if err := p.require(api.ScopeAdmin); err != nil {
 		return err
 	}
-	var blobID string
-	err := s.store.Update(ctx, func(w Writer) error {
+	now := s.now()
+	return s.store.Update(ctx, func(w Writer) error {
 		e, err := s.trashEntryFor(ctx, w, p, id)
 		if err != nil {
 			return err
 		}
-		blobID = e.Object.BlobID
-		return purgeEntry(ctx, w, e)
+		return s.purgeEntry(ctx, w, e, now)
 	})
-	if err != nil {
-		return err
-	}
-	s.deleteBlob(blobID)
-	return nil
 }
 
-func purgeEntry(ctx context.Context, w Writer, e domain.TrashEntry) error {
+// purgeEntry removes a trash entry and its links and queues its blob.
+func (s *Service) purgeEntry(ctx context.Context, w Writer, e domain.TrashEntry, now time.Time) error {
 	if err := w.DeleteTrash(ctx, e.ID); err != nil {
 		return err
 	}
-	_, err := w.DeleteLinksByObject(ctx, e.Object.ID)
-	return err
+	if _, err := w.DeleteLinksByObject(ctx, e.Object.ID); err != nil {
+		return err
+	}
+	return s.queueBlob(ctx, w, e.Object.BlobID, now)
 }
 
 // PurgeTrash permanently deletes trash entries older than olderThan, or all
@@ -301,31 +296,26 @@ func (s *Service) purgeTrashBefore(ctx context.Context, cutoff time.Time, within
 		if err != nil || len(entries) == 0 {
 			return total, err
 		}
-		var blobs []string
+		purged := 0
+		now := s.now()
 		err = s.store.Update(ctx, func(w Writer) error {
 			for _, e := range entries {
-				if err := purgeEntry(ctx, w, e); err != nil {
+				if err := s.purgeEntry(ctx, w, e, now); err != nil {
 					if isNotFound(err) {
 						continue // purged concurrently
 					}
 					return err
 				}
-				blobs = append(blobs, e.Object.BlobID)
+				purged++
 			}
 			return nil
 		})
 		if err != nil {
 			return total, err
 		}
-		for _, b := range blobs {
-			s.deleteBlob(b)
-		}
-		total += len(blobs)
-		if len(entries) < batch {
-			return total, nil
-		}
-		if len(blobs) == 0 {
-			return total, nil // no progress; avoid spinning
+		total += purged
+		if len(entries) < batch || purged == 0 {
+			return total, nil // done, or no progress: avoid spinning
 		}
 	}
 }

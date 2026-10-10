@@ -82,7 +82,7 @@ func TestMaintenanceCommands(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	vars := newEnv(t)
-	if r := execute(t, ctx, vars, nil, "migrate"); r.err != nil || !strings.Contains(r.stdout, "from version 0 to 1") {
+	if r := execute(t, ctx, vars, nil, "migrate"); r.err != nil || !strings.Contains(r.stdout, "from version 0 to ") {
 		t.Fatalf("migrate = %+v", r)
 	}
 	if r := execute(t, ctx, vars, nil, "migrate"); r.err != nil || !strings.Contains(r.stdout, "up to date") {

@@ -62,12 +62,17 @@ func TestOpenPermissionsAndMigrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = s.Close() }()
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest := migrations[len(migrations)-1].version
 	from, to, err := s.Migrate(ctx)
-	if err != nil || from != 0 || to != 1 {
+	if err != nil || from != 0 || to != latest {
 		t.Fatalf("Migrate = %d, %d, %v", from, to, err)
 	}
 	from, to, err = s.Migrate(ctx)
-	if err != nil || from != 1 || to != 1 {
+	if err != nil || from != latest || to != latest {
 		t.Fatalf("second Migrate = %d, %d, %v", from, to, err)
 	}
 	fi, err := os.Stat(path)
@@ -122,5 +127,39 @@ func TestPrefixUpper(t *testing.T) {
 		if got := prefixUpper(in); got != want {
 			t.Errorf("prefixUpper(%q) = %q; want %q", in, got, want)
 		}
+	}
+}
+
+func TestBlobQueueAndCheckpoint(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openTest(t)
+	id := gen.New()
+	var added [2]bool
+	err := s.Update(ctx, func(tx *Tx) error {
+		var err error
+		if added[0], err = tx.EnqueueBlobDeletion(ctx, id, t0); err != nil {
+			return err
+		}
+		added[1], err = tx.EnqueueBlobDeletion(ctx, id, t0.Add(time.Hour))
+		return err
+	})
+	if err != nil || !added[0] || added[1] {
+		t.Fatalf("enqueue = %v, %v", added, err)
+	}
+	if due, _ := s.DueBlobDeletions(ctx, t0.Add(-time.Second), 10); len(due) != 0 {
+		t.Fatalf("due before its time: %v", due)
+	}
+	if due, _ := s.DueBlobDeletions(ctx, t0, 10); len(due) != 1 || due[0] != id {
+		t.Fatalf("due = %v", due)
+	}
+	if err := s.Checkpoint(ctx); err != nil {
+		t.Fatalf("checkpoint on an idle database: %v", err)
+	}
+	if err := s.Update(ctx, func(tx *Tx) error { return tx.DeleteBlobDeletion(ctx, id) }); err != nil {
+		t.Fatal(err)
+	}
+	if due, _ := s.DueBlobDeletions(ctx, t0, 10); len(due) != 0 {
+		t.Fatalf("due after dequeue: %v", due)
 	}
 }

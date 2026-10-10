@@ -401,7 +401,6 @@ func (s *Service) Upload(ctx context.Context, p Principal, in UploadInput) (api.
 	var (
 		result  domain.Object
 		created bool
-		oldBlob string
 	)
 	err = s.store.Update(ctx, func(w Writer) error {
 		existing, err := s.uploadTarget(ctx, w, path, in)
@@ -414,7 +413,10 @@ func (s *Service) Upload(ctx context.Context, p Principal, in UploadInput) (api.
 			return w.InsertObject(ctx, result)
 		}
 		o := *existing
-		oldBlob = o.BlobID
+		// The old content is deleted later, not now: see gc.go.
+		if err := s.queueBlob(ctx, w, o.BlobID, now); err != nil {
+			return err
+		}
 		o.BlobID, o.Size, o.SHA256 = b.id, b.size, b.sha256
 		m.apply(&o)
 		o.ContentType = m.contentType
@@ -427,12 +429,9 @@ func (s *Service) Upload(ctx context.Context, p Principal, in UploadInput) (api.
 		return w.UpdateObject(ctx, o)
 	})
 	if err != nil {
+		// The new blob was never referenced by a committed row.
 		s.deleteBlob(b.id)
 		return api.Object{}, false, err
-	}
-	if oldBlob != "" {
-		// Only after the commit: until then the old content is still live.
-		s.deleteBlob(oldBlob)
 	}
 	return s.objectDTO(result, now), created, nil
 }

@@ -102,8 +102,40 @@ func TestUploadOverwriteKeepsIdentityAndMetadata(t *testing.T) {
 	if !second.CreatedAt.Equal(first.CreatedAt) || !second.UpdatedAt.After(first.UpdatedAt) {
 		t.Fatalf("timestamps: %+v", second)
 	}
+	// The old content stays for the grace period, then the collector
+	// removes it (R-002, R-012).
+	if n := e.countFiles("blobs"); n != 2 {
+		t.Fatalf("blobs right after overwrite = %d, want 2", n)
+	}
+	e.collectAfterGrace()
 	if n := e.countFiles("blobs"); n != 1 {
-		t.Fatalf("old blob not deleted: %d blobs", n)
+		t.Fatalf("old blob not collected: %d blobs", n)
+	}
+}
+
+// TestResolvedContentSurvivesOverwrite covers R-012: a download resolved
+// just before an overwrite can still open the content it resolved.
+func TestResolvedContentSurvivesOverwrite(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("doc.txt", "old", api.Public)
+	c, err := e.svc.Download(e.ctx, e.admin, "doc.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := e.svc.ResolvePublic(e.ctx, "doc.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.put("doc.txt", "new", api.Public)
+	if got := e.read(c); got != "old" {
+		t.Fatalf("resolved API download reads %q", got)
+	}
+	if got := e.read(*pub.Content); got != "old" {
+		t.Fatalf("resolved public download reads %q", got)
+	}
+	if n, err := e.svc.CollectBlobs(e.ctx); err != nil || n != 0 {
+		t.Fatalf("collector deleted content within the grace period: %d, %v", n, err)
 	}
 }
 

@@ -31,6 +31,8 @@ type Reader interface {
 
 	APIKeyByID(ctx context.Context, id string) (domain.APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]domain.APIKey, error)
+
+	DueBlobDeletions(ctx context.Context, now time.Time, limit int) ([]string, error)
 }
 
 // Writer is a write transaction; it can also read its own uncommitted state.
@@ -59,6 +61,9 @@ type Writer interface {
 	RevokeAPIKey(ctx context.Context, id string, at time.Time) error
 	TouchAPIKey(ctx context.Context, id string, at time.Time) error
 
+	EnqueueBlobDeletion(ctx context.Context, blobID string, notBefore time.Time) (bool, error)
+	DeleteBlobDeletion(ctx context.Context, blobID string) error
+
 	AcquireLock(ctx context.Context, name, owner string, now, until time.Time) (bool, error)
 	ReleaseLock(ctx context.Context, name, owner string) error
 }
@@ -69,6 +74,9 @@ type Store interface {
 	Reader
 	Update(ctx context.Context, fn func(Writer) error) error
 	Ping(ctx context.Context) error
+	// Checkpoint makes every committed transaction durable or fails; see
+	// gc.go for why blob deletion depends on it.
+	Checkpoint(ctx context.Context) error
 }
 
 // PendingBlob is a blob being written; see Blobs.Create.

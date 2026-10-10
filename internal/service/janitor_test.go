@@ -75,15 +75,16 @@ func TestJanitor(t *testing.T) {
 		"trash":           1,
 		"signing_keys":    1,
 		"tmp_files":       1,
-		"orphan_blobs":    1,
+		"orphan_blobs":    1, // queued, not yet deleted
+		"blob_gc":         0, // grace period not over
 	}
 	for k, v := range want {
 		if counts[k] != v {
 			t.Errorf("task %s count = %d; want %d (all: %v)", k, counts[k], v, counts)
 		}
 	}
-	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
-		t.Error("orphan blob survived")
+	if _, err := os.Stat(orphan); err != nil {
+		t.Error("orphan deleted before its grace period")
 	}
 	// The expired object is in the trash now, restorable without its expiry.
 	list, _ := e.svc.ListTrash(e.ctx, e.admin, service.TrashParams{Path: "tmp/expiring"})
@@ -100,6 +101,15 @@ func TestJanitor(t *testing.T) {
 			t.Fatalf("%s: %v", p, err)
 		}
 		_ = e.read(c)
+	}
+
+	// After the grace period the collector removes the orphan and the
+	// purged trash content, and keeps everything referenced.
+	if n := e.collectAfterGrace(); n != 2 {
+		t.Fatalf("collected %d blobs; want the orphan and the purged one", n)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Error("orphan blob survived the collector")
 	}
 
 	// A second pass finds nothing.

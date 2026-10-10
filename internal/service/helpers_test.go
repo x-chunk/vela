@@ -120,6 +120,18 @@ func wantErr(t *testing.T, err, kind error) {
 
 func ptr[T any](v T) *T { return &v }
 
+// collectAfterGrace advances the clock past the blob grace period and runs
+// the collector.
+func (e *env) collectAfterGrace() int {
+	e.t.Helper()
+	e.clock.Advance(service.DefaultBlobGrace + time.Second)
+	n, err := e.svc.CollectBlobs(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
 func stringsReader(s string) *strings.Reader { return strings.NewReader(s) }
 
 func queryParam(rawURL, key string) string {

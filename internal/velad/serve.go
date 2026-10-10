@@ -25,6 +25,9 @@ import (
 const (
 	shutdownTimeout     = 30 * time.Second
 	janitorInitialDelay = time.Minute
+	// blobCollectInterval: replaced and purged content is deleted this long
+	// after its grace period at the latest, not only by the daily janitor.
+	blobCollectInterval = 5 * time.Minute
 )
 
 func newServeCommand(env Env) *cobra.Command {
@@ -109,6 +112,7 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 	janitorCtx, stopJanitor := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Go(func() { svc.RunJanitorLoop(janitorCtx, janitorInitialDelay, cfg.JanitorInterval) })
+	wg.Go(func() { svc.RunBlobCollectorLoop(janitorCtx, blobCollectInterval) })
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(ln) }()

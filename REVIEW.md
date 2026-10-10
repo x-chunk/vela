@@ -40,7 +40,7 @@
 - Verification: Анализ порядка операций и [официальных гарантий SQLite](https://sqlite.org/pragma.html#pragma_synchronous). Аварийное отключение не воспроизводилось.
 - Suggestion: Удалять заменённые/очищенные blob только после гарантированной durable-фиксации исключающих их ссылок либо через отложенную очередь с проверяемым барьером durability. Одной успешной транзакции при NORMAL недостаточно.
 - Regression: Fault-injection между commit, синхронизацией WAL и unlink; после восстановления каждая строка objects/trash должна иметь доступный blob.
-- Status: open
+- Status: fixed
 
 ## R-003 [severity: high] Commit blob не синхронизирует создание родительских shard-каталогов
 
@@ -130,7 +130,7 @@
 - Verification: Настоящий Download → успешный overwrite того же пути → OpenContent полученного Content вернул `blob not found`. Для direct mode дальнейший ответ 500 следует из deliver.
 - Suggestion: Согласовать удаление с активными читателями. Для direct mode возможно закрепление открытого дескриптора вместе с разрешением объекта; для внешнего nginx нужна отдельная безопасная стратегия хранения старых blob.
 - Regression: Управляемое чередование resolve/open/overwrite и реальная accel-доставка при одновременных обновлениях.
-- Status: open
+- Status: fixed
 
 ## R-013 [severity: medium] ETag nginx совпадает у разного содержимого после overwrite
 

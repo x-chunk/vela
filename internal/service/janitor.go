@@ -90,6 +90,7 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 		{"signing_keys", s.janitorSigningKeys},
 		{"tmp_files", s.janitorTmp},
 		{"orphan_blobs", s.janitorOrphans},
+		{"blob_gc", func(ctx context.Context, _ time.Time) (int, error) { return s.CollectBlobs(ctx) }},
 	}
 	var report JanitorReport
 	for _, t := range tasks {
@@ -181,33 +182,36 @@ func (s *Service) janitorTmp(_ context.Context, now time.Time) (int, error) {
 	return s.blobs.CleanTmp(now.Add(-staleAge))
 }
 
-// janitorOrphans removes blobs that no object or trash entry references: the
-// leftovers of a crash between writing a blob and committing its row, or of a
-// failed delete. Young blobs are skipped because they may belong to an upload
-// whose transaction has not committed yet.
+// janitorOrphans finds blobs that no object or trash entry references: the
+// leftovers of a crash between writing a blob and committing its row, or of
+// a failed delete. Young blobs are skipped because they may belong to an
+// upload whose transaction has not committed yet. Orphans are not deleted
+// here but queued for the collector, so they get the same durability barrier
+// and grace period as any other deletion (see gc.go): "unreferenced now"
+// might rest on a commit that a power loss could still undo.
 func (s *Service) janitorOrphans(ctx context.Context, now time.Time) (int, error) {
 	cutoff := now.Add(-staleAge)
-	removed := 0
-	var errs []error
+	queued := 0
 	err := s.blobs.Walk(ctx, func(id string, modTime time.Time) error {
 		if !modTime.Before(cutoff) {
 			return nil
 		}
 		used, err := s.store.BlobReferenced(ctx, id)
-		if err != nil {
+		if err != nil || used {
 			return err
 		}
-		if used {
-			return nil
+		var added bool
+		err = s.store.Update(ctx, func(w Writer) error {
+			var err error
+			added, err = w.EnqueueBlobDeletion(ctx, id, now.Add(s.opts.BlobGrace))
+			return err
+		})
+		if added {
+			queued++ // already queued blobs (purged, replaced) are not orphans
 		}
-		if err := s.blobs.Delete(id); err != nil {
-			errs = append(errs, err)
-			return nil
-		}
-		removed++
-		return nil
+		return err
 	})
-	return removed, errors.Join(append(errs, err)...)
+	return queued, err
 }
 
 // RunJanitorLoop runs a pass after initialDelay and then every interval until

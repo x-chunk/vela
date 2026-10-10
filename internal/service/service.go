@@ -34,6 +34,9 @@ type Options struct {
 	LinkRetention     time.Duration
 	TrashRetention    time.Duration
 	DefaultVisibility api.Visibility
+	// BlobGrace delays the physical deletion of replaced or purged content
+	// (default DefaultBlobGrace); see gc.go.
+	BlobGrace time.Duration
 }
 
 // Deps are the collaborators of the service.
@@ -56,6 +59,7 @@ type Service struct {
 
 	touch     touchThrottle
 	janitorMu sync.Mutex
+	gcMu      sync.Mutex
 	// owner identifies this process in cross-process advisory locks.
 	owner string
 }
@@ -75,6 +79,9 @@ func New(d Deps, o Options) (*Service, error) {
 		return nil, errors.New("service: invalid size or TTL limits")
 	}
 	o.PublicURL = strings.TrimSuffix(o.PublicURL, "/")
+	if o.BlobGrace <= 0 {
+		o.BlobGrace = DefaultBlobGrace
+	}
 	host, _ := os.Hostname()
 	return &Service{
 		store: d.Store,
@@ -211,8 +218,10 @@ func (s *Service) writeBlob(ctx context.Context, r io.Reader, limit int64, wantS
 	return blobInfo{id: id, size: n, sha256: sum, sniff: sn.buf}, nil
 }
 
-// deleteBlob removes a blob that is no longer referenced. Failure only leaves
-// an orphan, which the janitor collects, so it is logged rather than returned.
+// deleteBlob removes a blob that no committed row has ever referenced (the
+// transaction meant to reference it failed). Blobs that were referenced go
+// through queueBlob instead. Failure only leaves an orphan, which the janitor
+// collects, so it is logged rather than returned.
 func (s *Service) deleteBlob(id string) {
 	if err := s.blobs.Delete(id); err != nil {
 		s.log.Warn("delete blob failed; the janitor will retry", "blob_id", id, "error", err)

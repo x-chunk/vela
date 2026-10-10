@@ -100,8 +100,12 @@ func TestPurge(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("purge all = %d, %v", n, err)
 	}
+	if blobs := e.countFiles("blobs"); blobs != 3 {
+		t.Fatalf("purged content deleted before the grace period: %d blobs", blobs)
+	}
+	e.collectAfterGrace()
 	if blobs := e.countFiles("blobs"); blobs != 0 {
-		t.Fatalf("blobs left after purge: %d", blobs)
+		t.Fatalf("blobs left after collection: %d", blobs)
 	}
 }
 
