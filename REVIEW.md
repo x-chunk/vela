@@ -148,7 +148,7 @@
 - Verification: Одинаковый Upload с 2000 символами «Я»: через nginx — 400, напрямую — успех.
 - Suggestion: Согласовать large_client_header_buffers и общий лимит Go-сервера с худшим допустимым размером всех метаданных после кодирования, включая четырёхбайтовые Unicode-символы.
 - Regression: Максимальные title/description/tags одновременно, ASCII/кириллица/emoji, через референсный nginx.
-- Status: open
+- Status: fixed
 
 ## R-015 [severity: medium] Лимит JSON create не учитывает экранирование UTF-8 контента
 

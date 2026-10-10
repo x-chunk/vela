@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -432,4 +433,47 @@ func TestScopesAndPrefixes(t *testing.T) {
 		t.Fatalf("prefixed root listing = %+v", l)
 	}
 	expectStatus(t, h.do("GET", api.RouteObject+"?prefix=home/", rw, nil), 403)
+}
+
+// maxMetadataHeaders returns upload headers with the largest metadata the
+// API accepts, in four-byte characters.
+func maxMetadataHeaders() []string {
+	tags := make([]string, 32)
+	for i := range tags {
+		tags[i] = fmt.Sprintf("%02d", i) + strings.Repeat("t", 62)
+	}
+	return []string{
+		api.HeaderTitle, api.EncodeHeaderText(strings.Repeat("😀", api.MaxTitleRunes)),
+		api.HeaderDescription, api.EncodeHeaderText(strings.Repeat("😀", api.MaxDescriptionRunes)),
+		api.HeaderTags, strings.Join(tags, ","),
+	}
+}
+
+// TestMaximalMetadataFitsProductionLimits covers R-014 for velad itself:
+// the production http.Server accepts the largest valid metadata.
+func TestMaximalMetadataFitsProductionLimits(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := h.ts.Server.HTTPServer("")
+	go func() { _ = hs.Serve(ln) }()
+	defer func() { _ = hs.Close() }()
+	path := strings.Repeat("ж", 120) + "/" + strings.Repeat("ё", 120) + "/" + strings.Repeat("я", 120) + ".txt"
+	req, _ := http.NewRequest("PUT", "http://"+ln.Addr().String()+api.ContentRoute(path), strings.NewReader("x"))
+	req.Header.Set("Authorization", "Bearer "+h.ts.AdminKey)
+	hdr := maxMetadataHeaders()
+	for i := 0; i < len(hdr); i += 2 {
+		req.Header.Set(hdr[i], hdr[i+1])
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("maximal metadata: %d", res.StatusCode)
+	}
 }

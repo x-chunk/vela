@@ -93,6 +93,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	s.servePublic(w, r)
 }
 
+// MaxHeaderBytes bounds the request line and headers. Upload metadata
+// travels percent-encoded in headers: up to 4096*4*3 = 48 KiB for the
+// description, 3 KiB for the title, 2 KiB for tags and 3 KiB for the path,
+// so 128 KiB leaves room for everything else. nginx's
+// large_client_header_buffers must allow the same (deploy/nginx).
+const MaxHeaderBytes = 128 << 10
+
 // HTTPServer returns an http.Server with production timeouts. There is no
 // ReadTimeout or WriteTimeout: uploads and downloads of large files may
 // legitimately take long. Slow-loris style attacks are bounded by
@@ -103,7 +110,7 @@ func (s *Server) HTTPServer(addr string) *http.Server {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
-		MaxHeaderBytes:    64 << 10,
+		MaxHeaderBytes:    MaxHeaderBytes,
 		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
 	}
 }

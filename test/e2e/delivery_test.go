@@ -315,3 +315,21 @@ func TestValidatorsAfterSameSizeOverwrite(t *testing.T) {
 		t.Fatalf("If-Modified-Since answered %d", r.status)
 	}
 }
+
+// TestMaximalMetadataThroughNginx covers R-014: the reference nginx accepts
+// every header an upload with the largest valid metadata needs.
+func TestMaximalMetadataThroughNginx(t *testing.T) {
+	ts, n, _ := setup(t)
+	tags := make([]string, 32)
+	for i := range tags {
+		tags[i] = fmt.Sprintf("%02d", i) + strings.Repeat("t", 62)
+	}
+	path := api.EscapePath(strings.Repeat("ж", 120) + "/" + strings.Repeat("ё", 120) + "/" + strings.Repeat("я", 120) + ".txt")
+	r := n.put(ts.AdminKey, path, "x",
+		api.HeaderTitle, api.EncodeHeaderText(strings.Repeat("😀", api.MaxTitleRunes)),
+		api.HeaderDescription, api.EncodeHeaderText(strings.Repeat("😀", api.MaxDescriptionRunes)),
+		api.HeaderTags, strings.Join(tags, ","))
+	if r.status != 201 {
+		t.Fatalf("maximal metadata through nginx: %d %.200s", r.status, r.body)
+	}
+}
