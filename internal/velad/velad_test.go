@@ -147,7 +147,7 @@ func TestServeHealthcheckBackup(t *testing.T) {
 	}
 	dest := filepath.Join(t.TempDir(), "backup")
 	r := execute(t, context.Background(), vars, nil, "backup", dest)
-	if r.err != nil || !strings.Contains(r.stdout, "1 blob(s), 1 linked") {
+	if r.err != nil || !strings.Contains(r.stdout, "1 blob(s): 1 linked") {
 		t.Fatalf("backup = %+v", r)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "vela.db")); err != nil {

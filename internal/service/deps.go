@@ -33,6 +33,7 @@ type Reader interface {
 	ListAPIKeys(ctx context.Context) ([]domain.APIKey, error)
 
 	DueBlobDeletions(ctx context.Context, now time.Time, limit int) ([]string, error)
+	LockHeld(ctx context.Context, name string, now time.Time) (bool, error)
 }
 
 // Writer is a write transaction; it can also read its own uncommitted state.

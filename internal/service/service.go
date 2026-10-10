@@ -63,6 +63,7 @@ type Service struct {
 	touch     touchThrottle
 	janitorMu sync.Mutex
 	gcMu      sync.Mutex
+	backupMu  sync.Mutex
 	// beforeJanitorTask is a test hook called before each janitor task.
 	beforeJanitorTask func(task string)
 	// owner identifies this process in cross-process advisory locks.

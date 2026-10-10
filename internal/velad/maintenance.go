@@ -2,6 +2,8 @@ package velad
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,47 +18,59 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/domain"
+	"go.xchunk.org/vela/internal/service"
 	"go.xchunk.org/vela/internal/store"
 	"go.xchunk.org/vela/internal/wire"
 )
 
 func newBackupCommand(env Env) *cobra.Command {
-	return &cobra.Command{
+	var verify bool
+	cmd := &cobra.Command{
 		Use:   "backup DEST_DIR",
 		Short: "Write a consistent snapshot of the database and blobs",
 		Long: "Write a consistent backup to DEST_DIR, which must not exist or be empty. The database is\n" +
 			"copied with VACUUM INTO, which is safe while the server runs; then every blob the snapshot\n" +
-			"references is hard-linked (or copied, across filesystems). Blobs are never modified in\n" +
-			"place, so hard links are as good as copies and take no extra space.\n\n" +
+			"references is hard-linked (or copied, across filesystems) and its size checked; --verify\n" +
+			"also checks every SHA-256. While the backup runs, no blob is deleted, in this or any other\n" +
+			"process. A missing or damaged blob makes the backup fail: it is never silently partial.\n\n" +
 			"To restore, stop the container and replace vela.db and blobs/ in the data directory with\n" +
 			"the backup's files (removing vela.db-wal and vela.db-shm).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, st, _, err := openStorage(cmd, env)
+			svc, st, err := adminService(cmd, env)
 			if err != nil {
 				return err
 			}
 			defer func() { _ = st.Close() }()
-			res, err := backup(cmd.Context(), st, args[0])
+			res, err := backup(cmd.Context(), svc, st, args[0], verify)
 			if err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(env.Stdout, "Backup written to %s: %d blob(s), %d linked, %d copied.\n",
-				args[0], res.blobs, res.linked, res.copied)
-			if res.missing > 0 {
-				_, _ = fmt.Fprintf(env.Stderr, "warning: %d blob(s) were deleted while the backup ran; their objects were deleted too\n", res.missing)
-			}
+			_, _ = fmt.Fprintf(env.Stdout, "Backup written to %s: %d object(s), %d blob(s): %d linked, %d copied%s.\n",
+				args[0], res.objects, res.blobs, res.linked, res.copied, map[bool]string{true: ", all verified"}[verify])
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&verify, "verify", false, "check the SHA-256 of every blob (reads all data)")
+	return cmd
 }
 
 type backupResult struct {
-	blobs, linked, copied, missing int
+	objects, blobs, linked, copied int
 }
 
-func backup(ctx context.Context, st *wire.Storage, dest string) (backupResult, error) {
-	var res backupResult
+// backupAfterSnapshot is a test hook that runs between the database
+// snapshot and the copying of blobs.
+var backupAfterSnapshot func()
+
+// blobRef is what the snapshot says a blob must contain.
+type blobRef struct {
+	path   string
+	size   int64
+	sha256 string
+}
+
+func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest string, verify bool) (res backupResult, err error) {
 	if entries, err := os.ReadDir(dest); err == nil && len(entries) > 0 {
 		return res, fmt.Errorf("%s is not empty", dest)
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -65,18 +79,33 @@ func backup(ctx context.Context, st *wire.Storage, dest string) (backupResult, e
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return res, fmt.Errorf("create %s: %w", dest, err)
 	}
+	// From here on dest is ours; a failed backup leaves it empty, so it
+	// cannot be mistaken for a complete one.
 	dbPath := filepath.Join(dest, wire.DatabaseFile)
+	blobsDir := filepath.Join(dest, "blobs")
+	defer func() {
+		if err != nil {
+			_ = os.Remove(dbPath)
+			_ = os.RemoveAll(blobsDir)
+		}
+	}()
+
+	// Pin blobs before the snapshot: everything the snapshot references
+	// stays on disk until the copies exist.
+	ctx, release, err := svc.HoldBackup(ctx)
+	if err != nil {
+		return res, err
+	}
+	defer release()
+
 	if err := st.DB.Snapshot(ctx, dbPath); err != nil {
 		return res, err
 	}
-	// The snapshot, not the live database, decides which blobs belong to
-	// the backup: blobs created later are not referenced by it, and blobs
-	// deleted meanwhile belonged to objects that were deleted too.
 	snap, err := store.Open(ctx, dbPath)
 	if err != nil {
 		return res, err
 	}
-	ids, err := referencedBlobs(ctx, snap)
+	refs, objects, err := referencedBlobs(ctx, snap)
 	_ = snap.Close()
 	for _, suffix := range []string{"-wal", "-shm"} {
 		_ = os.Remove(dbPath + suffix)
@@ -84,52 +113,84 @@ func backup(ctx context.Context, st *wire.Storage, dest string) (backupResult, e
 	if err != nil {
 		return res, err
 	}
-	for _, id := range ids {
+	res.objects = objects
+	if backupAfterSnapshot != nil {
+		backupAfterSnapshot()
+	}
+
+	for id, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return res, fmt.Errorf("backup interrupted: %w", context.Cause(ctx))
+		}
 		rel := filepath.FromSlash(st.Blobs.RelPath(id))
 		src := filepath.Join(st.Blobs.Dir(), rel)
-		dst := filepath.Join(dest, "blobs", rel)
+		dst := filepath.Join(blobsDir, rel)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return res, err
 		}
-		res.blobs++
 		if err := os.Link(src, dst); err == nil {
 			res.linked++
-			continue
 		} else if errors.Is(err, fs.ErrNotExist) {
-			res.blobs--
-			res.missing++
-			continue
+			return res, fmt.Errorf("blob %s of %s is missing from the data directory; the backup is incomplete", id, ref.path)
+		} else if err := copyFile(src, dst); err != nil {
+			return res, fmt.Errorf("copy blob %s of %s: %w", id, ref.path, err)
+		} else {
+			res.copied++
 		}
-		if err := copyFile(src, dst); err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				res.blobs--
-				res.missing++
-				continue
-			}
-			return res, err
+		if err := checkBlob(dst, ref, verify); err != nil {
+			return res, fmt.Errorf("blob %s of %s: %w", id, ref.path, err)
 		}
-		res.copied++
+		res.blobs++
 	}
 	return res, nil
 }
 
-func referencedBlobs(ctx context.Context, s *store.Store) ([]string, error) {
+// checkBlob compares a copied blob with what the snapshot expects.
+func checkBlob(path string, ref blobRef, full bool) error {
+	f, err := os.Open(path) // #nosec G304 -- inside the backup directory
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Size() != ref.size {
+		return fmt.Errorf("size %d, expected %d", fi.Size(), ref.size)
+	}
+	if !full {
+		return nil
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != ref.sha256 {
+		return fmt.Errorf("SHA-256 %s, expected %s", got, ref.sha256)
+	}
+	return nil
+}
+
+// referencedBlobs lists every blob the snapshot references, by objects and
+// by trash entries, with the expected size and digest.
+func referencedBlobs(ctx context.Context, s *store.Store) (map[string]blobRef, int, error) {
 	objs, err := s.ObjectsUnder(ctx, "")
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	trash, err := s.ListTrash(ctx, domain.TrashQuery{})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	ids := make([]string, 0, len(objs)+len(trash))
+	refs := make(map[string]blobRef, len(objs)+len(trash))
 	for _, o := range objs {
-		ids = append(ids, o.BlobID)
+		refs[o.BlobID] = blobRef{path: o.Path, size: o.Size, sha256: o.SHA256}
 	}
 	for _, e := range trash {
-		ids = append(ids, e.Object.BlobID)
+		refs[e.Object.BlobID] = blobRef{path: e.Object.Path + " (in the trash)", size: e.Object.Size, sha256: e.Object.SHA256}
 	}
-	return ids, nil
+	return refs, len(objs) + len(trash), nil
 }
 
 func copyFile(src, dst string) (err error) {

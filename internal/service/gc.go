@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -58,6 +59,16 @@ func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
 	for {
 		var doomed []string
 		err := s.store.Update(ctx, func(w Writer) error {
+			// A backup copies blobs after its snapshot; deleting now could
+			// remove a blob the snapshot references. The check is inside
+			// the write transaction, which serializes it with the backup
+			// taking its lock.
+			if held, err := w.LockHeld(ctx, backupLock, s.clock.Now()); err != nil || held {
+				if held {
+					err = ErrBackupRunning
+				}
+				return err
+			}
 			ids, err := w.DueBlobDeletions(ctx, now, batch)
 			if err != nil {
 				return err
@@ -80,6 +91,10 @@ func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
 			due = ids
 			return nil
 		})
+		if errors.Is(err, ErrBackupRunning) {
+			s.log.Info("blob deletion postponed while a backup runs")
+			return removed, nil
+		}
 		if err != nil {
 			return removed, err
 		}

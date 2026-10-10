@@ -59,3 +59,22 @@ func (t *Tx) ReleaseLock(ctx context.Context, name, owner string) error {
 	}
 	return nil
 }
+
+// LockHeld reports whether anyone holds an unexpired lease on the named
+// lock at now.
+func (q reads) LockHeld(ctx context.Context, name string, now time.Time) (bool, error) {
+	var value string
+	err := q.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, "lock:"+name).Scan(&value)
+	if errors.Is(mapErr(err), domain.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read lock: %w", err)
+	}
+	var holder string
+	var expiry int64
+	if _, err := fmt.Sscanf(value, "%s %d", &holder, &expiry); err != nil {
+		return false, nil
+	}
+	return expiry > ms(now), nil
+}
