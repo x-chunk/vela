@@ -1,0 +1,72 @@
+# golangci-lint v2 configuration. Run with: make lint
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - noctx
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    errcheck:
+      # Close/Remove errors on cleanup paths are deliberately ignored with
+      # "_ =" and reviewed case by case.
+      check-blank: false
+    gosec:
+      excludes:
+        # File paths come from operator configuration, validated IDs or the
+        # user's own command line; each site is annotated where it matters.
+        - G304
+        # Directories under the data dir are 0755 on purpose: nginx must
+        # traverse blobs/ (see internal/blob).
+        - G301
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # readability over a few bytes per struct
+        - shadow         # idiomatic err shadowing in nested scopes
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-strings
+        - name: error-naming
+        - name: receiver-naming
+        - name: unused-parameter
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - noctx
+          - bodyclose
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - go.xchunk.org/vela
