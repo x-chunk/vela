@@ -157,7 +157,7 @@
 - Verification: При MaxCreate=1 MiB файл из 1 MiB переводов строк отвергнут с utf-8; те же байты в base64 созданы успешно.
 - Suggestion: Сохранить конечный транспортный лимит, но рассчитать его по наихудшему допустимому JSON-представлению и отдельно проверять decoded size, либо использовать ограниченный потоковый разбор.
 - Regression: Контент на границе MaxCreate с кавычками, backslash, LF и control escapes; одинаковое решение для utf-8 и base64.
-- Status: open
+- Status: fixed
 
 ## R-016 [severity: medium] Невалидный UTF-8 в JSON молча меняет содержимое файла
 

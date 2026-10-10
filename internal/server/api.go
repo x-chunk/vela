@@ -159,8 +159,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, p service.Pr
 
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request, p service.Principal) error {
 	var req api.CreateObjectRequest
-	// base64 inflates content by 4/3; allow for that and the JSON envelope.
-	limit := s.opts.MaxCreateBytes*4/3 + smallBodyLimit
+	// The transport limit must admit every valid encoding of MaxCreateBytes
+	// of content: base64 needs 4/3 per byte, but a utf-8 JSON string can
+	// need six ("\u0001" for a control character). The decoded size is what
+	// the service checks against MaxCreateBytes.
+	limit := s.opts.MaxCreateBytes*6 + smallBodyLimit
 	if err := decodeJSON(w, r, limit, &req); err != nil {
 		return err
 	}

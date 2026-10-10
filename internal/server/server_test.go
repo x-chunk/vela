@@ -1,6 +1,8 @@
 package server_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -509,6 +511,38 @@ func TestStalledBodiesAreDropped(t *testing.T) {
 		var ne net.Error
 		if errors.As(err, &ne) && ne.Timeout() {
 			t.Errorf("connection still open after %v: %q", time.Since(start), strings.SplitN(raw, "\r\n", 2)[0])
+		}
+	}
+}
+
+// TestCreateLimitIsAboutContent covers R-015: content at MaxCreateBytes is
+// accepted however much its JSON encoding inflates it, and one byte more is
+// refused, in both encodings.
+func TestCreateLimitIsAboutContent(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	const limit = 64 << 10 // testutil's MaxCreate
+	create := func(path string, content []byte, encoding string) resp {
+		body, _ := json.Marshal(map[string]string{"path": path, "content": string(content), "encoding": encoding})
+		if encoding == "base64" {
+			body, _ = json.Marshal(map[string]string{"path": path, "content": base64.StdEncoding.EncodeToString(content), "encoding": encoding})
+		}
+		return h.admin("POST", api.RouteObject, string(body))
+	}
+	for name, b := range map[string]byte{"newlines": '\n', "quotes": '"', "controls": 0x01, "angles": '<'} {
+		content := bytes.Repeat([]byte{b}, limit)
+		if r := create("max-"+name, content, "utf-8"); r.status != 201 {
+			t.Errorf("%s at the limit (utf-8): %d %.100s", name, r.status, r.body)
+		}
+		if r := create("b64-"+name, content, "base64"); r.status != 201 {
+			t.Errorf("%s at the limit (base64): %d", name, r.status)
+		}
+		over := append(content, b)
+		for _, enc := range []string{"utf-8", "base64"} {
+			r := create("over-"+name+enc, over, enc)
+			if r.status != 413 || r.errCode(t) != api.CodePayloadTooLarge {
+				t.Errorf("%s over the limit (%s): %d", name, enc, r.status)
+			}
 		}
 	}
 }
