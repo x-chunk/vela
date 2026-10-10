@@ -5,15 +5,53 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/client"
 	"go.xchunk.org/vela/internal/testutil"
 )
+
+// truncating proxies to target and, for the first n requests matching
+// match, sends the full headers but only half of the response body, as a
+// connection lost mid-response would.
+func truncating(t *testing.T, target string, n int32, match func(*http.Request) bool) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	u, _ := url.Parse(target)
+	proxy := httputil.NewSingleHostReverseProxy(u)
+	var cut, seen atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !match(r) {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		seen.Add(1)
+		if cut.Add(1) > n {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		proxy.ServeHTTP(rec, r)
+		body := rec.Body.Bytes()
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body[:len(body)/2])
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &seen
+}
 
 func fastClient(t *testing.T, base, key string) *client.Client {
 	t.Helper()
@@ -75,3 +113,38 @@ func TestRetryKeepsStartOffset(t *testing.T) {
 	}
 }
 
+// TestRetryLostResponseBody covers R-021: a response cut after its headers
+// is retried for idempotent requests, including conditional uploads that
+// the server already applied, and not for POST.
+func TestRetryLostResponseBody(t *testing.T) {
+	t.Parallel()
+	ts := testutil.NewServer(t)
+	ctx := context.Background()
+
+	srv, seen := truncating(t, ts.URL, 1, func(r *http.Request) bool { return r.URL.Path == api.RouteInfo })
+	if _, err := fastClient(t, srv.URL, ts.AdminKey).Info(ctx); err != nil || seen.Load() != 2 {
+		t.Fatalf("GET with a cut response: %v after %d requests", err, seen.Load())
+	}
+
+	isPut := func(r *http.Request) bool { return r.Method == http.MethodPut }
+	srv, seen = truncating(t, ts.URL, 1, isPut)
+	c := fastClient(t, srv.URL, ts.AdminKey)
+	o, created, err := c.Upload(ctx, "p.txt", strings.NewReader("one"), client.UploadOptions{Size: 3, CreateOnly: true, SHA256: sum("one")})
+	if err != nil || !created || o.Revision != 1 || seen.Load() != 2 {
+		t.Fatalf("create-only upload with a cut response = %+v, %v, %v after %d", o, created, err, seen.Load())
+	}
+
+	srv, seen = truncating(t, ts.URL, 1, isPut)
+	c = fastClient(t, srv.URL, ts.AdminKey)
+	o, created, err = c.Upload(ctx, "p.txt", strings.NewReader("two"), client.UploadOptions{Size: 3, IfRevision: 1, SHA256: sum("two")})
+	if err != nil || created || o.Revision != 2 || seen.Load() != 2 {
+		t.Fatalf("If-Match upload with a cut response = %+v, %v, %v after %d", o, created, err, seen.Load())
+	}
+
+	srv, seen = truncating(t, ts.URL, 1, func(r *http.Request) bool { return r.Method == http.MethodPost })
+	_, err = fastClient(t, srv.URL, ts.AdminKey).Create(ctx, api.CreateObjectRequest{Path: "c.txt", Content: "x"})
+	var ne *client.NetworkError
+	if !errorsAs(err, &ne) || seen.Load() != 1 {
+		t.Fatalf("POST with a cut response: %v after %d requests (must not be retried)", err, seen.Load())
+	}
+}

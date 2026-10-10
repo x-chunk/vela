@@ -119,7 +119,14 @@ type request struct {
 	body       io.Reader
 	size       int64
 	idempotent bool
+	// bufferResponse reads a successful response body completely inside the
+	// attempt, so that a connection lost while reading it is retried like
+	// any other network error. Streaming downloads leave it off.
+	bufferResponse bool
 }
+
+// maxBufferedResponse bounds a buffered JSON response.
+const maxBufferedResponse = 64 << 20
 
 // attemptBody hands the caller's upload body to one attempt. The transport
 // closes request bodies when it is done with them, possibly after Do has
@@ -288,6 +295,15 @@ func (c *Client) attempt(ctx context.Context, rq request, upload *attemptBody) (
 	}
 	c.tracef("<- %s (%s) request_id=%s", res.Status, time.Since(start).Round(time.Millisecond), res.Header.Get(api.HeaderRequestID))
 	if res.StatusCode >= 200 && res.StatusCode < 300 || res.StatusCode == http.StatusNotModified {
+		if rq.bufferResponse {
+			b, err := io.ReadAll(io.LimitReader(res.Body, maxBufferedResponse))
+			_ = res.Body.Close()
+			if err != nil {
+				c.tracef("<- response body lost: %v", err)
+				return nil, &NetworkError{Err: fmt.Errorf("read response: %w", err)}
+			}
+			res.Body = io.NopCloser(bytes.NewReader(b))
+		}
 		return res, nil
 	}
 	return nil, decodeError(res)
@@ -355,6 +371,7 @@ func codeForStatus(status int) api.ErrorCode {
 
 // call performs a request and decodes a JSON response into out (if non-nil).
 func (c *Client) call(ctx context.Context, rq request, out any) error {
+	rq.bufferResponse = true
 	res, err := c.send(ctx, rq)
 	if err != nil {
 		return err

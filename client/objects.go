@@ -178,18 +178,27 @@ func (c *Client) Upload(ctx context.Context, path string, body io.Reader, opts U
 		body = strings.NewReader("")
 	}
 	rq := request{
-		method:     http.MethodPut,
-		route:      api.RouteCont + "/" + escape(path),
-		header:     h,
-		body:       body,
-		size:       size,
-		idempotent: opts.CreateOnly || opts.IfRevision != 0,
+		method:         http.MethodPut,
+		route:          api.RouteCont + "/" + escape(path),
+		header:         h,
+		body:           body,
+		size:           size,
+		idempotent:     opts.CreateOnly || opts.IfRevision != 0,
+		bufferResponse: true,
 	}
 	res, tries, err := c.sendN(ctx, rq)
 	if err != nil {
-		if tries > 1 && opts.CreateOnly && opts.SHA256 != "" && api.IsCode(err, api.CodeAlreadyExists) {
+		// A retry that finds its own earlier attempt's result (the response
+		// was lost) fails its precondition; with a checksum the result is
+		// recognizable and the upload counts as done.
+		if tries > 1 && opts.SHA256 != "" && api.IsCode(err, api.CodeAlreadyExists, api.CodePreconditionFailed) {
 			if existing, serr := c.Stat(ctx, path); serr == nil && strings.EqualFold(existing.SHA256, opts.SHA256) {
-				return existing, true, nil
+				switch {
+				case opts.CreateOnly && api.IsCode(err, api.CodeAlreadyExists):
+					return existing, true, nil
+				case opts.IfRevision != 0 && existing.Revision == opts.IfRevision+1:
+					return existing, false, nil
+				}
 			}
 		}
 		return nil, false, err

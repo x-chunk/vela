@@ -211,7 +211,7 @@
 - Verification: Info endpoint вернул 200, Content-Length больше фактического и оборванный JSON; второй ответ был бы корректным. Клиент сделал один запрос и вернул unexpected EOF.
 - Suggestion: Для буферизуемых JSON-ответов включить чтение в попытку с сохранением правил идемпотентности и восстановления результата PUT. Streaming Download требует отдельной явно определённой семантики; нельзя слепо дописывать повторный ответ в пользовательский writer.
 - Regression: Обрыв после headers и посередине JSON для GET и conditional PUT; POST create/move автоматически не повторять.
-- Status: open
+- Status: fixed
 
 ## R-022 [severity: medium] Backup создаёт не читаемые nginx shard-каталоги при umask 077
 

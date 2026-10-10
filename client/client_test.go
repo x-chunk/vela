@@ -255,3 +255,5 @@ func TestNetworkErrorsAndValidation(t *testing.T) {
 		t.Fatalf("canceled context error = %v", err)
 	}
 }
+
+func errorsAs(err error, target any) bool { return errors.As(err, target) }
