@@ -108,11 +108,15 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.RedirectDir != "" {
+		// Not an open redirect: the target is always a local, absolute
+		// path built from a validated object path, whose segments are
+		// non-empty and escaped, so it can never start with "//" or name
+		// another host.
 		target := "/" + api.EscapePath(res.RedirectDir)
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
-		http.Redirect(w, r, target, http.StatusMovedPermanently)
+		http.Redirect(w, r, target, http.StatusMovedPermanently) // #nosec G710 -- see above
 		return
 	}
 	s.deliver(w, r, *res.Content, policyFor(res.Content.Object.Visibility))
