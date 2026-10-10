@@ -49,7 +49,7 @@
 - Verification: Анализ кода и [fsync(2) из Linux man-pages](https://raw.githubusercontent.com/mkerrisk/man-pages/master/man2/fsync.2): синхронизация inode не заменяет синхронизацию записи в содержащем каталоге. Power-loss тест не проводился.
 - Suggestion: Синхронизировать каждую вновь созданную связь каталогов и выполнять окончательный Sync файла после установки метаданных. Учесть создание корневых директорий при первом запуске.
 - Regression: Fault-injection первого upload в новый shard, включая сбой после chmod и после каждого mkdir/rename.
-- Status: open
+- Status: fixed
 
 ## R-004 [severity: high] Снимок БД временно создаётся с доступными другим пользователям правами
 

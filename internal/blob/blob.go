@@ -65,14 +65,43 @@ func Open(dataDir string) (*Store, error) {
 	return s, nil
 }
 
+// ensureDir creates dir and any missing parents durably (see mkdirDurable)
+// and sets its mode explicitly, also when it already existed.
 func ensureDir(dir string, mode os.FileMode) error {
-	if err := os.MkdirAll(dir, mode); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+	parent := filepath.Dir(dir)
+	if parent != dir {
+		if _, err := os.Stat(parent); errors.Is(err, fs.ErrNotExist) {
+			if err := ensureDir(parent, blobsDirMode); err != nil {
+				return err
+			}
+		}
+	}
+	if err := mkdirDurable(dir, mode); err != nil {
+		return err
 	}
 	if err := os.Chmod(dir, mode); err != nil {
 		return fmt.Errorf("chmod %s: %w", dir, err)
 	}
 	return nil
+}
+
+// mkdirDurable creates one directory and, if it did not exist, fsyncs its
+// parent. Creating a directory changes the parent's entries; until the
+// parent is synced, a power loss can make the new directory, and every file
+// renamed into it, disappear even though those files were synced themselves.
+// An existing directory is not an error.
+func mkdirDurable(dir string, mode os.FileMode) error {
+	err := os.Mkdir(dir, mode)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	return syncDir(filepath.Dir(dir))
 }
 
 func (s *Store) probeRename() error {
@@ -136,9 +165,12 @@ func (s *Store) Create() (*Pending, error) {
 // Write appends to the pending blob.
 func (p *Pending) Write(b []byte) (int, error) { return p.f.Write(b) }
 
-// Commit makes the blob durable and visible under id: fsync the data, chmod
-// it readable for nginx, rename it into its shard and fsync the shard
-// directory so that the rename itself survives a power loss.
+// Commit makes the blob durable and visible under id. The order matters for
+// crash safety: chmod it readable for nginx first and fsync afterwards, so
+// that the final mode is on disk with the data; create missing shard
+// directories, each followed by an fsync of its parent; rename into the
+// shard; fsync the shard directory so that the rename itself survives a
+// power loss. Only then may the database reference the blob.
 func (p *Pending) Commit(id string) (err error) {
 	if p.done {
 		return errors.New("blob already committed or aborted")
@@ -155,13 +187,13 @@ func (p *Pending) Commit(id string) (err error) {
 		_ = p.f.Close()
 		return err
 	}
-	if err := p.f.Sync(); err != nil {
-		_ = p.f.Close()
-		return fmt.Errorf("fsync blob: %w", err)
-	}
 	if err := p.f.Chmod(blobFileMode); err != nil {
 		_ = p.f.Close()
 		return fmt.Errorf("chmod blob: %w", err)
+	}
+	if err := syncFile(p.f); err != nil {
+		_ = p.f.Close()
+		return fmt.Errorf("fsync blob: %w", err)
 	}
 	if err := p.f.Close(); err != nil {
 		return fmt.Errorf("close blob: %w", err)
@@ -189,15 +221,24 @@ func (s *Store) mkShard(id string) error {
 	dir := s.blobsDir
 	for _, part := range strings.Split(shard(id), "/") {
 		dir = filepath.Join(dir, part)
-		err := os.Mkdir(dir, blobsDirMode)
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
+		if err := mkdirDurable(dir, blobsDirMode); err != nil {
 			return fmt.Errorf("create shard directory: %w", err)
 		}
-		if err := os.Chmod(dir, blobsDirMode); err != nil {
-			return fmt.Errorf("chmod shard directory: %w", err)
+	}
+	return nil
+}
+
+// syncObserver, when set by tests, sees every fsync with the path and the
+// file mode at that moment.
+var syncObserver func(path string, mode fs.FileMode)
+
+func syncFile(f *os.File) error {
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if syncObserver != nil {
+		if fi, err := f.Stat(); err == nil {
+			syncObserver(f.Name(), fi.Mode().Perm())
 		}
 	}
 	return nil
@@ -209,7 +250,7 @@ func syncDir(dir string) error {
 		return fmt.Errorf("open directory for fsync: %w", err)
 	}
 	defer func() { _ = d.Close() }()
-	if err := d.Sync(); err != nil {
+	if err := syncFile(d); err != nil {
 		return fmt.Errorf("fsync directory: %w", err)
 	}
 	return nil
