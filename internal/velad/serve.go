@@ -90,7 +90,7 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 	})
 	httpSrv := srv.HTTPServer(cfg.Listen)
 
-	ln, err := net.Listen("tcp", cfg.Listen)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}

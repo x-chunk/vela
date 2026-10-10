@@ -138,7 +138,9 @@ func copyFile(src, dst string) (err error) {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G304 -- backup destination chosen by the operator.
+	// Backed-up blobs keep the blob mode (0644) so that a restored data
+	// directory is readable by nginx again without manual chmod.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) // #nosec G302 G304 -- see above; destination chosen by the operator
 	if err != nil {
 		return err
 	}
