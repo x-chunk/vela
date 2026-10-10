@@ -1,0 +1,165 @@
+package cli
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"go.xchunk.org/vela/api"
+	"go.xchunk.org/vela/client"
+	"go.xchunk.org/vela/internal/cli/output"
+)
+
+func (a *App) shareCommand() *cobra.Command {
+	var ttl, note string
+	var copyURL bool
+	cmd := &cobra.Command{
+		Use:   "share PATH [--ttl 2h] [--note TEXT] [--copy]",
+		Short: "Create a temporary signed link to a file",
+		Long: "Create a signed link that gives access to one file, of any visibility, until it expires.\n" +
+			"Links cannot be permanent (use unlisted for that) and survive renames. Revoke them with\n" +
+			"\"vela links revoke\".",
+		Example:           "  vela share private/report.pdf --ttl 2h --note 'for the teacher' --copy",
+		Args:              exactArgs(1),
+		ValidArgsFunction: a.completeRemote(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path, err := remotePath(args[0])
+			if err != nil {
+				return err
+			}
+			if ttl != "" {
+				if _, err := api.ParseDuration(ttl); err != nil {
+					return usageError(err)
+				}
+			}
+			c, _, err := a.client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := a.ctx(cmd)
+			defer cancel()
+			l, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: path, TTL: ttl, Note: note})
+			if err != nil {
+				return a.notFoundHint(ctx, c, err, path)
+			}
+			if copyURL && l.URL != nil {
+				if err := a.copyToClipboard(cmd, *l.URL); err != nil {
+					a.printer.Warnf("could not copy to the clipboard: %v", err)
+				} else {
+					a.printer.Infof("Copied to the clipboard.")
+				}
+			}
+			if a.jsonOut {
+				return a.printer.JSONValue(l)
+			}
+			if l.URL != nil {
+				a.printer.Println(*l.URL)
+			}
+			a.printer.Infof("Expires %s (in %s). Revoke with: vela links revoke %s", output.Time(l.ExpiresAt), a.printer.Remaining(l.ExpiresAt), l.ID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&ttl, "ttl", "", "lifetime, e.g. 90m, 2h, 7d (default: server default, 24h)")
+	cmd.Flags().StringVar(&note, "note", "", "free-text note shown in \"vela links ls\"")
+	cmd.Flags().BoolVar(&copyURL, "copy", false, "copy the URL to the clipboard")
+	return cmd
+}
+
+// copyToClipboard uses whichever clipboard tool exists; there is no portable
+// clipboard API without cgo.
+func (a *App) copyToClipboard(cmd *cobra.Command, text string) error {
+	candidates := [][]string{{"pbcopy"}, {"clip.exe"}}
+	if a.env("WAYLAND_DISPLAY") != "" {
+		candidates = append([][]string{{"wl-copy"}}, candidates...)
+	}
+	candidates = append(candidates, []string{"xclip", "-selection", "clipboard"}, []string{"xsel", "--clipboard", "--input"})
+	for _, c := range candidates {
+		if _, err := a.LookPath(c[0]); err != nil {
+			continue
+		}
+		return a.Run(cmd.Context(), strings.NewReader(text), false, c[0], c[1:]...)
+	}
+	return fmt.Errorf("no clipboard tool found (wl-copy, xclip, xsel, pbcopy or clip.exe)")
+}
+
+func (a *App) linksCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "links", Short: "List or revoke signed links"}
+	var all bool
+	ls := &cobra.Command{
+		Use:               "ls [PATH]",
+		Short:             "List signed links (active ones by default)",
+		Args:              rangeArgs(0, 1),
+		ValidArgsFunction: a.completeRemote(),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts := client.LinkListOptions{IncludeExpired: all, IncludeRevoked: all}
+			if len(args) == 1 {
+				p, err := remotePath(args[0])
+				if err != nil {
+					return err
+				}
+				opts.Path = p
+			}
+			c, _, err := a.client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := a.ctx(cmd)
+			defer cancel()
+			list, err := c.ListLinks(ctx, opts)
+			if err != nil {
+				return err
+			}
+			if a.jsonOut {
+				return a.printer.JSONValue(list)
+			}
+			if len(list.Links) == 0 {
+				a.printer.Infof("No links.")
+				return nil
+			}
+			rows := make([][]string, 0, len(list.Links))
+			for _, l := range list.Links {
+				status := a.printer.Remaining(l.ExpiresAt)
+				if l.RevokedAt != nil {
+					status = "revoked"
+				}
+				path := l.Path
+				if path == "" {
+					path = a.printer.Dim("(in trash or deleted)")
+				}
+				rows = append(rows, []string{l.ID, status, path, l.Note})
+			}
+			a.printer.Table([]string{"ID", "EXPIRES IN", "PATH", "NOTE"}, rows)
+			return nil
+		},
+	}
+	ls.Flags().BoolVar(&all, "all", false, "include expired and revoked links")
+	revoke := &cobra.Command{
+		Use:   "revoke ID...",
+		Short: "Revoke signed links; they stop working immediately",
+		Args:  minArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, _, err := a.client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := a.ctx(cmd)
+			defer cancel()
+			errs := make([]error, len(args))
+			for i, id := range args {
+				if errs[i] = c.RevokeLink(ctx, strings.ToLower(id)); errs[i] == nil {
+					a.printer.Printf("Revoked %s\n", id)
+				}
+			}
+			if err := batchResult("revoke", len(args), errs, args); err != nil {
+				return err
+			}
+			if a.jsonOut {
+				return a.printer.JSONValue(map[string][]string{"revoked": args})
+			}
+			return nil
+		},
+	}
+	cmd.AddCommand(ls, revoke)
+	return cmd
+}
