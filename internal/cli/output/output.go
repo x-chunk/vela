@@ -38,55 +38,87 @@ func (p *Printer) JSONValue(v any) error {
 	return enc.Encode(v)
 }
 
+// All printing methods treat their arguments as data and clean them (see
+// Clean), except Styled values, which the CLI produced itself.
+
 // Println writes a result line to stdout (human mode only).
 func (p *Printer) Println(a ...any) {
 	if !p.JSON {
-		_, _ = fmt.Fprintln(p.Out, a...)
+		_, _ = fmt.Fprintln(p.Out, texts(a)...)
 	}
 }
 
 // Printf writes a formatted result to stdout (human mode only).
 func (p *Printer) Printf(format string, a ...any) {
 	if !p.JSON {
-		_, _ = fmt.Fprintf(p.Out, format, a...)
+		_, _ = fmt.Fprintf(p.Out, format, texts(a)...)
 	}
 }
 
 // Infof writes a diagnostic to stderr unless quiet.
 func (p *Printer) Infof(format string, a ...any) {
 	if !p.Quiet {
-		_, _ = fmt.Fprintf(p.Err, format+"\n", a...)
+		_, _ = fmt.Fprintf(p.Err, format+"\n", texts(a)...)
 	}
 }
 
 // Warnf writes a warning to stderr, even when quiet.
 func (p *Printer) Warnf(format string, a ...any) {
-	_, _ = fmt.Fprintf(p.Err, "%s "+format+"\n", append([]any{p.paint(yellow, "warning:")}, a...)...)
+	_, _ = fmt.Fprintf(p.Err, "%s "+format+"\n", append([]any{p.paint(yellow, "warning:")}, texts(a)...)...)
 }
 
-// Table prints aligned columns to stdout.
-func (p *Printer) Table(header []string, rows [][]string) {
+// Errorf writes an error line to stderr.
+func (p *Printer) Errorf(label, format string, a ...any) {
+	_, _ = fmt.Fprintf(p.Err, "%s "+format+"\n", append([]any{p.Error(label)}, texts(a)...)...)
+}
+
+// Table prints aligned columns to stdout. Cells are strings (data, cleaned)
+// or Styled.
+func (p *Printer) Table(header []string, rows [][]any) {
 	if p.JSON {
 		return
 	}
 	tw := tabwriter.NewWriter(p.Out, 0, 0, 2, ' ', 0)
 	if header != nil {
-		_, _ = fmt.Fprintln(tw, p.paint(bold, strings.Join(header, "\t")))
+		cells := make([]string, len(header))
+		for i, h := range header {
+			cells[i] = string(p.paint(bold, h))
+		}
+		_, _ = fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	for _, r := range rows {
-		_, _ = fmt.Fprintln(tw, strings.Join(r, "\t"))
+		cells := make([]string, len(r))
+		for i, c := range r {
+			cells[i] = text(c)
+		}
+		_, _ = fmt.Fprintln(tw, strings.Join(cells, "\t"))
 	}
 	_ = tw.Flush()
 }
 
-// KeyValues prints "key: value" lines with aligned values.
-func (p *Printer) KeyValues(pairs [][2]string) {
+// KV is one line of KeyValues; Value is a string (data) or Styled.
+type KV struct {
+	Key   string
+	Value any
+}
+
+// KeyValues prints "key: value" lines with aligned values. A value with line
+// breaks continues on indented lines.
+func (p *Printer) KeyValues(pairs []KV) {
 	if p.JSON {
 		return
 	}
 	tw := tabwriter.NewWriter(p.Out, 0, 0, 2, ' ', 0)
 	for _, kv := range pairs {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\n", p.paint(dim, kv[0]+":"), kv[1])
+		v := text(kv.Value)
+		if s, ok := kv.Value.(string); ok {
+			v = CleanMultiline(s)
+		}
+		lines := strings.Split(v, "\n")
+		_, _ = fmt.Fprintf(tw, "%s\t%s\n", p.paint(dim, kv.Key+":"), lines[0])
+		for _, l := range lines[1:] {
+			_, _ = fmt.Fprintf(tw, "\t%s\n", l)
+		}
 	}
 	_ = tw.Flush()
 }
@@ -103,25 +135,28 @@ const (
 	purple = "\x1b[35m"
 )
 
-func (p *Printer) paint(style, s string) string {
+// paint styles s, cleaning it first: s may be data, such as a directory
+// name.
+func (p *Printer) paint(style, s string) Styled {
+	s = Clean(s)
 	if !p.Color || s == "" {
-		return s
+		return Styled(s)
 	}
-	return style + s + reset
+	return Styled(style + s + reset)
 }
 
 // Dir styles a directory name.
-func (p *Printer) Dir(s string) string { return p.paint(blue+bold, s) }
+func (p *Printer) Dir(s string) Styled { return p.paint(blue+bold, s) }
 
 // Dim styles secondary text.
-func (p *Printer) Dim(s string) string { return p.paint(dim, s) }
+func (p *Printer) Dim(s string) Styled { return p.paint(dim, s) }
 
 // Error styles an error label.
-func (p *Printer) Error(s string) string { return p.paint(red+bold, s) }
+func (p *Printer) Error(s string) Styled { return p.paint(red+bold, s) }
 
 // Visibility renders a visibility with a color and a fixed-width label, so
 // it stays readable without color too.
-func (p *Printer) Visibility(v api.Visibility) string {
+func (p *Printer) Visibility(v api.Visibility) Styled {
 	switch v {
 	case api.Public:
 		return p.paint(green, "public  ")
@@ -130,7 +165,7 @@ func (p *Printer) Visibility(v api.Visibility) string {
 	case api.Private:
 		return p.paint(purple, "private ")
 	default:
-		return string(v)
+		return Styled(Clean(string(v)))
 	}
 }
 

@@ -51,9 +51,9 @@ func (a *App) trashLsCommand() *cobra.Command {
 				a.printer.Infof("The trash is empty.")
 				return nil
 			}
-			rows := make([][]string, 0, len(entries))
+			rows := make([][]any, 0, len(entries))
 			for _, e := range entries {
-				rows = append(rows, []string{e.ID, output.Time(e.DeletedAt), output.Time(e.PurgeAt), output.Size(e.Object.Size), e.OriginalPath})
+				rows = append(rows, []any{e.ID, output.Time(e.DeletedAt), output.Time(e.PurgeAt), output.Size(e.Object.Size), e.OriginalPath})
 			}
 			a.printer.Table([]string{"ID", "DELETED", "PURGED AT", "SIZE", "PATH"}, rows)
 			return nil

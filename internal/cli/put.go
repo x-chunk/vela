@@ -259,7 +259,7 @@ func (a *App) runPut(ctx context.Context, c *client.Client, plan []putItem, md m
 	if batchErr != nil && len(plan) > 1 {
 		for i, err := range errs {
 			if err != nil {
-				_, _ = fmt.Fprintf(a.Err, "%s %s: %v\n", a.printer.Error("failed:"), paths[i], err)
+				a.printer.Errorf("failed:", "%s: %v", paths[i], err)
 			}
 		}
 	}

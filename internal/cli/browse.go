@@ -104,16 +104,16 @@ func (a *App) printListing(l *api.Listing, long bool) {
 		}
 		return
 	}
-	var rows [][]string
+	var rows [][]any
 	for _, d := range l.Dirs {
-		rows = append(rows, []string{"", "-", "-", p.Dir(rel(d)), ""})
+		rows = append(rows, []any{"", "-", "-", p.Dir(rel(d)), ""})
 	}
 	for _, o := range l.Objects {
-		name := rel(o.Path)
+		var name any = rel(o.Path)
 		if o.Expired {
-			name += " " + p.Dim("(expired)")
+			name = output.Styled(output.Clean(rel(o.Path)) + " " + string(p.Dim("(expired)")))
 		}
-		rows = append(rows, []string{p.Visibility(o.Visibility), output.Size(o.Size), output.Time(o.UpdatedAt), name, o.Title})
+		rows = append(rows, []any{p.Visibility(o.Visibility), output.Size(o.Size), output.Time(o.UpdatedAt), name, o.Title})
 	}
 	p.Table(nil, rows)
 }
@@ -173,22 +173,22 @@ func (a *App) printObject(o *api.Object) {
 			expires += " (expired; moves to the trash on the next cleanup)"
 		}
 	}
-	p.KeyValues([][2]string{
-		{"Path", o.Path},
-		{"URL", url},
-		{"Visibility", strings.TrimSpace(p.Visibility(o.Visibility))},
-		{"Size", fmt.Sprintf("%s (%d bytes)", output.Size(o.Size), o.Size)},
-		{"Type", o.ContentType},
-		{"Disposition", string(o.Disposition)},
-		{"Title", dashIfEmpty(o.Title)},
-		{"Description", dashIfEmpty(o.Description)},
-		{"Tags", dashIfEmpty(strings.Join(o.Tags, ", "))},
-		{"Created", output.Time(o.CreatedAt)},
-		{"Updated", output.Time(o.UpdatedAt)},
-		{"Expires", expires},
-		{"Revision", fmt.Sprint(o.Revision)},
-		{"SHA-256", o.SHA256},
-		{"ID", o.ID},
+	p.KeyValues([]output.KV{
+		{Key: "Path", Value: o.Path},
+		{Key: "URL", Value: url},
+		{Key: "Visibility", Value: output.Styled(strings.TrimSpace(string(p.Visibility(o.Visibility))))},
+		{Key: "Size", Value: fmt.Sprintf("%s (%d bytes)", output.Size(o.Size), o.Size)},
+		{Key: "Type", Value: o.ContentType},
+		{Key: "Disposition", Value: string(o.Disposition)},
+		{Key: "Title", Value: dashIfEmpty(o.Title)},
+		{Key: "Description", Value: dashIfEmpty(o.Description)},
+		{Key: "Tags", Value: dashIfEmpty(strings.Join(o.Tags, ", "))},
+		{Key: "Created", Value: output.Time(o.CreatedAt)},
+		{Key: "Updated", Value: output.Time(o.UpdatedAt)},
+		{Key: "Expires", Value: expires},
+		{Key: "Revision", Value: fmt.Sprint(o.Revision)},
+		{Key: "SHA-256", Value: o.SHA256},
+		{Key: "ID", Value: o.ID},
 	})
 }
 

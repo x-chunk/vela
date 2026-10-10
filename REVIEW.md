@@ -103,7 +103,7 @@
 - Verification: Title с OSC 52 и description с CSI были созданы через настоящий сервис; `stat --no-color` вывел обе последовательности буквально.
 - Suggestion: Экранировать управляющие последовательности на границе human-output, сохраняя допустимый перенос строк там, где он нужен. JSON и сами хранимые значения не должны подвергаться потере данных.
 - Regression: ESC/CSI/OSC, BEL, CR, backspace и управляющие символы в title/description/note при цветном и бесцветном выводе.
-- Status: open
+- Status: fixed
 
 ## R-010 [severity: medium] Windows-конфиг с API-ключом не получает и не проверяет приватный ACL
 

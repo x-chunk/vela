@@ -10,6 +10,7 @@ import (
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/client"
 	"go.xchunk.org/vela/internal/cli/config"
+	"go.xchunk.org/vela/internal/cli/output"
 	"go.xchunk.org/vela/internal/keys"
 	"go.xchunk.org/vela/internal/version"
 )
@@ -173,15 +174,15 @@ func (a *App) whoamiCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.printer.JSONValue(info)
 			}
-			pairs := [][2]string{
-				{"Key", fmt.Sprintf("%s (%s)", info.Key.Name, info.Key.ID)},
-				{"Scope", string(info.Key.Scope)},
-				{"Prefix", dashIfEmpty(info.Key.Prefix)},
-				{"Server", fmt.Sprintf("%s (velad %s)", info.PublicURL, info.ServerVersion)},
-				{"Profile", s.Profile},
+			pairs := []output.KV{
+				{Key: "Key", Value: fmt.Sprintf("%s (%s)", info.Key.Name, info.Key.ID)},
+				{Key: "Scope", Value: string(info.Key.Scope)},
+				{Key: "Prefix", Value: dashIfEmpty(info.Key.Prefix)},
+				{Key: "Server", Value: fmt.Sprintf("%s (velad %s)", info.PublicURL, info.ServerVersion)},
+				{Key: "Profile", Value: s.Profile},
 			}
 			if a.verbose {
-				pairs = append(pairs, [2]string{"API key", keys.Mask(s.Key)})
+				pairs = append(pairs, output.KV{Key: "API key", Value: keys.Mask(s.Key)})
 			}
 			a.printer.KeyValues(pairs)
 			return nil

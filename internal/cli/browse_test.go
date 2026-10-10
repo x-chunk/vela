@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"go.xchunk.org/vela/api"
+	"go.xchunk.org/vela/client"
 )
 
 func TestBrowse(t *testing.T) {
@@ -87,5 +88,38 @@ func TestRemoteCompletion(t *testing.T) {
 	r = h.ok("__complete", "stat", "")
 	if strings.TrimSpace(r.stdout) != ":4" || strings.Contains(r.stderr, "vela:") {
 		t.Fatalf("completion against a dead server = %+v", r)
+	}
+}
+
+// TestNoTerminalEscapesFromData covers R-009 end to end: metadata written by
+// another key holder cannot drive the operator's terminal.
+func TestNoTerminalEscapesFromData(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	c, err := client.New(h.ts.URL, h.ts.AdminKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	title := "T\x1b]52;c;ZXZpbA==\x07"
+	desc := "D\x1b[2J\x1b[H\r‮"
+	if _, _, err := c.Upload(ctx, "evil.txt", strings.NewReader("x"), client.UploadOptions{Size: 1, Title: &title, Description: &desc}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: "evil.txt", Note: "N\x1b]0;pwned\x07"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"stat", "evil.txt"}, {"ls", "-l"}, {"meta", "evil.txt"}, {"links", "ls"}} {
+		for _, color := range []string{"--no-color", "-v"} {
+			r := h.ok(append(args, color)...)
+			if strings.ContainsAny(r.stdout+r.stderr, "\x1b\x07\r‮") {
+				t.Errorf("vela %v %s printed raw control characters: %q", args, color, r.stdout)
+			}
+		}
+	}
+	var o api.Object
+	h.ok("stat", "evil.txt", "--json").json(t, &o)
+	if o.Title != title || o.Description != desc {
+		t.Fatalf("JSON output altered the data: %q %q", o.Title, o.Description)
 	}
 }

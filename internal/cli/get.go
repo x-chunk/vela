@@ -154,7 +154,7 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 	if err := batchResult("download", len(l.Objects), errs, paths); err != nil {
 		for i, e := range errs {
 			if e != nil && !a.jsonOut {
-				_, _ = fmt.Fprintf(a.Err, "%s %s: %v\n", a.printer.Error("failed:"), paths[i], e)
+				a.printer.Errorf("failed:", "%s: %v", paths[i], e)
 			}
 		}
 		return err

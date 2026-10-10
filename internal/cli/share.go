@@ -117,17 +117,17 @@ func (a *App) linksCommand() *cobra.Command {
 				a.printer.Infof("No links.")
 				return nil
 			}
-			rows := make([][]string, 0, len(list.Links))
+			rows := make([][]any, 0, len(list.Links))
 			for _, l := range list.Links {
 				status := a.printer.Remaining(l.ExpiresAt)
 				if l.RevokedAt != nil {
 					status = "revoked"
 				}
-				path := l.Path
-				if path == "" {
+				var path any = l.Path
+				if l.Path == "" {
 					path = a.printer.Dim("(in trash or deleted)")
 				}
-				rows = append(rows, []string{l.ID, status, path, l.Note})
+				rows = append(rows, []any{l.ID, status, path, l.Note})
 			}
 			a.printer.Table([]string{"ID", "EXPIRES IN", "PATH", "NOTE"}, rows)
 			return nil

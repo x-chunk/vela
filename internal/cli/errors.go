@@ -9,6 +9,7 @@ import (
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/client"
 	"go.xchunk.org/vela/internal/cli/config"
+	"go.xchunk.org/vela/internal/cli/output"
 )
 
 // Exit codes (spec section 12.5). Scripts depend on them; changing one is a
@@ -173,12 +174,13 @@ func (a *App) reportError(err error) int {
 	if errors.As(err, &ae) && ae.Message != "" {
 		msg = ae.Message
 	}
-	_, _ = fmt.Fprintf(a.Err, "%s %s\n", a.printer.Error("vela:"), msg)
+	// Messages can carry data (paths, server text): Errorf cleans them.
+	a.printer.Errorf("vela:", "%s", msg)
 	if hint != "" {
-		_, _ = fmt.Fprintf(a.Err, "  hint: %s\n", hint)
+		_, _ = fmt.Fprintf(a.Err, "  hint: %s\n", output.Clean(hint))
 	}
 	if ae != nil && ae.Code == api.CodeInternal && ae.RequestID != "" {
-		_, _ = fmt.Fprintf(a.Err, "  request id: %s\n", ae.RequestID)
+		_, _ = fmt.Fprintf(a.Err, "  request id: %s\n", output.Clean(ae.RequestID))
 	}
 	return code
 }
