@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.xchunk.org/vela/api"
@@ -120,6 +121,35 @@ type request struct {
 	idempotent bool
 }
 
+// attemptBody hands the caller's upload body to one attempt. The transport
+// closes request bodies when it is done with them, possibly after Do has
+// returned; closing the caller's *os.File would make a retry impossible,
+// and a late read would race with the rewind. So the transport only sees
+// this wrapper: Close detaches it from the underlying reader, and the
+// mutex makes Close wait for a read in progress, after which no further
+// read reaches the caller's reader.
+type attemptBody struct {
+	mu     sync.Mutex
+	r      io.Reader
+	closed bool
+}
+
+func (b *attemptBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return 0, errors.New("upload body of a finished attempt")
+	}
+	return b.r.Read(p)
+}
+
+func (b *attemptBody) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+	return nil
+}
+
 func (c *Client) send(ctx context.Context, rq request) (*http.Response, error) {
 	res, _, err := c.sendN(ctx, rq)
 	return res, err
@@ -156,7 +186,14 @@ func (c *Client) sendN(ctx context.Context, rq request) (*http.Response, int, er
 				}
 			}
 		}
-		res, err := c.attempt(ctx, rq)
+		var body *attemptBody
+		if rq.body != nil {
+			body = &attemptBody{r: rq.body}
+		}
+		res, err := c.attempt(ctx, rq, body)
+		if body != nil {
+			_ = body.Close() // fence off the transport before any rewind
+		}
 		if err == nil {
 			return res, attempt, nil
 		}
@@ -184,7 +221,7 @@ func retryable(ctx context.Context, err error) bool {
 	return false
 }
 
-func (c *Client) attempt(ctx context.Context, rq request) (*http.Response, error) {
+func (c *Client) attempt(ctx context.Context, rq request, upload *attemptBody) (*http.Response, error) {
 	// Routes arrive escaped per segment. Path and RawPath must agree, or
 	// url.URL re-escapes and the server sees "%2520" instead of "%20".
 	u := *c.base
@@ -201,8 +238,8 @@ func (c *Client) attempt(ctx context.Context, rq request) (*http.Response, error
 	switch {
 	case rq.jsonBody != nil:
 		body = bytes.NewReader(rq.jsonBody)
-	case rq.body != nil:
-		body = rq.body
+	case upload != nil:
+		body = upload
 	}
 	req, err := http.NewRequestWithContext(ctx, rq.method, u.String(), body)
 	if err != nil {
