@@ -1,0 +1,17 @@
+# Build output
+/bin/
+/dist/
+
+# Local development data (make dev)
+/.dev-data/
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
