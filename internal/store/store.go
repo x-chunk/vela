@@ -133,12 +133,29 @@ func (s *Store) Update(ctx context.Context, fn func(*Tx) error) error {
 }
 
 // Snapshot writes a consistent copy of the database to dst using
-// VACUUM INTO, which is safe while the server is running.
+// VACUUM INTO, which is safe while the server is running. dst must not
+// exist.
+//
+// The snapshot contains the signing keys, so it must be private from its
+// first byte. SQLite would create the file with the umask's default mode;
+// instead the empty file is created here with 0600, and VACUUM INTO, which
+// accepts an existing empty file, keeps that mode. A failed snapshot is
+// removed.
 func (s *Store) Snapshot(ctx context.Context, dst string) error {
+	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, dbFileMode) // #nosec G304 -- operator-chosen backup path
+	if err != nil {
+		return fmt.Errorf("create snapshot file: %w", err)
+	}
+	// The umask can only remove bits from 0600; chmod makes the mode exact.
+	if err := errors.Join(f.Chmod(dbFileMode), f.Close()); err != nil {
+		_ = os.Remove(dst)
+		return fmt.Errorf("create snapshot file: %w", err)
+	}
 	if _, err := s.w.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
+		_ = os.Remove(dst)
 		return fmt.Errorf("snapshot database: %w", err)
 	}
-	return os.Chmod(dst, dbFileMode)
+	return nil
 }
 
 // dbtx is the subset of *sql.DB and *sql.Tx the queries need.

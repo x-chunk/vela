@@ -76,8 +76,14 @@ func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest st
 	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return res, err
 	}
+	// The backup holds the signing keys and every private file: make the
+	// directory private before anything is written into it, also when the
+	// operator created it beforehand with wider permissions.
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return res, fmt.Errorf("create %s: %w", dest, err)
+	}
+	if err := os.Chmod(dest, 0o700); err != nil {
+		return res, fmt.Errorf("make %s private: %w", dest, err)
 	}
 	// From here on dest is ours; a failed backup leaves it empty, so it
 	// cannot be mistaken for a complete one.

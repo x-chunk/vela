@@ -163,3 +163,15 @@ func TestBlobQueueAndCheckpoint(t *testing.T) {
 		t.Fatalf("due after dequeue: %v", due)
 	}
 }
+
+func TestSnapshotRefusesExistingFile(t *testing.T) {
+	t.Parallel()
+	s := openTest(t)
+	dst := filepath.Join(t.TempDir(), "snap.db")
+	if err := os.WriteFile(dst, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Snapshot(context.Background(), dst); err == nil {
+		t.Fatal("snapshot overwrote an existing file")
+	}
+}
