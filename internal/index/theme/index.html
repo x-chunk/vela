@@ -1,0 +1,46 @@
+{{define "title"}}{{if eq .Path "/"}}{{.Site.Title}}{{else}}{{.Path}} · {{.Site.Title}}{{end}}{{end}}
+
+{{define "content"}}
+<nav class="crumbs" aria-label="Breadcrumbs">
+  {{- range $i, $c := .Breadcrumbs}}
+  {{- if $i}}<span class="sep" aria-hidden="true">/</span>{{end}}
+  <a href="{{$c.URL}}">{{$c.Name}}</a>
+  {{- end}}
+</nav>
+{{if or .Dirs .Files}}
+<ul class="entries">
+  {{- if .Parent}}
+  <li class="entry parent">
+    <a href="{{.Parent}}" title="Parent directory">{{icon "parent"}}<span class="name">..</span></a>
+  </li>
+  {{- end}}
+  {{- range .Dirs}}
+  <li class="entry dir">
+    <a href="{{.URL}}">{{icon "folder"}}<span class="name">{{.Name}}/</span></a>
+    <span class="meta">
+      <span class="count">{{.Count}} {{if eq .Count 1}}file{{else}}files{{end}}</span>
+      <time datetime="{{iso .UpdatedAt}}">{{date .UpdatedAt}}</time>
+    </span>
+  </li>
+  {{- end}}
+  {{- range .Files}}
+  <li class="entry file kind-{{.Kind}}">
+    <a href="{{.URL}}">{{icon .Kind}}<span class="name">{{.Name}}</span></a>
+    {{- if or .Title .Description .Tags}}
+    <div class="details">
+      {{- with .Title}}<span class="title">{{.}}</span>{{end}}
+      {{- with .Description}}<span class="desc">{{.}}</span>{{end}}
+      {{- with .Tags}}<span class="tags">{{range .}}<span class="tag">{{.}}</span>{{end}}</span>{{end}}
+    </div>
+    {{- end}}
+    <span class="meta">
+      <span class="size" title="{{.Size}} bytes">{{.HumanSize}}</span>
+      <time datetime="{{iso .UpdatedAt}}">{{date .UpdatedAt}}</time>
+    </span>
+  </li>
+  {{- end}}
+</ul>
+{{else}}
+<p class="empty">Nothing here yet.</p>
+{{end}}
+{{end}}

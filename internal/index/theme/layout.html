@@ -1,0 +1,27 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{block "title" .}}{{.Site.Title}}{{end}}</title>
+<link rel="stylesheet" href="{{asset "style.css"}}">
+<link rel="icon" href="{{asset "favicon.svg"}}" type="image/svg+xml">
+<link rel="alternate icon" href="/favicon.ico" sizes="32x32">
+</head>
+<body>
+<header class="site">
+  <a class="brand" href="/">{{icon "logo"}}<span>{{.Site.Title}}</span></a>
+</header>
+<main>
+{{template "content" .}}
+</main>
+<footer class="site">
+  <span>Served by Vela {{.Version}}</span>
+  {{- if not .GeneratedAt.IsZero}}
+  <span>Generated <time datetime="{{iso .GeneratedAt}}">{{date .GeneratedAt}} UTC</time></span>
+  {{- end}}
+</footer>
+</body>
+</html>
+{{end}}

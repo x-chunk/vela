@@ -1,0 +1,10 @@
+{{define "title"}}{{.Status}} {{.Title}} · {{.Site.Title}}{{end}}
+
+{{define "content"}}
+<section class="error">
+  <p class="status">{{.Status}}</p>
+  <h1>{{.Title}}</h1>
+  {{with .Message}}<p class="message">{{.}}</p>{{end}}
+  <p><a href="/">Back to the index</a></p>
+</section>
+{{end}}
