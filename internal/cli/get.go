@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -154,7 +155,7 @@ func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object,
 			return err
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(local), "."+filepath.Base(local)+".vela-*")
+	tmp, err := createTempLike(local)
 	if err != nil {
 		return err
 	}
@@ -171,10 +172,28 @@ func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object,
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return err
-	}
 	return os.Rename(tmp.Name(), local)
+}
+
+// createTempLike creates a hidden temporary file next to path. Unlike
+// os.CreateTemp, which always uses 0600, it requests 0666 and lets the
+// user's umask decide, so a download gets the same permissions as any other
+// file the user creates.
+func createTempLike(path string) (*os.File, error) {
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	for range 100 {
+		var b [6]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, err
+		}
+		name := filepath.Join(dir, "."+base+".vela-"+hex.EncodeToString(b[:]))
+		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666) // #nosec G302 G304 -- umask applies; path chosen by the user
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		return f, err
+	}
+	return nil, fmt.Errorf("could not create a temporary file next to %s", path)
 }
 
 // download streams an object to w and verifies its SHA-256 against the
