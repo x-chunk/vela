@@ -9,8 +9,6 @@ import (
 const (
 	// janitorLock names the cross-process advisory lock.
 	janitorLock = "janitor"
-	// janitorLease bounds how long a crashed janitor can block the next one.
-	janitorLease = time.Hour
 	// staleAge is how old tmp files and orphan blobs must be before the
 	// janitor removes them. It must exceed any plausible gap between writing
 	// a blob and committing the row that references it.
@@ -32,7 +30,10 @@ type JanitorReport struct {
 	// Skipped is true when another pass, in this or another process, was
 	// already running.
 	Skipped bool
-	Tasks   []TaskResult
+	// Interrupted is true when the pass stopped early because its lock was
+	// lost or its context ended.
+	Interrupted bool
+	Tasks       []TaskResult
 }
 
 // Err joins the task errors.
@@ -49,20 +50,15 @@ func (r JanitorReport) Err() error {
 // RunJanitor performs one cleanup pass (spec section 9). Tasks run in order
 // and independently: a failing task is logged and reported, and the others
 // still run. Concurrent passes are prevented by a mutex within the process
-// and an expiring lock row in the database across processes.
+// and, across processes, by a lock row whose lease is renewed for as long as
+// the pass runs; if the lease is lost anyway, the pass stops.
 func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 	if !s.janitorMu.TryLock() {
 		return JanitorReport{Skipped: true}, nil
 	}
 	defer s.janitorMu.Unlock()
 
-	now := s.now()
-	var acquired bool
-	err := s.store.Update(ctx, func(w Writer) error {
-		var err error
-		acquired, err = w.AcquireLock(ctx, janitorLock, s.owner, now, now.Add(janitorLease))
-		return err
-	})
+	lock, acquired, err := s.holdLock(ctx, janitorLock)
 	if err != nil {
 		return JanitorReport{}, err
 	}
@@ -70,15 +66,9 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 		s.log.Info("janitor pass skipped: another process holds the lock")
 		return JanitorReport{Skipped: true}, nil
 	}
-	defer func() {
-		// Release with a fresh context: the pass may end because ctx was
-		// canceled, and the lock should still be dropped.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		if err := s.store.Update(rctx, func(w Writer) error { return w.ReleaseLock(rctx, janitorLock, s.owner) }); err != nil {
-			s.log.Warn("janitor could not release its lock", "error", err)
-		}
-	}()
+	defer lock.release()
+	ctx = lock.ctx
+	now := s.now()
 
 	tasks := []struct {
 		name string
@@ -95,7 +85,14 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 	var report JanitorReport
 	for _, t := range tasks {
 		if ctx.Err() != nil {
+			report.Interrupted = true
+			if lock.lost() {
+				s.log.Error("janitor pass interrupted: lock lost")
+			}
 			break
+		}
+		if s.beforeJanitorTask != nil {
+			s.beforeJanitorTask(t.name)
 		}
 		start := time.Now()
 		n, err := t.run(ctx, now)

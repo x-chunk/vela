@@ -31,17 +31,11 @@ type env struct {
 	storage *wire.Storage
 }
 
-func newEnv(t *testing.T) *env {
-	t.Helper()
-	ctx := context.Background()
-	dir := t.TempDir()
-	st, err := wire.OpenStorage(ctx, dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	clk := clock.NewFake(t0)
-	svc, err := wire.NewService(st, clk, nil, service.Options{
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
+
+// testOptions are the service options of every test environment.
+func testOptions(adjust func(*service.Options)) service.Options {
+	o := service.Options{
 		PublicURL:         "https://store.example.org",
 		ServerVersion:     "test",
 		MaxUpload:         1 << 20,
@@ -51,7 +45,24 @@ func newEnv(t *testing.T) *env {
 		LinkRetention:     7 * api.Day,
 		TrashRetention:    14 * api.Day,
 		DefaultVisibility: api.Unlisted,
-	})
+	}
+	if adjust != nil {
+		adjust(&o)
+	}
+	return o
+}
+
+func newEnvWith(t *testing.T, adjust func(*service.Options)) *env {
+	t.Helper()
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := wire.OpenStorage(ctx, dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	clk := clock.NewFake(t0)
+	svc, err := wire.NewService(st, clk, nil, testOptions(adjust))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +70,17 @@ func newEnv(t *testing.T) *env {
 		t: t, svc: svc, clock: clk, dataDir: dir, ctx: ctx, storage: st,
 		admin: service.Principal{KeyID: "adminkey00", Name: "admin", Scope: api.ScopeAdmin},
 	}
+}
+
+// sibling builds a second service over the same storage, standing in for
+// another process (velad janitor run next to the server).
+func (e *env) sibling(adjust func(*service.Options)) *service.Service {
+	e.t.Helper()
+	svc, err := wire.NewService(e.storage, e.clock, nil, testOptions(adjust))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return svc
 }
 
 func (e *env) principal(scope api.Scope, prefix string) service.Principal {

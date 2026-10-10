@@ -151,3 +151,77 @@ func TestJanitorLockAcrossProcesses(t *testing.T) {
 	// The pass released its lock, so another process can run now.
 	hold("other-process", e.clock.Now().Add(time.Hour))
 }
+
+// TestJanitorLeaseIsRenewed covers R-029: a pass that runs longer than the
+// lock lease keeps the lock, so a second process cannot start a concurrent
+// pass.
+func TestJanitorLeaseIsRenewed(t *testing.T) {
+	t.Parallel()
+	short := func(o *service.Options) { o.LockLease = 150 * time.Millisecond }
+	e := newEnvWith(t, short)
+	other := e.sibling(short)
+
+	reached, proceed := make(chan struct{}), make(chan struct{})
+	service.SetJanitorTaskHook(e.svc, func(task string) {
+		if task == "trash" {
+			close(reached)
+			<-proceed
+		}
+	})
+	done := make(chan service.JanitorReport)
+	go func() {
+		r, _ := e.svc.RunJanitor(e.ctx)
+		done <- r
+	}()
+	<-reached
+	// Far beyond the lease in the lock's clock, then give the renewal (every
+	// lease/3 in real time) a chance to run.
+	e.clock.Advance(time.Hour)
+	time.Sleep(200 * time.Millisecond)
+	r, err := other.RunJanitor(e.ctx)
+	if err != nil || !r.Skipped {
+		t.Fatalf("second process ran a pass while the first one held a renewed lock: %+v, %v", r, err)
+	}
+	close(proceed)
+	first := <-done
+	if first.Skipped || first.Interrupted || len(first.Tasks) != 7 {
+		t.Fatalf("first pass = %+v", first)
+	}
+	if r, err := other.RunJanitor(e.ctx); err != nil || r.Skipped {
+		t.Fatalf("lock not released after the pass: %+v, %v", r, err)
+	}
+}
+
+// TestJanitorStopsWhenLockIsLost: if another process took the lock anyway,
+// the pass stops instead of running concurrently.
+func TestJanitorStopsWhenLockIsLost(t *testing.T) {
+	t.Parallel()
+	e := newEnvWith(t, func(o *service.Options) { o.LockLease = 90 * time.Millisecond })
+	reached, proceed := make(chan struct{}), make(chan struct{})
+	service.SetJanitorTaskHook(e.svc, func(task string) {
+		if task == "trash" {
+			close(reached)
+			<-proceed
+		}
+	})
+	done := make(chan service.JanitorReport)
+	go func() {
+		r, _ := e.svc.RunJanitor(e.ctx)
+		done <- r
+	}()
+	<-reached
+	// Another owner takes the lock with a lease ending far in the future.
+	err := e.storage.DB.Update(e.ctx, func(tx *store.Tx) error {
+		_, err := tx.AcquireLock(e.ctx, "janitor", "intruder", e.clock.Now().Add(time.Hour), e.clock.Now().Add(48*time.Hour))
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond) // a renewal notices the takeover
+	close(proceed)
+	r := <-done
+	if !r.Interrupted || len(r.Tasks) >= 7 {
+		t.Fatalf("pass continued without its lock: %+v", r)
+	}
+}

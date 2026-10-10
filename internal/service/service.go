@@ -37,6 +37,9 @@ type Options struct {
 	// BlobGrace delays the physical deletion of replaced or purged content
 	// (default DefaultBlobGrace); see gc.go.
 	BlobGrace time.Duration
+	// LockLease is the lease of cross-process locks (default
+	// DefaultLockLease); holders renew it while they work.
+	LockLease time.Duration
 }
 
 // Deps are the collaborators of the service.
@@ -60,6 +63,8 @@ type Service struct {
 	touch     touchThrottle
 	janitorMu sync.Mutex
 	gcMu      sync.Mutex
+	// beforeJanitorTask is a test hook called before each janitor task.
+	beforeJanitorTask func(task string)
 	// owner identifies this process in cross-process advisory locks.
 	owner string
 }
@@ -81,6 +86,9 @@ func New(d Deps, o Options) (*Service, error) {
 	o.PublicURL = strings.TrimSuffix(o.PublicURL, "/")
 	if o.BlobGrace <= 0 {
 		o.BlobGrace = DefaultBlobGrace
+	}
+	if o.LockLease <= 0 {
+		o.LockLease = DefaultLockLease
 	}
 	host, _ := os.Hostname()
 	return &Service{
