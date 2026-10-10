@@ -114,3 +114,23 @@ func TestCleanURLPath(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckJSONText(t *testing.T) {
+	t.Parallel()
+	ok := []string{`{"a":"plain"}`, `{"a":"\ud83d\ude00"}`, `{"a":"\uFFFD"}`, `{"a":"\\ud800"}`, `{"a":"é"}`}
+	bad := []string{
+		"{\"a\":\"\xff\"}", `{"a":"\ud800"}`, `{"a":"\udc00"}`, `{"a":"\ud800\u0041"}`, `{"a":"x\ud83d"}`,
+		// An escaped quote must not end the string for the scanner.
+		`{"a":"\u00e9","b":"\"\ud800"}`,
+	}
+	for _, s := range ok {
+		if err := checkJSONText([]byte(s)); err != nil {
+			t.Errorf("checkJSONText(%s) = %v", s, err)
+		}
+	}
+	for _, s := range bad {
+		if err := checkJSONText([]byte(s)); err == nil {
+			t.Errorf("checkJSONText(%q) accepted", s)
+		}
+	}
+}

@@ -166,7 +166,7 @@
 - Verification: POST с одиночным байтом 0xFF внутри content получил 201; последующий download вернул три байта EF BF BD вместо исходного байта.
 - Suggestion: Валидировать кодировку JSON до замены некорректных последовательностей декодером, вернуть invalid_request. Аналогично определить строгую обработку некорректных Unicode escape sequences.
 - Regression: Невалидный UTF-8 в content/path/title, корректный U+FFFD, произвольные байты в base64.
-- Status: open
+- Status: fixed
 
 ## R-017 [severity: medium] If-Match игнорируется при рекурсивном DELETE каталога без завершающего слеша
 

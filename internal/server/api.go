@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/service"
@@ -469,27 +472,85 @@ func intParam(v, name string) (int, error) {
 
 // decodeJSON strictly decodes a request body: unknown fields and trailing
 // data are errors, so a misspelled option is reported instead of ignored.
+// The body is read whole (it is bounded by limit) and its text validated
+// first, because encoding/json silently replaces invalid UTF-8 and lone
+// surrogate escapes with U+FFFD: content, paths and metadata would be
+// stored differently from what the client sent.
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) error {
 	if r.Body == nil {
 		return requestError(service.ErrInvalidRequest, "request body is required")
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			return requestError(service.ErrTooLarge, "request body is too large")
+		}
+		return requestError(service.ErrUploadInterrupted, "could not read the request body: "+err.Error())
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		return requestError(service.ErrInvalidRequest, "request body is required")
+	}
+	if err := checkJSONText(body); err != nil {
+		return requestError(service.ErrInvalidRequest, "invalid JSON text: "+err.Error())
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		var mbe *http.MaxBytesError
-		switch {
-		case errors.As(err, &mbe):
-			return requestError(service.ErrTooLarge, "request body is too large")
-		case errors.Is(err, io.EOF):
-			return requestError(service.ErrInvalidRequest, "request body is required")
-		default:
-			return requestError(service.ErrInvalidRequest, "invalid JSON: "+err.Error())
-		}
+		return requestError(service.ErrInvalidRequest, "invalid JSON: "+err.Error())
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return requestError(service.ErrInvalidRequest, "invalid JSON: unexpected data after the object")
 	}
 	return nil
+}
+
+// checkJSONText rejects what encoding/json would silently repair: bytes that
+// are not UTF-8, and \u escapes of unpaired UTF-16 surrogates. Syntax errors
+// are left to the decoder.
+func checkJSONText(b []byte) error {
+	if !utf8.Valid(b) {
+		return errors.New("not valid UTF-8 (send binary content as base64)")
+	}
+	inString := false
+	for i := 0; i < len(b); i++ {
+		switch c := b[i]; {
+		case c == '"':
+			inString = !inString
+		case c == '\\' && inString && i+1 < len(b):
+			i++
+			if b[i] != 'u' {
+				continue
+			}
+			code, ok := hex4(b, i+1)
+			if !ok {
+				continue // the decoder reports the syntax error
+			}
+			i += 4
+			switch {
+			case code >= 0xDC00 && code <= 0xDFFF:
+				return fmt.Errorf("unpaired low surrogate \\u%04X", code)
+			case code >= 0xD800 && code <= 0xDBFF:
+				low, ok := uint16(0), i+6 < len(b) && b[i+1] == '\\' && b[i+2] == 'u'
+				if ok {
+					low, ok = hex4(b, i+3)
+				}
+				if !ok || low < 0xDC00 || low > 0xDFFF {
+					return fmt.Errorf("unpaired high surrogate \\u%04X", code)
+				}
+				i += 6
+			}
+		}
+	}
+	return nil
+}
+
+func hex4(b []byte, at int) (uint16, bool) {
+	if at+4 > len(b) {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(string(b[at:at+4]), 16, 16)
+	return uint16(v), err == nil
 }
 
 // decodeOptionalJSON is decodeJSON for endpoints whose body may be empty.

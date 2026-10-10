@@ -546,3 +546,31 @@ func TestCreateLimitIsAboutContent(t *testing.T) {
 		}
 	}
 }
+
+// TestInvalidJSONTextIsRejected covers R-016: invalid UTF-8 and unpaired
+// surrogate escapes are refused instead of being replaced with U+FFFD.
+func TestInvalidJSONTextIsRejected(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	for _, body := range []string{
+		"{\"path\":\"bad.txt\",\"content\":\"a\xffb\"}",
+		`{"path":"bad.txt","content":"\ud800"}`,
+		"{\"path\":\"bad\xff.txt\",\"content\":\"x\"}",
+		`{"path":"bad.txt","content":"x","title":"\udfff"}`,
+	} {
+		r := h.admin("POST", api.RouteObject, body)
+		if r.status != 400 || r.errCode(t) != api.CodeInvalidRequest {
+			t.Errorf("POST %q: %d %s", body, r.status, r.body)
+		}
+	}
+	if r := h.admin("PATCH", api.ObjectRoute("x"), "{\"title\":\"\xc3\"}"); r.status != 400 {
+		t.Errorf("PATCH with invalid UTF-8: %d", r.status)
+	}
+	r := h.admin("POST", api.RouteObject, `{"path":"ok.txt","content":"😀 �"}`)
+	if r.status != 201 {
+		t.Fatalf("valid escapes: %d %s", r.status, r.body)
+	}
+	if r := h.admin("GET", api.ContentRoute("ok.txt"), ""); string(r.body) != "😀 �" {
+		t.Fatalf("stored %q", r.body)
+	}
+}
