@@ -142,7 +142,12 @@ type metaInput struct {
 	description *string
 	tags        *[]string
 	disposition *api.Disposition
-	contentType string // explicit type; "" or octet-stream means detect
+	// contentType is the client's type. For uploads and creates, "" or
+	// application/octet-stream means "detect it" (a client that does not
+	// know the type sends one of those); with exactType it is taken
+	// literally, as PATCH does, where null asks for detection instead.
+	contentType string
+	exactType   bool
 	expires     api.Optional[time.Time]
 }
 
@@ -172,7 +177,7 @@ func (s *Service) validateMeta(m *metaInput) error {
 		}
 		*m.tags = tags
 	}
-	if !mimetype.IsGeneric(m.contentType) {
+	if m.exactType || !mimetype.IsGeneric(m.contentType) {
 		ct, err := mimetype.Normalize(m.contentType)
 		if err != nil {
 			return invalidf("%v", err)
@@ -493,10 +498,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		m.disposition = &patch.Disposition.Value
 	}
 	if patch.ContentType.HasValue() {
-		if mimetype.IsGeneric(patch.ContentType.Value) {
-			return api.Object{}, invalidf("content_type must be a specific media type; use null to re-detect it")
-		}
-		m.contentType = patch.ContentType.Value
+		m.contentType, m.exactType = patch.ContentType.Value, true
 	}
 	if err := s.validateMeta(&m); err != nil {
 		return api.Object{}, err

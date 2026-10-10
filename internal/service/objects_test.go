@@ -341,3 +341,30 @@ func TestExpiredObjectStillDownloadableViaAPI(t *testing.T) {
 		t.Fatalf("API download of expired object: %v", err)
 	}
 }
+
+// TestPatchExplicitGenericType covers R-018: PATCH sets
+// application/octet-stream literally; only null re-detects the type.
+func TestPatchExplicitGenericType(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("page.html", "<h1>x</h1>", api.Public)
+	for _, ct := range []string{"application/octet-stream", "application/octet-stream; x-kind=raw"} {
+		o, err := e.svc.Patch(e.ctx, e.admin, "page.html", api.ObjectPatch{ContentType: api.Some(ct)}, 0)
+		if err != nil || o.ContentType != ct {
+			t.Fatalf("PATCH %q = %q, %v", ct, o.ContentType, err)
+		}
+	}
+	for _, bad := range []string{"", "not a type", "text/"} {
+		_, err := e.svc.Patch(e.ctx, e.admin, "page.html", api.ObjectPatch{ContentType: api.Some(bad)}, 0)
+		wantErr(t, err, service.ErrInvalidRequest)
+	}
+	o, err := e.svc.Patch(e.ctx, e.admin, "page.html", api.ObjectPatch{ContentType: api.Null[string]()}, 0)
+	if err != nil || o.ContentType != "text/html; charset=utf-8" {
+		t.Fatalf("PATCH null = %q, %v", o.ContentType, err)
+	}
+	// Uploads keep treating octet-stream as "unknown, detect it".
+	up, _, err := e.svc.Upload(e.ctx, e.admin, service.UploadInput{Path: "x.pdf", Body: strings.NewReader("%PDF"), ContentType: "application/octet-stream"})
+	if err != nil || up.ContentType != "application/pdf" {
+		t.Fatalf("upload with octet-stream = %q, %v", up.ContentType, err)
+	}
+}

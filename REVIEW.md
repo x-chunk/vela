@@ -184,7 +184,7 @@
 - Verification: PATCH существующего `file.html` с content_type=application/octet-stream получил 400 invalid_request.
 - Suggestion: Отделить значение «определить автоматически» от явно заданного корректного типа в PATCH. Null может оставаться механизмом повторного определения.
 - Regression: Установка application/octet-stream с параметрами и без них, null, пустой и синтаксически неверный MIME.
-- Status: open
+- Status: fixed
 
 ## R-019 [severity: medium] Повтор Upload с обычным os.File невозможен: transport уже закрыл файл
 
