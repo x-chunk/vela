@@ -175,7 +175,7 @@
 - Verification: Создан `tree/file`, выполнен Delete("tree", Recursive=true, IfRevision=999). Удалён один объект, ошибка отсутствует.
 - Suggestion: После окончательного определения directory/file повторно применять правила предусловий; неподдерживаемое для каталога условие отклонять до мутаций.
 - Regression: Обе формы пути каталога, recursive/purge, неверная и существующая ревизия; при отказе ни один объект не меняется.
-- Status: open
+- Status: fixed
 
 ## R-018 [severity: medium] PATCH не позволяет явно задать application/octet-stream
 

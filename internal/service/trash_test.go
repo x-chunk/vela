@@ -131,3 +131,20 @@ func TestTrashRespectsKeyPrefix(t *testing.T) {
 	_, err = e.svc.ListTrash(e.ctx, e.principal(api.ScopeRO, ""), service.TrashParams{})
 	wantErr(t, err, service.ErrForbidden)
 }
+
+// TestDeleteDirectoryIgnoresNoPrecondition covers R-017: If-Match is
+// refused for a directory in both spellings, and nothing is deleted.
+func TestDeleteDirectoryIgnoresNoPrecondition(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("tree/file", "x", api.Public)
+	for _, p := range []string{"tree", "tree/"} {
+		for _, purge := range []bool{false, true} {
+			_, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: p, Recursive: true, Purge: purge, IfMatch: 999})
+			wantErr(t, err, service.ErrInvalidRequest)
+		}
+	}
+	if _, err := e.svc.Stat(e.ctx, e.admin, "tree/file"); err != nil {
+		t.Fatalf("object deleted despite the refused precondition: %v", err)
+	}
+}

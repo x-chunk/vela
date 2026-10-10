@@ -67,6 +67,11 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 				if !dp.Recursive {
 					return invalidf("%s is a directory; delete it with recursive=true (path %s/)", path, path)
 				}
+				// The target turned out to be a directory: apply the
+				// directory rules again before anything changes.
+				if dp.IfMatch != 0 {
+					return invalidf("If-Match applies to a single object, not a directory (%s/)", path)
+				}
 				isDir, path = true, path+"/"
 			default:
 				return err
