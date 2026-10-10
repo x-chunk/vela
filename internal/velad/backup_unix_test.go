@@ -48,3 +48,42 @@ func TestBackupIsPrivate(t *testing.T) {
 		}
 	}
 }
+
+// TestBackupModesForNginx covers R-022: under umask 077 the blob tree of a
+// backup is still 0755 directories and 0644 files, for both hard links and
+// cross-filesystem copies, so a restored data directory works with nginx.
+func TestBackupModesForNginx(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	for _, forceCopy := range []bool{false, true} {
+		backupForceCopy = forceCopy
+		e := newBackupEnv(t)
+		e.put(t, "doc.txt", "content")
+		dest := filepath.Join(t.TempDir(), "backup")
+		res, err := backup(context.Background(), e.svc, e.st, dest, true)
+		backupForceCopy = false
+		if err != nil {
+			t.Fatal(err)
+		}
+		if forceCopy && res.copied != 1 || !forceCopy && res.linked != 1 {
+			t.Fatalf("copy=%v: result %+v", forceCopy, res)
+		}
+		err = filepath.WalkDir(filepath.Join(dest, "blobs"), func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			fi, _ := d.Info()
+			want := os.FileMode(0o644)
+			if d.IsDir() {
+				want = 0o755
+			}
+			if fi.Mode().Perm() != want {
+				t.Errorf("copy=%v: %s mode = %o; want %o", forceCopy, p, fi.Mode().Perm(), want)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}

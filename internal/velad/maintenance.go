@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -131,10 +132,14 @@ func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest st
 		rel := filepath.FromSlash(st.Blobs.RelPath(id))
 		src := filepath.Join(st.Blobs.Dir(), rel)
 		dst := filepath.Join(blobsDir, rel)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		if err := mkdirsMode(blobsDir, filepath.Dir(rel), 0o755); err != nil {
 			return res, err
 		}
-		if err := os.Link(src, dst); err == nil {
+		linkErr := errLinkDisabled
+		if !backupForceCopy {
+			linkErr = os.Link(src, dst)
+		}
+		if err := linkErr; err == nil {
 			res.linked++
 		} else if errors.Is(err, fs.ErrNotExist) {
 			return res, fmt.Errorf("blob %s of %s is missing from the data directory; the backup is incomplete", id, ref.path)
@@ -149,6 +154,30 @@ func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest st
 		res.blobs++
 	}
 	return res, nil
+}
+
+// backupForceCopy makes tests take the cross-filesystem copy path.
+var backupForceCopy bool
+
+var errLinkDisabled = errors.New("hard links disabled")
+
+// mkdirsMode creates root/rel and every directory between them with exactly
+// mode, whatever the umask: restored blob directories must be traversable
+// by nginx, which runs as another user.
+func mkdirsMode(root, rel string, mode os.FileMode) error {
+	dir := root
+	for _, part := range append([]string{""}, strings.Split(filepath.ToSlash(rel), "/")...) {
+		if part != "" {
+			dir = filepath.Join(dir, part)
+		}
+		if err := os.Mkdir(dir, mode); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		if err := os.Chmod(dir, mode); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkBlob compares a copied blob with what the snapshot expects.
@@ -216,6 +245,10 @@ func copyFile(src, dst string) (err error) {
 			err = cerr
 		}
 	}()
+	// Explicit, because the umask may have removed the read bits for nginx.
+	if err := out.Chmod(0o644); err != nil {
+		return err
+	}
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}

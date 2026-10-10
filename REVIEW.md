@@ -220,7 +220,7 @@
 - Verification: Реальный backup с umask 077 создал shard с 0700. Для copyFile режим 0600 следует из OpenFile и отсутствия chmod.
 - Suggestion: Явно выставлять разрешения всем каталогам и файлам резервной копии, предназначенным для восстановления, сохраняя приватность корня backup и БД.
 - Regression: Backup/restore с umask 022 и 077, hard-link и cross-filesystem copy; чтение восстановленного blob пользователем nginx.
-- Status: open
+- Status: fixed
 
 ## R-023 [severity: medium] vis -r молча оставляет переданный файл публичным
 
