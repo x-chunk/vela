@@ -3,6 +3,9 @@ version: "2"
 
 run:
   timeout: 5m
+  # Lint the nginx end-to-end test too.
+  build-tags:
+    - e2e
 
 linters:
   default: none
