@@ -233,3 +233,40 @@ func TestNoSecretsInLogs(t *testing.T) {
 		t.Errorf("logging is not working at all, so the test proves nothing:\n%s", logs)
 	}
 }
+
+// TestSingleSecurityHeaders covers R-031: every kind of response carries
+// X-Content-Type-Options and Strict-Transport-Security exactly once.
+func TestSingleSecurityHeaders(t *testing.T) {
+	ts, n, c := setup(t)
+	ctx := context.Background()
+	upload(t, c, "pub.txt", "p", api.Public, "")
+	upload(t, c, "priv.txt", "s", api.Private, "")
+	l, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: "priv.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(*l.URL)
+	auth := []string{"Authorization", "Bearer " + ts.AdminKey}
+	check := func(what string, r response) {
+		t.Helper()
+		for _, h := range []string{"X-Content-Type-Options", "Strict-Transport-Security"} {
+			if got := len(r.header.Values(h)); got != 1 {
+				t.Errorf("%s (status %d): %s appears %d times", what, r.status, h, got)
+			}
+		}
+	}
+	check("index", n.get("GET", n.https+"/"))
+	check("velad 404", n.get("GET", n.https+"/missing"))
+	check("api", n.get("GET", n.https+"/api/v1/info", auth...))
+	check("api error", n.get("GET", n.https+"/api/v1/info"))
+	check("asset", n.get("GET", n.https+"/favicon.ico"))
+	check("health", n.get("GET", n.https+"/healthz"))
+	check("public blob", n.get("GET", n.https+"/pub.txt"))
+	check("signed link", n.get("GET", n.https+u.RequestURI()))
+	check("api download", n.get("GET", n.https+api.ContentRoute("priv.txt"), auth...))
+	check("nginx 404", n.get("GET", n.https+"/_blobs/"))
+	ts.HTTP.Close()
+	check("nginx 502", n.get("GET", n.https+"/"))
+	check("nginx 502 api", n.get("GET", n.https+"/api/v1/info", auth...))
+	check("nginx 502 link", n.get("GET", n.https+u.RequestURI()))
+}

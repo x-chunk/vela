@@ -301,7 +301,7 @@
 - Verification: Реальный nginx: `/` (200), `/missing` (404), `/api/v1/info` (200) вернули два X-Content-Type-Options: nosniff.
 - Suggestion: Определить единственного владельца заголовка или скрывать его upstream-копию перед add_header, сохранив защиту на собственных ошибках nginx.
 - Regression: Проверять число значений заголовков для blob, API, HTML, assets, health и ошибок proxy/upstream.
-- Status: open
+- Status: fixed
 
 ## Приоритет исправления и покрытие
 
