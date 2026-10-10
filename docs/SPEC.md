@@ -229,10 +229,19 @@ vela/
 │   ├── cli/                    # cobra commands for `vela`
 │   │   ├── config/             # CLI config file (profiles, permissions check)
 │   │   └── output/             # human/JSON output, tables, sizes, progress
-│   └── testutil/               # helpers to spin up velad in tests
-└── deploy/
-    ├── nginx/store.xchunk.org.conf   # reference nginx config (§14)
-    └── vela.env.example              # reference env file for the container
+│   ├── testutil/               # helpers to spin up velad in tests
+│   │   # added during implementation (see §21):
+│   ├── domain/                 # entities shared by service and store
+│   ├── wire/                   # assembles service from store + blob (adapters)
+│   ├── velad/                  # velad subcommands (serve, key, signing, ...)
+│   ├── mimetype/               # content type detection
+│   ├── clock/, units/          # injectable clock; byte sizes
+│   └── archtest/               # test enforcing the import rules between layers
+├── deploy/
+│   ├── nginx/store.xchunk.org.conf   # reference nginx config (§14)
+│   ├── nginx/vela.conf               # locations, included by the above and by test/e2e
+│   └── vela.env.example              # reference env file for the container
+└── test/e2e/                         # accel delivery through a real nginx (build tag e2e)
 ```
 
 Почему `api/` и `client/` публичные: чтобы позже edu-publish (или любой другой инструмент) мог импортировать `go.xchunk.org/vela/client`, а не дёргать CLI. Всё остальное в `internal/`.
@@ -902,6 +911,8 @@ server {
 }
 ```
 
+> **Реализация (§21):** `log_format` вынесен на уровень `http` (внутри `server` nginx его не допускает), `location`-блоки и общие `proxy_set_header` вынесены в `deploy/nginx/vela.conf`, который подключается через `include` и используется e2e-тестом; добавлены `server_tokens off`, проброс `X-Request-ID`.
+
 Замечания для реализации и README:
 - `add_header` в дочерней `location` **заменяет** все унаследованные, поэтому общие заголовки повторены в каждой location (или вынесены в `include snippets/vela-headers.conf`).
 - `add_header` с пустым значением переменной заголовок не добавляет: это нужное поведение (например, для public нет `X-Robots-Tag`).
@@ -1151,3 +1162,16 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 | 2026-10-10 | §11.3, §14 | В accel-режиме velad не шлёт `Cache-Control` напрямую, только `X-Vela-Cache-Control`. | nginx при `X-Accel-Redirect` сам пробрасывает upstream `Cache-Control`; вместе с `add_header` из `X-Vela-Cache-Control` получился бы дубль. |
 | 2026-10-10 | §7.4 | `GET /api/v1/links` требует scope `rw`. | Листинг возвращает рабочие подписанные URL, то есть выдаёт доступ к объектам. |
 | 2026-10-10 | §12.4 | Если повтор `PUT` с `If-None-Match: *` получил `409 already_exists`, клиент сверяет sha256 существующего объекта и при совпадении считает загрузку успешной. | Первый запрос мог дойти до сервера, а ответ — потеряться. |
+| 2026-10-10 | §14 | `log_format` на уровне `http`; `location`-блоки в `deploy/nginx/vela.conf` (include). Добавлены `server_tokens off` и `proxy_set_header X-Request-ID $request_id` (+ `add_header X-Request-ID` во внутренней location). | В исходном конфиге `log_format` стоял внутри `server` — `nginx -t` его отвергает. Общий сниппет позволяет e2e-тесту проверять ровно разворачиваемый конфиг. Один request ID в логах nginx и velad. |
+| 2026-10-10 | §11.3, §17.2 | Интеграционный тест с реальным nginx 1.30 (`test/e2e`, `make test-e2e`, отдельный job в CI) вместо ручного чек-листа. Подтверждено: `Content-Type` и `Content-Disposition` переживают `X-Accel-Redirect`, `Cache-Control`/`X-Robots-Tag`/`Referrer-Policy` приходят ровно один раз через `X-Vela-*`, внутренние заголовки не утекают, Range/HEAD/ETag/304 работают. | MUST из §11.3. |
+| 2026-10-10 | §15.2 | Базовый образ `gcr.io/distroless/static-debian13:nonroot`; в образе создан `/data`, принадлежащий 65532. | Debian 13 — текущий стабильный выпуск distroless. `/data` с нужным владельцем позволяет запускать контейнер и с анонимным томом. |
+| 2026-10-10 | §6, §5.4 | Добавлены пакеты `internal/domain` (сущности), `internal/wire` (сборка сервиса и адаптеры store/blob → интерфейсы сервиса), `internal/velad` (подкоманды сервера), `internal/mimetype`, `internal/clock`, `internal/units`, `internal/archtest`. | Интерфейсы объявлены в `service`, а Go требует точного совпадения сигнатур методов, поэтому нужен тонкий адаптер в одном месте. `mimetype` убирает из `service` импорт `net/http`. `archtest` машинно проверяет правила слоёв. |
+| 2026-10-10 | §13.1 | Таблица `trash` хранит все колонки объекта (а не JSON `snapshot`); `trash.object_id` и `blob_id` уникальны. Имена API-ключей уникальны только среди неотозванных. Пулы: один writer (1 соединение, `BEGIN IMMEDIATE`) и reader-пул (`query_only`), оба WAL. | Колонки индексируются (поиск сиротских блобов, фильтр по пути); отозванный ключ освобождает имя; писатели сериализованы без `SQLITE_BUSY` на апгрейде блокировки. |
+| 2026-10-10 | §10.3 | Добавлен код `method_not_allowed` (405) для API. | 405 на `/api/v1/*` должен иметь тот же JSON-формат ошибки. |
+| 2026-10-10 | §10.1, §10.4 | Все запросы под `/api/` аутентифицируются до маршрутизации (неизвестный эндпоинт без ключа → 401). Неканонические пути (`a//b`, `.`/`..`) → 400 `invalid_path` вместо редиректа. JSON-тела разбираются строго: неизвестные поля → 400 `invalid_request`. | Не раскрывать набор эндпоинтов; не превращать молча `a//b` в `a/b` для PUT; опечатка в опции не должна становиться no-op. |
+| 2026-10-10 | §7.4, §10.4 | Листинг каталога-предка префикса ключа (например, корня для ключа `edu/`) сужается до префикса, а не даёт 403; несвязанный каталог — 403. Записи корзины вне префикса ключа — 404. | «Листинг автоматически ограничивается префиксом»; ключ видит путь к своему поддереву и ничего больше. |
+| 2026-10-10 | §10.4 | `GET /api/v1/trash` принимает также `path` (точный исходный путь) — для `vela trash restore <path>`. `DELETE /api/v1/objects/` (корень) с `recursive` отклоняется (400). `PUT` с `If-Match` на несуществующий объект → 412. | Удобство CLI; защита от удаления всего хранилища одной командой; семантика HTTP-предусловий. |
+| 2026-10-10 | §8.3, §10.4 | В `Link` поле `path` пустое, если объект в корзине или удалён; `url` — `null`, если ключ подписи уничтожен (`--revoke-all`). Восстановление из корзины снимает уже истёкший `expires_at`. | Ссылка не работает, пока объект не «живой»; URL без ключа построить нельзя. Без снятия срока janitor сразу вернул бы объект в корзину. |
+| 2026-10-10 | §12.4 | `vela put -r DIR REMOTE/` кладёт **содержимое** `DIR` под `REMOTE/` (как `cp -r DIR/. REMOTE/`). При частичном сбое с `--json` выводится один документ `{"error":{"code":"partial_failure","details":{"failed":[...],"objects":[...]}}}`, код выхода 7. | Однозначность примера `put -r ./dir edu/dir/`; в stdout всегда ровно один JSON-документ. |
+| 2026-10-10 | §7.5 | `velad key create` печатает в stdout **только** ключ, остальное — в stderr. | `KEY=$(docker exec vela velad key create ...)` захватывает ровно ключ. |
+| 2026-10-10 | §15.1, §15.3 | golangci-lint закреплён на v2.14.0 и запускается через `go run` (Makefile) и `install-mode: goinstall` (CI). Добавлены цели `make test-e2e` и `make dist`. | Бинарник линтера, собранный другим тулчейном, не читает export data Go 1.27.2. `make dist` — те же архивы CLI, что публикует релиз. |
