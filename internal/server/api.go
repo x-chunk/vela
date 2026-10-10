@@ -90,9 +90,6 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ri.keyID = p.KeyID
-	if r.Body != nil {
-		r.Body = &bodyIdleReader{r: r.Body, rc: http.NewResponseController(w), timeout: s.opts.BodyIdleTimeout}
-	}
 	s.api.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 }
 

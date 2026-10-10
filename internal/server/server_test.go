@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"go.xchunk.org/vela/api"
+	"go.xchunk.org/vela/internal/server"
 	"go.xchunk.org/vela/internal/service"
 	"go.xchunk.org/vela/internal/testutil"
 )
@@ -475,5 +477,38 @@ func TestMaximalMetadataFitsProductionLimits(t *testing.T) {
 	_ = res.Body.Close()
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("maximal metadata: %d", res.StatusCode)
+	}
+}
+
+// TestStalledBodiesAreDropped covers R-011: a client that announces a body
+// and never sends it cannot hold a connection open past BodyIdleTimeout,
+// whatever answers the request.
+func TestStalledBodiesAreDropped(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, testutil.WithServerOptions(func(o *server.Options) { o.BodyIdleTimeout = 100 * time.Millisecond }))
+	addr := strings.TrimPrefix(h.ts.URL, "http://")
+	requests := []string{
+		"GET /healthz HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\n",
+		"GET /api/v1/info HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\n",
+		"POST /index.html HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\n",
+		"PUT /api/v1/content/x HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + h.ts.AdminKey + "\r\nX-Vela-Visibility: bogus\r\nContent-Length: 5\r\n\r\n",
+		"PUT /api/v1/content/y HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + h.ts.AdminKey + "\r\nTransfer-Encoding: chunked\r\n\r\n",
+	}
+	for _, raw := range requests {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := conn.Write([]byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		start := time.Now()
+		_, err = io.ReadAll(conn)
+		_ = conn.Close()
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Errorf("connection still open after %v: %q", time.Since(start), strings.SplitN(raw, "\r\n", 2)[0])
+		}
 	}
 }

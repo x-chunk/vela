@@ -215,6 +215,25 @@ func (s *Server) withRecover(next http.Handler) http.Handler {
 	})
 }
 
+// withBodyDeadline bounds how long a request body may stall. It runs first,
+// before any handler can answer early (an auth failure, a public page, a
+// metadata error) without reading the body: net/http then tries to drain the
+// unread body to reuse the connection, and without a deadline a client that
+// announced a body and never sent it would hold the connection and its
+// goroutine forever (there is deliberately no global ReadTimeout). Every
+// read through the wrapper extends the deadline, so uploads may take as long
+// as they need while bytes keep arriving.
+func (s *Server) withBodyDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody && (r.ContentLength != 0 || len(r.TransferEncoding) > 0) {
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(s.opts.BodyIdleTimeout))
+			r.Body = &bodyIdleReader{r: r.Body, rc: rc, timeout: s.opts.BodyIdleTimeout}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // bodyIdleReader extends the connection read deadline before every read, so
 // a body may take as long as it needs as long as bytes keep arriving.
 type bodyIdleReader struct {

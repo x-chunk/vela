@@ -82,7 +82,7 @@ func (s *Server) SetDraining() { s.draining.Store(true) }
 
 // Handler returns the root handler with all middleware applied.
 func (s *Server) Handler() http.Handler {
-	return s.withRequestContext(s.withLogging(s.withRecover(http.HandlerFunc(s.dispatch))))
+	return s.withBodyDeadline(s.withRequestContext(s.withLogging(s.withRecover(http.HandlerFunc(s.dispatch)))))
 }
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
