@@ -19,7 +19,8 @@ func (a *App) loginCommand() *cobra.Command {
 		Use:   "login",
 		Short: "Save a server URL and API key in a profile",
 		Long: "Ask for the server URL and an API key (input hidden), verify them against the server\n" +
-			"and save them in the config profile (default \"main\"; choose with --profile).\n\n" +
+			"and save them in the config profile (default \"main\"; choose with --profile). The URL\n" +
+			"comes from --url or VELA_URL when set, otherwise it is asked for.\n\n" +
 			"Without a terminal, the key is read from the first line of stdin and the URL from --url,\n" +
 			"so it can be scripted: echo \"$KEY\" | vela login --url https://store.xchunk.org",
 		Args: noArgs,
@@ -40,7 +41,12 @@ func (a *App) loginCommand() *cobra.Command {
 			}
 			prev := f.Profiles[name]
 
+			// The same precedence as every other command: --url, then
+			// VELA_URL, then the profile; a prompt only when none is set.
 			url, key := a.flagURL, ""
+			if url == "" {
+				url = strings.TrimSpace(a.env("VELA_URL"))
+			}
 			interactive := a.InIsTerminal()
 			if url == "" {
 				url = config.DefaultURL
