@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // ErrorCode is the stable, machine-readable error identifier from spec
@@ -71,6 +72,9 @@ type Error struct {
 	// HTTPStatus is the status the response was received with. It is filled
 	// by the client and is not part of the JSON body.
 	HTTPStatus int `json:"-"`
+	// RetryAfter is the delay requested by a Retry-After header, if any. It
+	// is filled by the client and is not part of the JSON body.
+	RetryAfter time.Duration `json:"-"`
 }
 
 // ErrorResponse is the JSON envelope: {"error": {...}}.
