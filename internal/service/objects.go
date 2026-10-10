@@ -11,6 +11,7 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/domain"
+	"go.xchunk.org/vela/internal/mimetype"
 )
 
 // Info describes the server and the calling key.
@@ -171,8 +172,8 @@ func (s *Service) validateMeta(m *metaInput) error {
 		}
 		*m.tags = tags
 	}
-	if !isGenericContentType(m.contentType) {
-		ct, err := normalizeContentType(m.contentType)
+	if !mimetype.IsGeneric(m.contentType) {
+		ct, err := mimetype.Normalize(m.contentType)
 		if err != nil {
 			return invalidf("%v", err)
 		}
@@ -235,7 +236,7 @@ func (s *Service) newObjectFrom(path string, b blobInfo, m *metaInput, now time.
 	m.apply(&o)
 	o.ContentType = m.contentType
 	if o.ContentType == "" {
-		o.ContentType = detectContentType(path, b.sniff)
+		o.ContentType = mimetype.Detect(path, b.sniff)
 	}
 	return o
 }
@@ -418,7 +419,7 @@ func (s *Service) Upload(ctx context.Context, p Principal, in UploadInput) (api.
 		m.apply(&o)
 		o.ContentType = m.contentType
 		if o.ContentType == "" {
-			o.ContentType = detectContentType(path, b.sniff)
+			o.ContentType = mimetype.Detect(path, b.sniff)
 		}
 		o.UpdatedAt = now
 		o.Revision++
@@ -493,7 +494,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		m.disposition = &patch.Disposition.Value
 	}
 	if patch.ContentType.HasValue() {
-		if isGenericContentType(patch.ContentType.Value) {
+		if mimetype.IsGeneric(patch.ContentType.Value) {
 			return api.Object{}, invalidf("content_type must be a specific media type; use null to re-detect it")
 		}
 		m.contentType = patch.ContentType.Value
@@ -546,7 +547,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 			if err != nil {
 				return err
 			}
-			o.ContentType = detectContentType(o.Path, sniff)
+			o.ContentType = mimetype.Detect(o.Path, sniff)
 		}
 		o.UpdatedAt = now
 		o.Revision++

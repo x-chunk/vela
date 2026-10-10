@@ -1,4 +1,7 @@
-package service
+// Package mimetype determines and normalizes the media types of stored
+// files. It is separate from the service so that the service does not
+// import net/http, which it needs only for the standard sniffing algorithm.
+package mimetype
 
 import (
 	"fmt"
@@ -110,10 +113,10 @@ var textTypes = map[string]bool{
 	"image/svg+xml":        true,
 }
 
-// detectContentType implements the fallback chain from spec section 10.2:
+// Detect implements the fallback chain from spec section 10.2:
 // extension table, then the system MIME table, then content sniffing of the
 // first 512 bytes.
-func detectContentType(name string, sniff []byte) string {
+func Detect(name string, sniff []byte) string {
 	ext := strings.ToLower(path.Ext(name))
 	ct := extensionTypes[ext]
 	if ct == "" && ext != "" {
@@ -122,17 +125,17 @@ func detectContentType(name string, sniff []byte) string {
 	if ct == "" {
 		ct = http.DetectContentType(sniff)
 	}
-	norm, err := normalizeContentType(ct)
+	norm, err := Normalize(ct)
 	if err != nil {
 		return "application/octet-stream"
 	}
 	return norm
 }
 
-// normalizeContentType validates a media type, lower-cases it and adds
+// Normalize validates a media type, lower-cases it and adds
 // "charset=utf-8" to text types that lack a charset. Without the charset a
 // browser may guess the encoding of a text file wrong.
-func normalizeContentType(ct string) (string, error) {
+func Normalize(ct string) (string, error) {
 	mt, params, err := mime.ParseMediaType(ct)
 	if err != nil {
 		return "", fmt.Errorf("invalid content type %q: %w", ct, err)
@@ -155,9 +158,9 @@ func normalizeContentType(ct string) (string, error) {
 	return out, nil
 }
 
-// isGenericContentType reports whether a client-sent type carries no
+// IsGeneric reports whether a client-sent type carries no
 // information, in which case the server detects the type itself.
-func isGenericContentType(ct string) bool {
+func IsGeneric(ct string) bool {
 	mt, _, err := mime.ParseMediaType(ct)
 	return ct == "" || (err == nil && mt == "application/octet-stream")
 }
