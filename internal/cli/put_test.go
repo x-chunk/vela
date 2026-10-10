@@ -151,7 +151,7 @@ func TestNewSources(t *testing.T) {
 	}
 	h.env["EDITOR"] = "myeditor --wait"
 	h.run = func(_ context.Context, _ io.Reader, interactive bool, name string, args ...string) error {
-		if name != "myeditor" || args[0] != "--wait" || !interactive || !strings.HasSuffix(args[1], "-c.md") {
+		if name != "myeditor" || args[0] != "--wait" || !interactive || filepath.Base(args[1]) != "c.md" {
 			return fmt.Errorf("unexpected editor call %s %v", name, args)
 		}
 		return os.WriteFile(args[1], []byte("# from editor\n"), 0o600)
@@ -171,5 +171,28 @@ func TestNewSources(t *testing.T) {
 	h.exec("\x00\x01binary", "new", "bin.dat", "--stdin", "--json").json(t, &o)
 	if o.Size != 8 {
 		t.Fatalf("binary content = %+v", o)
+	}
+}
+
+// TestNewEditLongName covers R-027 for the editor: a remote name at the
+// 255-byte limit still gets a usable temporary file, with its extension.
+func TestNewEditLongName(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	name := strings.Repeat("n", 252) + ".md"
+	var edited string
+	h.run = func(_ context.Context, _ io.Reader, _ bool, _ string, args ...string) error {
+		edited = args[len(args)-1]
+		return os.WriteFile(edited, []byte("# long\n"), 0o600)
+	}
+	h.ok("new", "notes/"+name, "--edit")
+	if filepath.Base(edited) != "content.md" {
+		t.Fatalf("editor file = %s", edited)
+	}
+	if _, err := os.Stat(filepath.Dir(edited)); !os.IsNotExist(err) {
+		t.Fatalf("temporary directory left behind: %v", err)
+	}
+	if editName("short.txt") != "short.txt" || editName(strings.Repeat("x", 100)+".tar.verylongextension") != "content" {
+		t.Fatal("editName")
 	}
 }

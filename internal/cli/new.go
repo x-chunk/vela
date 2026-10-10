@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -118,8 +119,12 @@ func (a *App) newCommand() *cobra.Command {
 	return cmd
 }
 
-// editContent opens the user's editor on a temporary file named after the
-// remote file, so the editor picks the right syntax highlighting.
+// editContent opens the user's editor on a temporary file. The file lives
+// in a private temporary directory and is named after the remote file when
+// that name is short, so the editor picks the right syntax highlighting; a
+// long name is replaced by "content" with the original extension, because
+// prefixes or suffixes added to a name at the filesystem's limit would make
+// it too long.
 func (a *App) editContent(cmd *cobra.Command, remote string) ([]byte, error) {
 	editor := strings.TrimSpace(a.env("VISUAL"))
 	if editor == "" {
@@ -128,13 +133,13 @@ func (a *App) editContent(cmd *cobra.Command, remote string) ([]byte, error) {
 	if editor == "" {
 		editor = "vi"
 	}
-	f, err := os.CreateTemp("", "vela-*-"+path.Base(remote))
+	dir, err := os.MkdirTemp("", "vela-edit-*")
 	if err != nil {
 		return nil, err
 	}
-	name := f.Name()
-	defer func() { _ = os.Remove(name) }()
-	if err := f.Close(); err != nil {
+	defer func() { _ = os.RemoveAll(dir) }()
+	name := filepath.Join(dir, editName(path.Base(remote)))
+	if err := os.WriteFile(name, nil, 0o600); err != nil {
 		return nil, err
 	}
 	// $EDITOR may carry arguments, as in "code --wait".
@@ -143,4 +148,16 @@ func (a *App) editContent(cmd *cobra.Command, remote string) ([]byte, error) {
 		return nil, fmt.Errorf("run editor %q: %w", editor, err)
 	}
 	return os.ReadFile(name) // #nosec G304 -- our own temporary file
+}
+
+// editName picks the editor's file name for a remote base name.
+func editName(base string) string {
+	const maxName, maxExt = 64, 16
+	if len(base) <= maxName {
+		return base
+	}
+	if ext := path.Ext(base); len(ext) <= maxExt {
+		return "content" + ext
+	}
+	return "content"
 }
