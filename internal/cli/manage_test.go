@@ -111,3 +111,40 @@ func TestExitCodes(t *testing.T) {
 		t.Errorf("not logged in: %+v", r)
 	}
 }
+
+// TestVisTargets covers R-023 and R-024: -r applies to files too, missing
+// paths are errors, and repeated or nested targets are changed once.
+func TestVisTargets(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("file.txt", "x", api.Public)
+	h.seed("dir/a.txt", "a", api.Public)
+	h.seed("dir/sub/b.txt", "b", api.Public)
+	stat := func(p string) api.Object {
+		var o api.Object
+		h.ok("stat", p, "--json").json(t, &o)
+		return o
+	}
+	h.ok("vis", "-r", "file.txt", "private")
+	if stat("file.txt").Visibility != api.Private {
+		t.Fatal("vis -r on a file did nothing")
+	}
+	if r := h.exec("", "vis", "-r", "missing", "private"); r.code != exitNotFound {
+		t.Fatalf("vis -r on a missing path = %+v", r)
+	}
+	if r := h.exec("", "vis", "-r", "missing/", "private"); r.code != exitNotFound {
+		t.Fatalf("vis -r on a missing directory = %+v", r)
+	}
+	if r := h.exec("", "vis", "file.txt", "nothing.txt", "public"); r.code != exitNotFound || stat("file.txt").Visibility != api.Private {
+		t.Fatalf("a missing target must stop the command before any change: %+v", r)
+	}
+	r := h.ok("vis", "file.txt", "file.txt", "unlisted")
+	if !strings.Contains(r.stdout, "1 object(s)") {
+		t.Fatalf("duplicate target = %q", r.stdout)
+	}
+	var objs []api.Object
+	h.ok("vis", "-r", "dir/", "dir/sub/", "dir", "file.txt", "private", "--json").json(t, &objs)
+	if len(objs) != 3 {
+		t.Fatalf("nested and mixed targets = %d objects", len(objs))
+	}
+}

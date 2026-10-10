@@ -277,8 +277,9 @@ func (a *App) visCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vis PATH... public|unlisted|private",
 		Short: "Change visibility",
-		Long: "Change the visibility of files, or with -r of everything below directories. The change\n" +
-			"takes effect immediately. Unlisted is not access control: anyone with the URL can read it.",
+		Long: "Change the visibility of files, or with -r of everything below directories (files and\n" +
+			"directories may be mixed). A path that matches nothing is an error. The change takes effect\n" +
+			"immediately. Unlisted is not access control: anyone with the URL can read it.",
 		Example: "  vela vis report.pdf private\n  vela vis -r edu/math/ public",
 		Args:    minArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -292,39 +293,71 @@ func (a *App) visCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
+			// Resolve every argument before changing anything: a typo must
+			// not leave the command half done or report a hollow success.
 			var targets []api.Object
 			for _, raw := range args[:len(args)-1] {
-				if recursive || strings.HasSuffix(raw, "/") {
-					if !recursive {
-						return usagef("%s is a directory (use -r)", raw)
-					}
-					prefix, err := remotePrefix(raw)
-					if err != nil {
-						return err
-					}
-					l, err := c.ListAll(ctx, client.ListOptions{Prefix: prefix, Recursive: true, Limit: 1000})
-					if err != nil {
-						return err
-					}
-					targets = append(targets, l.Objects...)
-					continue
-				}
-				p, err := remotePath(raw)
+				objs, err := a.resolveTargets(ctx, c, raw, recursive)
 				if err != nil {
 					return err
 				}
-				o, err := c.Stat(ctx, p)
-				if err != nil {
-					return a.notFoundHint(ctx, c, err, p)
-				}
-				targets = append(targets, *o)
+				targets = append(targets, objs...)
 			}
+			targets = uniqueObjects(targets)
 			return a.applyVisibility(ctx, c, targets, vis)
 		},
 		ValidArgsFunction: a.completeRemote(),
 	}
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "apply to everything below directories")
 	return cmd
+}
+
+// resolveTargets turns a vis argument into objects. With recursive, a path
+// names a file if one exists there, and otherwise the directory below it;
+// a trailing slash always names a directory. Nothing found is not_found.
+func (a *App) resolveTargets(ctx context.Context, c *client.Client, raw string, recursive bool) ([]api.Object, error) {
+	if !strings.HasSuffix(raw, "/") {
+		p, err := remotePath(raw)
+		if err != nil {
+			return nil, err
+		}
+		o, err := c.Stat(ctx, p)
+		if err == nil {
+			return []api.Object{*o}, nil
+		}
+		if !recursive || !api.IsCode(err, api.CodeNotFound) {
+			return nil, a.notFoundHint(ctx, c, err, p)
+		}
+	} else if !recursive {
+		return nil, usagef("%s is a directory (use -r)", raw)
+	}
+	prefix, err := remotePrefix(raw)
+	if err != nil {
+		return nil, err
+	}
+	l, err := c.ListAll(ctx, client.ListOptions{Prefix: prefix, Recursive: true, Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	if len(l.Objects) == 0 {
+		return nil, &cliError{code: exitNotFound, slug: string(api.CodeNotFound), msg: "nothing at " + raw}
+	}
+	return l.Objects, nil
+}
+
+// uniqueObjects drops repeated objects (the same file given twice, or
+// nested directories): patching one twice with the same expected revision
+// would fail the second time.
+func uniqueObjects(objs []api.Object) []api.Object {
+	seen := make(map[string]bool, len(objs))
+	out := objs[:0]
+	for _, o := range objs {
+		if !seen[o.ID] {
+			seen[o.ID] = true
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 func (a *App) applyVisibility(ctx context.Context, c *client.Client, targets []api.Object, vis api.Visibility) error {
