@@ -16,12 +16,14 @@ GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT ?= go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 IMAGE    ?= xchunk/vela
+PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
+SHA256SUM ?= sha256sum
 DEV_ADDR ?= 127.0.0.1:8080
 DEV_DATA ?= .dev-data
 
 export CGO_ENABLED := 0
 
-.PHONY: help build build-cli build-server install test test-e2e lint fmt tidy docker dev clean
+.PHONY: help build build-cli build-server install dist test test-e2e lint fmt tidy docker dev clean
 
 help: ## Show this help
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -36,6 +38,24 @@ build-server: ## Build the velad server into ./bin
 
 install: ## Install vela into $(go env GOBIN) or $(go env GOPATH)/bin
 	go install $(GOFLAGS_BUILD) ./cmd/vela
+
+# dist packages the CLI for every platform in $(PLATFORMS), as published on
+# GitHub Releases: vela_<version>_<os>_<arch>.tar.gz (.zip for Windows) and
+# checksums.txt.
+dist: ## Build release archives of the CLI into ./dist
+	@command -v zip >/dev/null || { echo "make dist needs zip (for the Windows archives)"; exit 1; }
+	rm -rf dist && mkdir -p dist
+	@set -e; for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; ext=; [ $$os = windows ] && ext=.exe; \
+		name=vela_$(VERSION)_$${os}_$${arch}; \
+		echo "building $$name"; \
+		mkdir -p dist/$$name; \
+		GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$$name/vela$$ext ./cmd/vela; \
+		if [ $$os = windows ]; then (cd dist && zip -qr $$name.zip $$name); \
+		else tar -C dist -czf dist/$$name.tar.gz $$name; fi; \
+		rm -rf dist/$$name; \
+	done
+	cd dist && $(SHA256SUM) *.tar.gz *.zip > checksums.txt
 
 # -race needs cgo; it is the only place where cgo is enabled, and it does
 # not affect the binaries.
