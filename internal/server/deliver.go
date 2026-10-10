@@ -29,6 +29,10 @@ type deliveryPolicy struct {
 	cacheControl   string
 	robots         string
 	referrerPolicy string
+	// accelPath is inserted between the accel prefix and the blob path. It
+	// routes signed links to their own nginx location, where error logging
+	// is off because nginx would log the signature (deploy/nginx/vela.conf).
+	accelPath string
 }
 
 var (
@@ -39,6 +43,7 @@ var (
 	// Signed links and API downloads must not be cached by shared caches,
 	// indexed, or leak their URL (which is a credential) via Referer.
 	privatePolicy = deliveryPolicy{cacheControl: cachePrivate, robots: noIndex, referrerPolicy: referrerNone}
+	linkPolicy    = deliveryPolicy{cacheControl: cachePrivate, robots: noIndex, referrerPolicy: referrerNone, accelPath: "s/"}
 )
 
 func policyFor(v api.Visibility) deliveryPolicy {
@@ -70,7 +75,7 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 	h.Set("X-Content-Type-Options", "nosniff")
 
 	if s.opts.AccelPrefix != "" {
-		h.Set(headerAccelRedirect, s.opts.AccelPrefix+c.BlobPath)
+		h.Set(headerAccelRedirect, s.opts.AccelPrefix+pol.accelPath+c.BlobPath)
 		h.Set(headerAccelCacheControl, pol.cacheControl)
 		if pol.robots != "" {
 			h.Set(headerAccelRobots, pol.robots)

@@ -133,7 +133,7 @@ func (s *Server) serveLink(w http.ResponseWriter, r *http.Request) {
 		s.publicServiceError(w, r, err, true)
 		return
 	}
-	s.deliver(w, r, c, privatePolicy)
+	s.deliver(w, r, c, linkPolicy)
 }
 
 func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {

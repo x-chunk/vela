@@ -1,0 +1,235 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"go.xchunk.org/vela/api"
+	velaclient "go.xchunk.org/vela/client"
+	"go.xchunk.org/vela/internal/testutil"
+)
+
+func setup(t *testing.T) (*testutil.Server, *nginx, *velaclient.Client) {
+	t.Helper()
+	ts := testutil.NewServer(t, testutil.WithAccel("/_blobs/"))
+	n := startNginx(t, strings.TrimPrefix(ts.URL, "http://"), filepath.Join(ts.DataDir, "blobs"))
+	c, err := velaclient.New(n.https, ts.AdminKey, velaclient.WithHTTPClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts, n, c
+}
+
+func upload(t *testing.T, c *velaclient.Client, path, content string, vis api.Visibility, d api.Disposition) *api.Object {
+	t.Helper()
+	o, _, err := c.Upload(context.Background(), path, strings.NewReader(content), velaclient.UploadOptions{Size: int64(len(content)), Visibility: vis, Disposition: d})
+	if err != nil {
+		t.Fatalf("upload %s through nginx: %v", path, err)
+	}
+	return o
+}
+
+func expectHeaders(t *testing.T, what string, r response, want map[string]string) {
+	t.Helper()
+	for k, v := range want {
+		if got := strings.Join(r.header.Values(k), ", "); got != v {
+			t.Errorf("%s: %s = %q; want %q", what, k, got, v)
+		}
+	}
+	// Internal headers must never leak to the client.
+	for _, k := range []string{"X-Accel-Redirect", "X-Vela-Cache-Control", "X-Vela-Robots", "X-Vela-Referrer-Policy", "X-Vela-ETag"} {
+		if v := r.header.Get(k); v != "" {
+			t.Errorf("%s: internal header %s leaked: %q", what, k, v)
+		}
+	}
+}
+
+func TestDeliveryThroughNginx(t *testing.T) {
+	ts, n, c := setup(t)
+	ctx := context.Background()
+	upload(t, c, "docs/Контрольная Q1.pdf", "%PDF-1.4 public content", api.Public, api.Attachment)
+	upload(t, c, "docs/unlisted.txt", "unlisted content", api.Unlisted, "")
+	upload(t, c, "docs/private.txt", "private content", api.Private, "")
+	big := strings.Repeat("0123456789", 300_000)
+	upload(t, c, "big.bin", big, api.Public, "")
+
+	t.Run("public", func(t *testing.T) {
+		r := n.get("GET", n.https+"/docs/"+url.PathEscape("Контрольная Q1.pdf"))
+		if r.status != 200 || r.body != "%PDF-1.4 public content" {
+			t.Fatalf("status %d body %q", r.status, r.body)
+		}
+		expectHeaders(t, "public", r, map[string]string{
+			"Content-Type":           "application/pdf",
+			"Content-Disposition":    `attachment; filename="___________ Q1.pdf"; filename*=UTF-8''%D0%9A%D0%BE%D0%BD%D1%82%D1%80%D0%BE%D0%BB%D1%8C%D0%BD%D0%B0%D1%8F%20Q1.pdf`,
+			"Cache-Control":          "public, max-age=300",
+			"X-Robots-Tag":           "",
+			"Referrer-Policy":        "",
+			"X-Content-Type-Options": "nosniff",
+		})
+		if r.header.Get("X-Request-ID") == "" {
+			t.Errorf("X-Request-ID missing: %v", r.header)
+		}
+	})
+
+	t.Run("range and head", func(t *testing.T) {
+		r := n.get("GET", n.https+"/big.bin", "Range", "bytes=10-19")
+		if r.status != 206 || r.body != "0123456789" || r.header.Get("Content-Range") != fmt.Sprintf("bytes 10-19/%d", len(big)) {
+			t.Fatalf("range: status %d body %q headers %v", r.status, r.body, r.header)
+		}
+		r = n.get("HEAD", n.https+"/big.bin")
+		if r.status != 200 || r.body != "" || r.header.Get("Content-Length") != fmt.Sprint(len(big)) {
+			t.Fatalf("head: status %d length %q", r.status, r.header.Get("Content-Length"))
+		}
+		if r = n.get("GET", n.https+"/big.bin"); len(r.body) != len(big) {
+			t.Fatalf("full body length = %d", len(r.body))
+		}
+	})
+
+	t.Run("unlisted", func(t *testing.T) {
+		r := n.get("GET", n.https+"/docs/unlisted.txt")
+		if r.status != 200 || r.body != "unlisted content" {
+			t.Fatalf("status %d body %q", r.status, r.body)
+		}
+		expectHeaders(t, "unlisted", r, map[string]string{
+			"Content-Type":  "text/plain; charset=utf-8",
+			"Cache-Control": "public, max-age=300",
+			"X-Robots-Tag":  "noindex, nofollow",
+		})
+	})
+
+	t.Run("private and internal", func(t *testing.T) {
+		if r := n.get("GET", n.https+"/docs/private.txt"); r.status != 404 {
+			t.Fatalf("private by direct URL: %d", r.status)
+		}
+		for _, p := range []string{"/_blobs/", "/_blobs/aa/bb/" + strings.Repeat("0", 26), "/_blobs/s/aa/bb/" + strings.Repeat("0", 26)} {
+			if r := n.get("GET", n.https+p); r.status != 404 {
+				t.Fatalf("%s reachable from outside: %d", p, r.status)
+			}
+		}
+	})
+
+	t.Run("signed link", func(t *testing.T) {
+		l, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: "docs/private.txt", TTL: "1h"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, _ := url.Parse(*l.URL)
+		r := n.get("GET", n.https+u.RequestURI())
+		if r.status != 200 || r.body != "private content" {
+			t.Fatalf("status %d body %q", r.status, r.body)
+		}
+		expectHeaders(t, "signed link", r, map[string]string{
+			"Cache-Control":   "private, no-store",
+			"X-Robots-Tag":    "noindex, nofollow",
+			"Referrer-Policy": "no-referrer",
+			"Content-Type":    "text/plain; charset=utf-8",
+		})
+	})
+
+	t.Run("api download", func(t *testing.T) {
+		r := n.get("GET", n.https+api.ContentRoute("docs/private.txt"), "Authorization", "Bearer "+ts.AdminKey)
+		if r.status != 200 || r.body != "private content" {
+			t.Fatalf("status %d body %q", r.status, r.body)
+		}
+		expectHeaders(t, "api download", r, map[string]string{
+			"Cache-Control":   "private, no-store",
+			"Referrer-Policy": "no-referrer",
+		})
+	})
+
+	t.Run("index", func(t *testing.T) {
+		r := n.get("GET", n.https+"/docs/")
+		if r.status != 200 || !strings.Contains(r.body, "Контрольная Q1.pdf") || strings.Contains(r.body, "unlisted.txt") {
+			t.Fatalf("index: %d", r.status)
+		}
+		if r.header.Get("Content-Security-Policy") == "" {
+			t.Error("index without CSP")
+		}
+	})
+
+	t.Run("http redirects to https", func(t *testing.T) {
+		r := n.get("GET", n.http+"/docs/unlisted.txt")
+		if r.status != 301 || !strings.HasPrefix(r.header.Get("Location"), "https://") {
+			t.Fatalf("http: %d %v", r.status, r.header)
+		}
+	})
+}
+
+// TestNoSecretsInLogs covers R-007: no log nginx writes contains the query
+// of a signed link, neither the access logs (HTTP redirect server included)
+// nor the error logs (velad down, blob missing).
+func TestNoSecretsInLogs(t *testing.T) {
+	ts, n, c := setup(t)
+	ctx := context.Background()
+	upload(t, c, "a.txt", "a", api.Private, "")
+	upload(t, c, "b.txt", "b", api.Private, "")
+	good, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: "a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken, err := c.CreateLink(ctx, api.CreateLinkRequest{Path: "b.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secrets []string
+	query := func(rawURL string) string {
+		u, _ := url.Parse(rawURL)
+		secrets = append(secrets, u.Query().Get("sig"))
+		return u.RequestURI()
+	}
+
+	// Plain HTTP: answered by the redirect server.
+	if r := n.get("GET", n.http+"/s/01jaaaaaaaaaaaaaaaaaaaaaaa/x.pdf?exp=99999999999&sig=SECRETviaHTTP"); r.status != 301 {
+		t.Fatalf("http link: %d", r.status)
+	}
+	secrets = append(secrets, "SECRETviaHTTP")
+	// A working link and a forged one.
+	if r := n.get("GET", n.https+query(*good.URL)); r.status != 200 {
+		t.Fatalf("good link: %d", r.status)
+	}
+	if r := n.get("GET", n.https+"/s/01jaaaaaaaaaaaaaaaaaaaaaaa/x.pdf?exp=99999999999&sig=SECRETforged"); r.status != 404 {
+		t.Fatalf("forged link: %d", r.status)
+	}
+	secrets = append(secrets, "SECRETforged")
+	// A link whose blob is missing on disk: nginx fails to open the file.
+	dl, err := ts.Service.Download(ctx, adminOf(ts), "b.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(ts.DataDir, "blobs", filepath.FromSlash(dl.BlobPath))); err != nil {
+		t.Fatal(err)
+	}
+	if r := n.get("GET", n.https+query(*broken.URL)); r.status != 404 {
+		t.Fatalf("link to a missing blob: %d", r.status)
+	}
+	// velad down: nginx cannot reach the upstream.
+	ts.HTTP.Close()
+	if r := n.get("GET", n.https+"/s/01jaaaaaaaaaaaaaaaaaaaaaaa/x.pdf?exp=99999999999&sig=SECRETupstreamdown"); r.status != 502 {
+		t.Fatalf("link with velad down: %d", r.status)
+	}
+	secrets = append(secrets, "SECRETupstreamdown")
+	// A non-link request with velad down proves error logging is active.
+	if r := n.get("GET", n.https+"/healthz?probe=1"); r.status != 502 {
+		t.Fatalf("healthz with velad down: %d", r.status)
+	}
+
+	logs := n.logs()
+	for _, s := range secrets {
+		if s != "" && strings.Contains(logs, s) {
+			t.Errorf("a log contains the signature %q", s)
+		}
+	}
+	if strings.Contains(logs, "exp=") {
+		t.Error("a log contains a signed-link query")
+	}
+	if !strings.Contains(logs, "GET /s/") || !strings.Contains(logs, "connect() failed") {
+		t.Errorf("logging is not working at all, so the test proves nothing:\n%s", logs)
+	}
+}

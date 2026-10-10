@@ -248,6 +248,18 @@ func TestAccelDelivery(t *testing.T) {
 	if r.header.Get("X-Vela-Referrer-Policy") != "no-referrer" || r.header.Get("X-Vela-Cache-Control") != "private, no-store" {
 		t.Fatalf("API download accel headers = %v", r.header)
 	}
+	if !strings.HasPrefix(r.header.Get("X-Accel-Redirect"), "/_blobs/") || strings.HasPrefix(r.header.Get("X-Accel-Redirect"), "/_blobs/s/") {
+		t.Fatalf("API download accel path = %q", r.header.Get("X-Accel-Redirect"))
+	}
+	// Signed links use their own internal location (no nginx error log).
+	r = h.admin("POST", api.RouteLinks, `{"path":"pub.txt"}`)
+	var l api.Link
+	r.json(t, &l)
+	u, _ := url.Parse(*l.URL)
+	r = h.do("GET", u.RequestURI(), "", nil)
+	if !strings.HasPrefix(r.header.Get("X-Accel-Redirect"), "/_blobs/s/") || len(r.header.Get("X-Accel-Redirect")) != len("/_blobs/s/aa/bb/")+26 {
+		t.Fatalf("signed link accel path = %q", r.header.Get("X-Accel-Redirect"))
+	}
 }
 
 func TestShutdownDraining(t *testing.T) {
