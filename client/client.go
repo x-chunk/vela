@@ -114,8 +114,8 @@ type request struct {
 	header http.Header
 	// jsonBody is re-sent as is on every attempt.
 	jsonBody []byte
-	// body is an upload body; it is rewound before a retry when it is an
-	// io.Seeker, otherwise the request is not retried.
+	// body is an upload body; it is rewound to its starting position before
+	// a retry when it is an io.Seeker, otherwise the request is not retried.
 	body       io.Reader
 	size       int64
 	idempotent bool
@@ -162,7 +162,17 @@ func (c *Client) sendN(ctx context.Context, rq request) (*http.Response, int, er
 	if rq.idempotent {
 		attempts += c.retries
 	}
+	// A retry resends the body from where the first attempt started, which
+	// is not necessarily offset 0 of the reader the caller passed.
 	seeker, _ := rq.body.(io.Seeker)
+	var start int64
+	if seeker != nil {
+		pos, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			seeker = nil
+		}
+		start = pos
+	}
 	if rq.body != nil && seeker == nil {
 		attempts = 1
 	}
@@ -181,7 +191,7 @@ func (c *Client) sendN(ctx context.Context, rq request) (*http.Response, int, er
 			case <-time.After(delay):
 			}
 			if seeker != nil {
-				if _, err := seeker.Seek(0, io.SeekStart); err != nil {
+				if _, err := seeker.Seek(start, io.SeekStart); err != nil {
 					return nil, attempt - 1, fmt.Errorf("rewind upload body: %w", err)
 				}
 			}

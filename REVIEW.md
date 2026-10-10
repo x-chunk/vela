@@ -202,7 +202,7 @@
 - Verification: Reader содержит prefixDATA и установлен на offset 6, Size=-1, CreateOnly=true. После первого 503 тела двух попыток были DATA и prefixDATA, итоговая ошибка отсутствовала.
 - Suggestion: Запомнить исходную позицию перед первой попыткой и возвращаться к ней; корректно обрабатывать невозможность определить позицию. Не молча менять смысл входного потока.
 - Regression: Ненулевой offset для bytes.Reader/strings.Reader и файла, известная/неизвестная длина, с checksum и без.
-- Status: open
+- Status: fixed
 
 ## R-021 [severity: medium] Обрыв JSON-ответа после HTTP headers не попадает в retries
 
