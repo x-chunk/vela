@@ -174,6 +174,8 @@ func (a *App) newRootCommand() *cobra.Command {
 			root.AddCommand(c)
 		}
 	}
+	add("files", a.lsCommand(), a.statCommand())
+	add("share", a.urlCommand(), a.openCommand())
 	add("account", a.loginCommand(), a.logoutCommand(), a.whoamiCommand(), a.versionCommand())
 	root.SetHelpCommandGroupID("account")
 	root.SetCompletionCommandGroupID("account")
