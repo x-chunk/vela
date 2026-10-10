@@ -186,7 +186,7 @@ type response struct {
 }
 
 var client = &http.Client{
-	Transport: &http.Transport{TLSClientConfig: &tls.Config{ServerName: "store.xchunk.org", InsecureSkipVerify: true}}, // #nosec G402 -- self-signed test certificate
+	Transport:     &http.Transport{TLSClientConfig: &tls.Config{ServerName: "store.xchunk.org", InsecureSkipVerify: true}}, // #nosec G402 -- self-signed test certificate
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
