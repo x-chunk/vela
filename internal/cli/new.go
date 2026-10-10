@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -54,14 +55,33 @@ func (a *App) newCommand() *cobra.Command {
 					stdin = true
 				}
 			}
+			// The timeout covers everything, including waiting for input
+			// and for the editor.
+			ctx, cancel := a.ctx(cmd)
+			defer cancel()
+			c, s, err := a.client()
+			if err != nil {
+				return err
+			}
+			md, err := m.parse(cmd, s, a.Now())
+			if err != nil {
+				return err
+			}
+			// The server's limit bounds what is read, so an endless pipe
+			// cannot exhaust memory before the server would refuse it.
+			info, err := c.Info(ctx)
+			if err != nil {
+				return err
+			}
+			limit := info.Limits.MaxCreateBytes
 			var data []byte
 			switch {
 			case stdin:
-				if data, err = io.ReadAll(a.In); err != nil {
-					return fmt.Errorf("read stdin: %w", err)
+				if data, err = readLimited(ctx, a.In, limit); err != nil {
+					return err
 				}
 			case edit:
-				if data, err = a.editContent(cmd, remote); err != nil {
+				if data, err = a.editContent(ctx, remote, limit); err != nil {
 					return err
 				}
 				if strings.TrimSpace(string(data)) == "" {
@@ -70,14 +90,8 @@ func (a *App) newCommand() *cobra.Command {
 			default:
 				data = []byte(content)
 			}
-
-			c, s, err := a.client()
-			if err != nil {
-				return err
-			}
-			md, err := m.parse(cmd, s, a.Now())
-			if err != nil {
-				return err
+			if int64(len(data)) > limit {
+				return tooLarge(limit)
 			}
 			req := api.CreateObjectRequest{
 				Path:        remote,
@@ -98,8 +112,6 @@ func (a *App) newCommand() *cobra.Command {
 			} else {
 				req.Content, req.Encoding = base64.StdEncoding.EncodeToString(data), api.EncodingBase64
 			}
-			ctx, cancel := a.ctx(cmd)
-			defer cancel()
 			o, err := c.Create(ctx, req)
 			if err != nil {
 				err = hintFor(err, api.CodeAlreadyExists, "\"vela new\" never overwrites; use \"vela put --force\"")
@@ -125,7 +137,7 @@ func (a *App) newCommand() *cobra.Command {
 // long name is replaced by "content" with the original extension, because
 // prefixes or suffixes added to a name at the filesystem's limit would make
 // it too long.
-func (a *App) editContent(cmd *cobra.Command, remote string) ([]byte, error) {
+func (a *App) editContent(ctx context.Context, remote string, limit int64) ([]byte, error) {
 	editor := strings.TrimSpace(a.env("VISUAL"))
 	if editor == "" {
 		editor = strings.TrimSpace(a.env("EDITOR"))
@@ -144,10 +156,55 @@ func (a *App) editContent(cmd *cobra.Command, remote string) ([]byte, error) {
 	}
 	// $EDITOR may carry arguments, as in "code --wait".
 	parts := strings.Fields(editor)
-	if err := a.Run(cmd.Context(), nil, true, parts[0], append(parts[1:], name)...); err != nil {
+	if err := a.Run(ctx, nil, true, parts[0], append(parts[1:], name)...); err != nil {
+		if ctx.Err() != nil {
+			return nil, timedOut(ctx)
+		}
 		return nil, fmt.Errorf("run editor %q: %w", editor, err)
 	}
-	return os.ReadFile(name) // #nosec G304 -- our own temporary file
+	f, err := os.Open(name) // #nosec G304 -- our own temporary file
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return readLimited(ctx, f, limit)
+}
+
+// readLimited reads at most limit bytes and fails if there is more. The read
+// runs in the background so that it can be abandoned when ctx ends: reads
+// from a terminal or pipe cannot be interrupted otherwise.
+func readLimited(ctx context.Context, r io.Reader, limit int64) ([]byte, error) {
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		b, err := io.ReadAll(io.LimitReader(r, limit+1))
+		done <- result{b, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, timedOut(ctx)
+	case res := <-done:
+		if res.err != nil {
+			return nil, fmt.Errorf("read content: %w", res.err)
+		}
+		if int64(len(res.data)) > limit {
+			return nil, tooLarge(limit)
+		}
+		return res.data, nil
+	}
+}
+
+func tooLarge(limit int64) error {
+	return &cliError{code: exitError, slug: string(api.CodePayloadTooLarge),
+		msg:  fmt.Sprintf("the content exceeds the server's limit of %d bytes for \"vela new\"", limit),
+		hint: "use \"vela put\" for larger files"}
+}
+
+func timedOut(ctx context.Context) error {
+	return &cliError{code: exitError, slug: "timeout", msg: "timed out waiting for the content", err: ctx.Err()}
 }
 
 // editName picks the editor's file name for a remote base name.

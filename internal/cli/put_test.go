@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"go.xchunk.org/vela/api"
 )
@@ -194,5 +195,56 @@ func TestNewEditLongName(t *testing.T) {
 	}
 	if editName("short.txt") != "short.txt" || editName(strings.Repeat("x", 100)+".tar.verylongextension") != "content" {
 		t.Fatal("editName")
+	}
+}
+
+type endless struct{}
+
+func (endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	return len(p), nil
+}
+
+type blocking struct{ ch chan struct{} }
+
+func (b blocking) Read([]byte) (int, error) { <-b.ch; return 0, io.EOF }
+
+// TestNewBoundsInput covers R-028: input beyond the server's limit fails
+// without being buffered whole, and --timeout covers waiting for input and
+// for the editor.
+func TestNewBoundsInput(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	r := h.execIn(endless{}, "new", "big.txt", "--stdin")
+	if r.code != exitError || !strings.Contains(r.stderr, "limit") || !strings.Contains(r.stderr, "vela put") {
+		t.Fatalf("endless stdin = %+v", r)
+	}
+	stuck := blocking{ch: make(chan struct{})}
+	defer close(stuck.ch)
+	start := time.Now()
+	r = h.execIn(stuck, "new", "slow.txt", "--stdin", "--timeout", "200ms")
+	if r.code == 0 || !strings.Contains(r.stderr, "timed out") || time.Since(start) > 5*time.Second {
+		t.Fatalf("blocked stdin = %+v after %v", r, time.Since(start))
+	}
+	var editorDeadline bool
+	h.run = func(ctx context.Context, _ io.Reader, _ bool, _ string, _ ...string) error {
+		_, editorDeadline = ctx.Deadline()
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	r = h.exec("", "new", "edit.md", "--edit", "--timeout", "200ms")
+	if r.code == 0 || !editorDeadline || !strings.Contains(r.stderr, "timed out") {
+		t.Fatalf("hung editor = %+v (deadline %v)", r, editorDeadline)
+	}
+	h.run = func(_ context.Context, _ io.Reader, _ bool, _ string, args ...string) error {
+		return os.WriteFile(args[len(args)-1], []byte(strings.Repeat("b", 65<<10)), 0o600)
+	}
+	if r := h.exec("", "new", "huge.md", "--edit"); r.code != exitError || !strings.Contains(r.stderr, "limit") {
+		t.Fatalf("oversized editor output = %+v", r)
+	}
+	if r := h.exec("", "new", "c.txt", "--content", strings.Repeat("c", 65<<10)); r.code != exitError || !strings.Contains(r.stderr, "limit") {
+		t.Fatalf("oversized --content = %+v", r)
 	}
 }

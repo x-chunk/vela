@@ -2,11 +2,11 @@ package cli
 
 import (
 	"bytes"
-	"net/http"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,13 +68,18 @@ func (h *harness) login(key string) {
 
 func (h *harness) exec(stdin string, args ...string) result {
 	h.t.Helper()
+	return h.execIn(strings.NewReader(stdin), args...)
+}
+
+func (h *harness) execIn(stdin io.Reader, args ...string) result {
+	h.t.Helper()
 	var out, errOut bytes.Buffer
 	env := map[string]string{"VELA_CONFIG": h.config}
 	for k, v := range h.env {
 		env[k] = v
 	}
 	a := &App{
-		In:            strings.NewReader(stdin),
+		In:            stdin,
 		Out:           &out,
 		Err:           &errOut,
 		LookupEnv:     func(k string) (string, bool) { v, ok := env[k]; return v, ok },
@@ -88,7 +93,7 @@ func (h *harness) exec(stdin string, args ...string) result {
 			}
 			return fmt.Errorf("unexpected program %s", name)
 		},
-		LookPath:     func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		LookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if h.onRequest != nil {
 				h.onRequest(r)
