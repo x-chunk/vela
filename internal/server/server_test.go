@@ -202,7 +202,7 @@ func TestCreateAndStat(t *testing.T) {
 		{`{"path":"notes/todo.md/x","content":"x"}`, api.CodePathConflict},
 		{`{"path":"api/x","content":"x"}`, api.CodeInvalidPath},
 		{`{"path":"x","content":"x","encoding":"rot13"}`, api.CodeUnsupportedEncoding},
-		{`{"path":"x","content":"x","colour":"red"}`, api.CodeInvalidRequest},
+		{`{"path":"x","content":"x","flavor":"red"}`, api.CodeInvalidRequest},
 		{`{"path":"x"`, api.CodeInvalidRequest},
 		{`{"path":"x","content":"x"} {}`, api.CodeInvalidRequest},
 		{fmt.Sprintf(`{"path":"big","content":%q}`, strings.Repeat("a", 65<<10)), api.CodePayloadTooLarge},

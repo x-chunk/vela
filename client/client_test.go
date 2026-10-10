@@ -252,6 +252,6 @@ func TestNetworkErrorsAndValidation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := c.Info(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled context error = %v", err)
+		t.Fatalf("canceled context error = %v", err)
 	}
 }

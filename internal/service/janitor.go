@@ -72,7 +72,7 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 	}
 	defer func() {
 		// Release with a fresh context: the pass may end because ctx was
-		// cancelled, and the lock should still be dropped.
+		// canceled, and the lock should still be dropped.
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := s.store.Update(rctx, func(w Writer) error { return w.ReleaseLock(rctx, janitorLock, s.owner) }); err != nil {
@@ -211,7 +211,7 @@ func (s *Service) janitorOrphans(ctx context.Context, now time.Time) (int, error
 }
 
 // RunJanitorLoop runs a pass after initialDelay and then every interval until
-// ctx is cancelled.
+// ctx is canceled.
 func (s *Service) RunJanitorLoop(ctx context.Context, initialDelay, interval time.Duration) {
 	timer := time.NewTimer(initialDelay)
 	defer timer.Stop()
