@@ -1,6 +1,8 @@
 package service_test
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -52,5 +54,48 @@ func TestCollectorWaitsForGrace(t *testing.T) {
 	}
 	if n := e.collectAfterGrace(); n != 1 {
 		t.Fatalf("collected after grace = %d", n)
+	}
+}
+
+type flakyDeletion struct {
+	service.Blobs
+	fail bool
+}
+
+func (b *flakyDeletion) Delete(ctx context.Context, id string) error {
+	if b.fail {
+		return errors.New("temporary backend outage")
+	}
+	return b.Blobs.Delete(ctx, id)
+}
+
+func TestCollectorKeepsQueueAfterBackendFailure(t *testing.T) {
+	e := newEnv(t)
+	e.put("queued.txt", "contents", api.Public)
+	c, err := e.svc.Download(e.ctx, e.admin, "queued.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "queued.txt", Purge: true}); err != nil {
+		t.Fatal(err)
+	}
+	flaky := &flakyDeletion{Blobs: e.storage.Backend, fail: true}
+	e.storage.Backend = flaky
+	svc := e.sibling(nil)
+	e.clock.Advance(service.DefaultBlobGrace + time.Second)
+	if n, err := svc.CollectBlobs(e.ctx); err == nil || n != 0 {
+		t.Fatalf("outage: %d %v", n, err)
+	}
+	due, err := e.storage.DB.DueBlobDeletions(e.ctx, e.clock.Now(), 10)
+	if err != nil || len(due) != 1 || due[0] != c.Object.BlobID {
+		t.Fatalf("retry queue: %v %v", due, err)
+	}
+	flaky.fail = false
+	if n, err := svc.CollectBlobs(e.ctx); err != nil || n != 1 {
+		t.Fatalf("retry: %d %v", n, err)
+	}
+	due, err = e.storage.DB.DueBlobDeletions(e.ctx, e.clock.Now(), 10)
+	if err != nil || len(due) != 0 {
+		t.Fatalf("queue after successful retry: %v %v", due, err)
 	}
 }

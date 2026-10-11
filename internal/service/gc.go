@@ -40,8 +40,8 @@ func (s *Service) queueBlob(ctx context.Context, w Writer, blobID string, now ti
 // CollectBlobs deletes queued blobs whose grace period has passed and
 // returns how many files it removed.
 func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
-	// Runs are serialized within the process; across processes the
-	// collector's transaction is the serialization point.
+	// Runs are serialized within the process. Across processes, immutable
+	// unreferenced IDs and idempotent deletion make overlapping work safe.
 	s.gcMu.Lock()
 	defer s.gcMu.Unlock()
 	const batch = 500
@@ -74,14 +74,15 @@ func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
 				return err
 			}
 			for _, id := range ids {
-				if err := w.DeleteBlobDeletion(ctx, id); err != nil {
-					return err
-				}
 				used, err := w.BlobReferenced(ctx, id)
 				if err != nil {
 					return err
 				}
-				if !used {
+				if used {
+					if err := w.DeleteBlobDeletion(ctx, id); err != nil {
+						return err
+					}
+				} else {
 					doomed = append(doomed, id)
 				}
 			}
@@ -98,12 +99,24 @@ func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
 		if err != nil {
 			return removed, err
 		}
+		// Keep queue entries until deletion succeeds. A backend outage or a
+		// crash between selection and deletion must not lose retry state.
+		var deleteErrors []error
 		for _, id := range doomed {
 			if err := s.blobs.Delete(ctx, id); err != nil {
-				s.log.Warn("delete blob failed; the janitor will retry", "blob_id", id, "error", err)
+				s.log.Warn("delete blob failed; the collector will retry", "blob_id", id, "error", err)
+				deleteErrors = append(deleteErrors, fmt.Errorf("delete blob %s: %w", id, err))
 				continue
 			}
 			removed++
+			if err := s.store.Update(ctx, func(w Writer) error { return w.DeleteBlobDeletion(ctx, id) }); err != nil {
+				deleteErrors = append(deleteErrors, err)
+			}
+		}
+		// Stop this pass after failures rather than repeatedly selecting the
+		// same due entries. The next collector pass retries without a bucket walk.
+		if len(deleteErrors) > 0 {
+			return removed, errors.Join(deleteErrors...)
 		}
 		if len(due) == 0 || ctx.Err() != nil {
 			return removed, ctx.Err()
