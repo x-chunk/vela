@@ -566,11 +566,11 @@ func TestInvalidJSONTextIsRejected(t *testing.T) {
 	if r := h.admin("PATCH", api.ObjectRoute("x"), "{\"title\":\"\xc3\"}"); r.status != 400 {
 		t.Errorf("PATCH with invalid UTF-8: %d", r.status)
 	}
-	r := h.admin("POST", api.RouteObject, `{"path":"ok.txt","content":"😀 �"}`)
+	r := h.admin("POST", api.RouteObject, `{"path":"ok.txt","content":"\ud83d\ude00 \uFFFD"}`)
 	if r.status != 201 {
 		t.Fatalf("valid escapes: %d %s", r.status, r.body)
 	}
-	if r := h.admin("GET", api.ContentRoute("ok.txt"), ""); string(r.body) != "😀 �" {
+	if r := h.admin("GET", api.ContentRoute("ok.txt"), ""); string(r.body) != "😀 \uFFFD" {
 		t.Fatalf("stored %q", r.body)
 	}
 }
