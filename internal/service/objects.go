@@ -504,61 +504,95 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		return api.Object{}, err
 	}
 
-	now := s.now()
-	var result domain.Object
-	err = s.store.Update(ctx, func(w Writer) error {
-		o, err := w.ObjectByPath(ctx, path)
+	// Metadata detection may make a network request. Bound the entire reset,
+	// including retries, and never hold SQLite's writer while reading a blob.
+	if patch.ContentType.Null {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+	readObject := func(reader Reader) (domain.Object, error) {
+		o, err := reader.ObjectByPath(ctx, path)
 		if isNotFound(err) {
-			return notFoundf("object not found: %s", path)
+			return domain.Object{}, notFoundf("object not found: %s", path)
 		}
 		if err != nil {
-			return err
+			return domain.Object{}, err
 		}
 		if ifMatch != 0 && ifMatch != o.Revision {
-			return newErr(ErrPreconditionFailed, map[string]any{"current_revision": o.Revision},
+			return domain.Object{}, newErr(ErrPreconditionFailed, map[string]any{"current_revision": o.Revision},
 				"revision mismatch: object is at revision %d", o.Revision)
 		}
-		if patch.IsEmpty() {
-			result = o
-			return nil
+		return o, nil
+	}
+	changed := errors.New("object changed during content type detection")
+	for {
+		var snapshot domain.Object
+		var sniff []byte
+		if patch.ContentType.Null {
+			snapshot, err = readObject(s.store)
+			if err != nil {
+				return api.Object{}, err
+			}
+			sniff, err = s.sniffBlob(ctx, snapshot.BlobID, snapshot.Size)
+			if err != nil {
+				return api.Object{}, err
+			}
 		}
-		m.apply(&o)
-		// null resets a field to its default (RFC 7396 semantics as defined
-		// for this resource in spec section 10.4).
-		if patch.Visibility.Null {
-			o.Visibility = s.opts.DefaultVisibility
-		}
-		if patch.Title.Null {
-			o.Title = ""
-		}
-		if patch.Description.Null {
-			o.Description = ""
-		}
-		if patch.Tags.Null {
-			o.Tags = []string{}
-		}
-		if patch.Disposition.Null {
-			o.Disposition = api.Inline
-		}
-		switch {
-		case m.contentType != "":
-			o.ContentType = m.contentType
-		case patch.ContentType.Null:
-			sniff, err := s.sniffBlob(ctx, o.BlobID, o.Size)
+		now := s.now()
+		var result domain.Object
+		err = s.store.Update(ctx, func(w Writer) error {
+			o, err := readObject(w)
 			if err != nil {
 				return err
 			}
-			o.ContentType = mimetype.Detect(o.Path, sniff)
+			// An overwrite or replacement at this path must not receive a type
+			// detected from the previous version. Metadata revisions are checked
+			// too, so the reset is applied to precisely the inspected object.
+			if patch.ContentType.Null && (o.ID != snapshot.ID || o.BlobID != snapshot.BlobID || o.Revision != snapshot.Revision) {
+				return changed
+			}
+			if patch.IsEmpty() {
+				result = o
+				return nil
+			}
+			m.apply(&o)
+			// null resets a field to its default (RFC 7396 semantics as defined
+			// for this resource in spec section 10.4).
+			if patch.Visibility.Null {
+				o.Visibility = s.opts.DefaultVisibility
+			}
+			if patch.Title.Null {
+				o.Title = ""
+			}
+			if patch.Description.Null {
+				o.Description = ""
+			}
+			if patch.Tags.Null {
+				o.Tags = []string{}
+			}
+			if patch.Disposition.Null {
+				o.Disposition = api.Inline
+			}
+			switch {
+			case m.contentType != "":
+				o.ContentType = m.contentType
+			case patch.ContentType.Null:
+				o.ContentType = mimetype.Detect(o.Path, sniff)
+			}
+			o.UpdatedAt = now
+			o.Revision++
+			result = o
+			return w.UpdateObject(ctx, o)
+		})
+		if errors.Is(err, changed) {
+			continue
 		}
-		o.UpdatedAt = now
-		o.Revision++
-		result = o
-		return w.UpdateObject(ctx, o)
-	})
-	if err != nil {
-		return api.Object{}, err
+		if err != nil {
+			return api.Object{}, err
+		}
+		return s.objectDTO(result, now), nil
 	}
-	return s.objectDTO(result, now), nil
 }
 
 func (s *Service) sniffBlob(ctx context.Context, id string, size int64) ([]byte, error) {
