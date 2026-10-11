@@ -240,7 +240,7 @@ func (s *Service) writeBlob(ctx context.Context, r io.Reader, limit int64, wantS
 	case ctx.Err() != nil || errors.Is(err, errBodyRead):
 		return blobInfo{}, newErr(ErrUploadInterrupted, nil, "upload interrupted")
 	case errors.Is(err, content.ErrChecksumMismatch):
-		return blobInfo{}, newErr(ErrChecksumMismatch, nil, "checksum mismatch")
+		return blobInfo{}, newErr(ErrChecksumMismatch, map[string]any{"expected": strings.ToLower(wantSHA256), "actual": result.SHA256}, "checksum mismatch: expected %s, got %s", strings.ToLower(wantSHA256), result.SHA256)
 	case err != nil:
 		return blobInfo{}, fmt.Errorf("write blob: %w", err)
 	}

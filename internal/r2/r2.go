@@ -125,7 +125,7 @@ func (s *Store) Put(ctx context.Context, id string, r io.Reader, opts content.Pu
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		err = s.Delete(cleanupCtx, id)
-		return content.PutResult{}, errors.Join(content.ErrChecksumMismatch, err)
+		return result, errors.Join(content.ErrChecksumMismatch, err)
 	}
 	return result, nil
 }

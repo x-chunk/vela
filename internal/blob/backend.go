@@ -32,7 +32,7 @@ func (s Backend) Put(ctx context.Context, id string, r io.Reader, opts content.P
 	}
 	result := stream.Result()
 	if !content.Matches(opts.ExpectSHA256, result.SHA256) {
-		return content.PutResult{}, content.ErrChecksumMismatch
+		return result, content.ErrChecksumMismatch
 	}
 	if err := ctx.Err(); err != nil {
 		return content.PutResult{}, err

@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,4 +77,24 @@ func TestR2RedirectDelivery(t *testing.T) {
 	}
 	h.ts.Clock.Advance(31 * time.Second)
 	expectStatus(t, h.do("GET", signed.RequestURI(), "", nil), 410)
+}
+
+func TestChecksumMismatchDetails(t *testing.T) {
+	for _, backend := range []string{"fs", "r2"} {
+		t.Run(backend, func(t *testing.T) {
+			var opts []testutil.Option
+			if backend == "r2" {
+				opts = append(opts, testutil.WithStorage(testutil.S3Config(t)))
+			}
+			h := newHarness(t, opts...)
+			expected := strings.Repeat("0", 64)
+			r := h.admin("PUT", api.ContentRoute("bad.txt"), "x", api.HeaderSHA256, expected)
+			expectStatus(t, r, 400)
+			var response api.ErrorResponse
+			r.json(t, &response)
+			if response.Error.Code != api.CodeChecksumMismatch || response.Error.Details["expected"] != expected || response.Error.Details["actual"] != "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881" {
+				t.Fatalf("checksum details: %+v", response.Error)
+			}
+		})
+	}
 }
