@@ -23,7 +23,7 @@ DEV_DATA ?= .dev-data
 
 export CGO_ENABLED := 0
 
-.PHONY: help build build-cli build-server install dist test test-e2e lint fmt tidy docker dev clean
+.PHONY: help build build-cli build-server install dist test test-e2e test-s3 lint fmt tidy docker dev clean
 
 help: ## Show this help
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -64,6 +64,9 @@ test: ## Run all tests with the race detector
 
 test-e2e: ## Check accel delivery through a real nginx (needs Docker)
 	go test -tags e2e -count=1 -v ./test/e2e/...
+
+test-s3: ## Run R2/S3 contracts, HTTP delivery and migration against MinIO (needs Docker)
+	./scripts/test-s3.sh
 
 lint: ## Run golangci-lint
 	$(GOLANGCI_LINT) run ./...

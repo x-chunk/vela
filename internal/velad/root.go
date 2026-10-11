@@ -68,6 +68,7 @@ func NewCommand(env Env) *cobra.Command {
 		newBackupCommand(env),
 		newHealthcheckCommand(env),
 		newMigrateCommand(env),
+		newStorageCommand(env),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the version",

@@ -74,6 +74,18 @@ jobs:
       - name: accel delivery through nginx
         run: make test-e2e
 
+  s3:
+    name: R2 contracts and migration (MinIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test private S3 storage
+        run: make test-s3
+
   docker:
     name: docker build
     runs-on: ubuntu-latest
