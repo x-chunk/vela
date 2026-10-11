@@ -262,6 +262,9 @@ func (a *App) openCommand() *cobra.Command {
 			if err := a.Run(cmd.Context(), nil, false, name, openArgs...); err != nil {
 				return fmt.Errorf("open a browser with %s: %w (the URL is %s)", name, err, u)
 			}
+			if a.jsonOut {
+				return a.printer.JSONValue(map[string]any{"url": u, "opened": true})
+			}
 			a.printer.Infof("Opened %s", u)
 			return nil
 		},

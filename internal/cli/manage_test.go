@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -146,5 +148,27 @@ func TestVisTargets(t *testing.T) {
 	h.ok("vis", "-r", "dir/", "dir/sub/", "dir", "file.txt", "private", "--json").json(t, &objs)
 	if len(objs) != 3 {
 		t.Fatalf("nested and mixed targets = %d objects", len(objs))
+	}
+}
+
+// TestJSONContract covers R-025: with --json, stdout is exactly one JSON
+// document for every command, or the command refuses before writing.
+func TestJSONContract(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("file.txt", "PLAIN CONTENT", api.Public)
+	for _, args := range [][]string{{"cat", "file.txt", "--json"}, {"get", "file.txt", "-", "--json"}} {
+		r := h.exec("", args...)
+		if r.code != exitUsage || strings.Contains(r.stdout, "PLAIN") {
+			t.Errorf("%v = %+v", args, r)
+		}
+		var e api.ErrorResponse
+		r.json(t, &e)
+	}
+	h.run = func(context.Context, io.Reader, bool, string, ...string) error { return nil }
+	var out map[string]any
+	h.ok("open", "file.txt", "--json").json(t, &out)
+	if out["url"] != h.ts.URL+"/file.txt" || out["opened"] != true {
+		t.Fatalf("open --json = %v", out)
 	}
 }

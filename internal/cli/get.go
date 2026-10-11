@@ -20,6 +20,13 @@ import (
 	"go.xchunk.org/vela/internal/cli/output"
 )
 
+// errStreamJSON refuses --json for commands whose stdout is file content:
+// it cannot also be a single JSON document, which --json promises. The
+// refusal comes before any byte is written.
+func errStreamJSON(cmd string) error {
+	return usagef("%s writes file content to stdout and cannot be combined with --json; download to a file with \"vela get REMOTE LOCAL --json\" instead", cmd)
+}
+
 // progressThreshold: smaller files finish before a progress bar is worth
 // drawing.
 const progressThreshold = 1 << 20
@@ -40,6 +47,9 @@ func (a *App) getCommand() *cobra.Command {
 			local := ""
 			if len(args) == 2 {
 				local = args[1]
+			}
+			if local == "-" && a.jsonOut {
+				return errStreamJSON("get ... -")
 			}
 			c, _, err := a.client()
 			if err != nil {
@@ -307,6 +317,9 @@ func (a *App) catCommand() *cobra.Command {
 		Args:              exactArgs(1),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if a.jsonOut {
+				return errStreamJSON("cat")
+			}
 			remote, err := remotePath(args[0])
 			if err != nil {
 				return err
