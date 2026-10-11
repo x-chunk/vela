@@ -13,7 +13,7 @@ import (
 // trashCols mirrors objectCols with the object ID and path renamed, followed
 // by the trash-specific columns.
 const trashCols = `object_id, original_path, blob_id, size, sha256, content_type, disposition, visibility,
-	title, description, tags, created_at, updated_at, expires_at, revision, id, deleted_at, deleted_by_key`
+	title, description, tags, created_at, updated_at, expires_at, revision, id, deleted_at, deleted_by_key, seq`
 
 func scanTrash(sc scanner) (domain.TrashEntry, error) {
 	var (
@@ -22,7 +22,7 @@ func scanTrash(sc scanner) (domain.TrashEntry, error) {
 		deletedBy sql.NullString
 	)
 	o, err := scanObject(scannerFunc(func(dest ...any) error {
-		return sc.Scan(append(dest, &e.ID, &deletedAt, &deletedBy)...)
+		return sc.Scan(append(dest, &e.ID, &deletedAt, &deletedBy, &e.Seq)...)
 	}))
 	if err != nil {
 		return domain.TrashEntry{}, err
@@ -74,15 +74,15 @@ func (q reads) ListTrash(ctx context.Context, tq domain.TrashQuery) ([]domain.Tr
 		conds = append(conds, "original_path = ?")
 		args = append(args, tq.Path)
 	}
-	if tq.Before != "" {
-		conds = append(conds, "id < ?")
-		args = append(args, tq.Before)
+	if tq.BeforeSeq > 0 {
+		conds = append(conds, "seq < ?")
+		args = append(args, tq.BeforeSeq)
 	}
 	query := `SELECT ` + trashCols + ` FROM trash`
 	if len(conds) > 0 {
 		query += ` WHERE ` + strings.Join(conds, " AND ")
 	}
-	query += ` ORDER BY id DESC`
+	query += ` ORDER BY seq DESC`
 	if tq.Limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, tq.Limit)
@@ -94,11 +94,11 @@ func (q reads) ListTrash(ctx context.Context, tq domain.TrashQuery) ([]domain.Tr
 // oldest first.
 func (q reads) TrashDeletedBefore(ctx context.Context, cutoff time.Time, within string, limit int) ([]domain.TrashEntry, error) {
 	if within == "" {
-		return q.queryTrash(ctx, `SELECT `+trashCols+` FROM trash WHERE deleted_at < ? ORDER BY deleted_at, id LIMIT ?`,
+		return q.queryTrash(ctx, `SELECT `+trashCols+` FROM trash WHERE deleted_at < ? ORDER BY seq LIMIT ?`,
 			ms(cutoff), limit)
 	}
 	return q.queryTrash(ctx, `SELECT `+trashCols+` FROM trash
-		WHERE deleted_at < ? AND original_path >= ? AND original_path < ? ORDER BY deleted_at, id LIMIT ?`,
+		WHERE deleted_at < ? AND original_path >= ? AND original_path < ? ORDER BY seq LIMIT ?`,
 		ms(cutoff), within, prefixUpper(within), limit)
 }
 
@@ -112,8 +112,16 @@ func (t *Tx) InsertTrash(ctx context.Context, e domain.TrashEntry) error {
 	if e.DeletedBy != "" {
 		by = sql.NullString{String: e.DeletedBy, Valid: true}
 	}
-	args = append(args, e.ID, ms(e.DeletedAt), by)
-	_, err = t.tx.ExecContext(ctx, `INSERT INTO trash (`+trashCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+	// The counter row is updated in the same transaction, which the single
+	// writer serializes, so sequence numbers are strictly increasing.
+	var seq int64
+	err = t.tx.QueryRowContext(ctx, `INSERT INTO counters (name, value) VALUES ('trash', 1)
+		ON CONFLICT (name) DO UPDATE SET value = value + 1 RETURNING value`).Scan(&seq)
+	if err != nil {
+		return fmt.Errorf("number trash entry: %w", err)
+	}
+	args = append(args, e.ID, ms(e.DeletedAt), by, seq)
+	_, err = t.tx.ExecContext(ctx, `INSERT INTO trash (`+trashCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 	if err != nil {
 		return fmt.Errorf("insert trash entry: %w", mapErr(err))
 	}

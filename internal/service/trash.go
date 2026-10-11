@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"math"
+	"strconv"
 	"time"
 
 	"go.xchunk.org/vela/api"
@@ -153,8 +154,14 @@ func (s *Service) ListTrash(ctx context.Context, p Principal, tp TrashParams) (a
 	if limit < 1 || limit > MaxListLimit {
 		return api.TrashList{}, invalidf("limit must be between 1 and %d", MaxListLimit)
 	}
-	if q.Before, err = decodeCursor(tp.Cursor); err != nil {
+	cursor, err := decodeCursor(tp.Cursor)
+	if err != nil {
 		return api.TrashList{}, err
+	}
+	if cursor != "" {
+		if q.BeforeSeq, err = strconv.ParseInt(cursor, 10, 64); err != nil || q.BeforeSeq <= 0 {
+			return api.TrashList{}, invalidf("invalid cursor")
+		}
 	}
 	q.Limit = limit + 1
 	entries, err := s.store.ListTrash(ctx, q)
@@ -164,7 +171,7 @@ func (s *Service) ListTrash(ctx context.Context, p Principal, tp TrashParams) (a
 	out := api.TrashList{Entries: make([]api.TrashEntry, 0, len(entries))}
 	if len(entries) > limit {
 		entries = entries[:limit]
-		out.NextCursor = encodeCursor(entries[len(entries)-1].ID)
+		out.NextCursor = encodeCursor(strconv.FormatInt(entries[len(entries)-1].Seq, 10))
 	}
 	now := s.now()
 	for _, e := range entries {

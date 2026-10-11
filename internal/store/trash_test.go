@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +60,7 @@ func TestTrash(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("within filter: %d entries", len(list))
 	}
-	list, _ = s.ListTrash(ctx, domain.TrashQuery{Before: entries[2].ID, Limit: 1})
+	list, _ = s.ListTrash(ctx, domain.TrashQuery{BeforeSeq: 3, Limit: 1})
 	if len(list) != 1 || list[0].ID != entries[1].ID {
 		t.Fatalf("cursor: %+v", list)
 	}
@@ -76,5 +79,65 @@ func TestTrash(t *testing.T) {
 	}
 	if _, err := s.TrashByID(ctx, entries[0].ID); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("deleted entry still found: %v", err)
+	}
+}
+
+// TestTrashSeqMigration checks that existing trash entries are numbered by
+// deletion time, and that new entries continue the sequence.
+func TestTrashSeqMigration(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "vela.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.w.ExecContext(ctx, `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT`); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range migrations[:2] {
+		if _, err := s.w.ExecContext(ctx, m.sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.w.ExecContext(ctx, `INSERT INTO meta VALUES ('schema_version', '2')`); err != nil {
+		t.Fatal(err)
+	}
+	// Inserted out of deletion order on purpose.
+	for i, d := range []int64{300, 100, 200} {
+		_, err := s.w.ExecContext(ctx, `INSERT INTO trash (id, object_id, original_path, blob_id, size, sha256, content_type,
+			disposition, visibility, title, description, tags, created_at, updated_at, revision, deleted_at)
+			VALUES (?, ?, 'p', ?, 0, '', 'x/y', 'inline', 'public', '', '', '[]', 0, 0, 1, ?)`,
+			fmt.Sprintf("t%d", i), fmt.Sprintf("o%d", i), fmt.Sprintf("b%d", i), d)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListTrash(ctx, domain.TrashQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range list {
+		got = append(got, fmt.Sprintf("%s:%d", e.ID, e.Seq))
+	}
+	if strings.Join(got, " ") != "t0:3 t2:2 t1:1" {
+		t.Fatalf("migrated order = %v", got)
+	}
+	err = s.Update(ctx, func(tx *Tx) error {
+		return tx.InsertTrash(ctx, domain.TrashEntry{ID: gen.New(), Object: newObject("q", api.Public), DeletedAt: t0})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = s.ListTrash(ctx, domain.TrashQuery{Limit: 1}); list[0].Seq != 4 {
+		t.Fatalf("new entry seq = %d", list[0].Seq)
 	}
 }

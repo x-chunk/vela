@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"fmt"
 	"testing"
 
 	"go.xchunk.org/vela/api"
@@ -147,4 +148,47 @@ func TestDeleteDirectoryIgnoresNoPrecondition(t *testing.T) {
 	if _, err := e.svc.Stat(e.ctx, e.admin, "tree/file"); err != nil {
 		t.Fatalf("object deleted despite the refused precondition: %v", err)
 	}
+}
+
+// TestRestoreByPathTakesTheLatestDeletion covers R-030: within one
+// millisecond, the most recent deletion of a path is still the one listed
+// first (and restored by path), and pagination is stable.
+func TestRestoreByPathTakesTheLatestDeletion(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t) // the fake clock stands still: every deletion shares one millisecond
+	var ids []string
+	for i := range 20 {
+		e.put("same.txt", fmt.Sprintf("version %d", i), api.Public)
+		res, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "same.txt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, res.TrashIDs[0])
+	}
+	list, err := e.svc.ListTrash(e.ctx, e.admin, service.TrashParams{Path: "same.txt", Limit: 1})
+	if err != nil || list.Entries[0].ID != ids[19] {
+		t.Fatalf("newest entry = %v, want %s", list.Entries, ids[19])
+	}
+	var paged []string
+	cursor := ""
+	for {
+		page, err := e.svc.ListTrash(e.ctx, e.admin, service.TrashParams{Limit: 3, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, en := range page.Entries {
+			paged = append(paged, en.ID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	for i, id := range paged {
+		if id != ids[19-i] {
+			t.Fatalf("page order differs at %d", i)
+		}
+	}
+	_, err = e.svc.ListTrash(e.ctx, e.admin, service.TrashParams{Cursor: "bm9wZQ"})
+	wantErr(t, err, service.ErrInvalidRequest)
 }

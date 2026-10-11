@@ -52,6 +52,9 @@ type TrashEntry struct {
 	Object    Object
 	DeletedAt time.Time
 	DeletedBy string
+	// Seq orders entries by deletion, strictly, even within one millisecond;
+	// the store assigns it.
+	Seq int64
 }
 
 // Link is a signed link record.
@@ -151,8 +154,9 @@ type TrashQuery struct {
 	Within string
 	// Path selects entries with exactly this original path.
 	Path string
-	// Before is the exclusive cursor: an entry ID; older entries follow.
-	Before string
+	// BeforeSeq is the exclusive cursor: entries with a smaller Seq follow.
+	// Zero means from the newest.
+	BeforeSeq int64
 	// Limit caps the result size; 0 means no limit.
 	Limit int
 }
