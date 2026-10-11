@@ -1,16 +1,16 @@
 # Vela — дополнение к спецификации: бэкенды хранилища (fs + Cloudflare R2)
 
-> Дополнение к `docs/SPEC.md`. Положить в репо как `docs/SPEC-storage.md`. Где этот документ противоречит основному SPEC, **приоритет у этого документа**. Термины MUST / SHOULD / MAY — как в основном SPEC. Перед реализацией задать вопросы из §12.
+> Дополнение к `docs/SPEC.md`. Где этот документ противоречит основному SPEC, **приоритет у этого документа**. Термины MUST / SHOULD / MAY — как в основном SPEC. Implementation decisions are recorded in §14.
 
 ---
 
 ## 1. Зачем
 
-На VPS остался ~1 GB свободного места, этого не хватит даже на перенос текущего `/static/` и школьных материалов. Поэтому содержимое файлов (блобы) должно уметь жить в **Cloudflare R2** (S3-совместимое хранилище, бесплатно до 10 GB, без платы за исходящий трафик; домен `xchunk.org` уже обслуживается Cloudflare).
+Cloud object storage lets deployments keep large file contents outside the server's local disk. Cloudflare R2 and compatible S3 services use the same streaming backend; SQLite metadata remains local.
 
 Локальная реализация **не выкидывается**: оба бэкенда живут рядом, выбор делается конфигурацией.
 
-На VPS в любом режиме остаются только SQLite (метаданные, ключи, ссылки, корзина) и временные файлы. Это мегабайты.
+With the R2/S3 backend, the server retains SQLite metadata and does not stage whole uploads on disk. Filesystem mode retains both metadata and blobs locally.
 
 ---
 
@@ -19,7 +19,7 @@
 Решение (**MUST**): бэкенд выбирается **при запуске** переменной `VELA_STORAGE=fs|r2`, а не при сборке.
 
 Почему не build tags:
-- Один образ в ghcr для всех случаев: не нужно собирать и версионировать два варианта, CI проще.
+- Один публичный образ в Docker Hub для всех случаев: не нужно собирать и версионировать два варианта, CI проще.
 - Локальная разработка и тесты работают на `fs` тем же бинарником, что едет в прод.
 - Миграция `fs → r2` (§9) требует, чтобы в одном бинарнике были **оба** бэкенда одновременно.
 - Цена — размер бинарника вырастает на несколько МБ из-за `aws-sdk-go-v2`. Для серверного образа это несущественно.
@@ -162,8 +162,9 @@ type Deliverer interface {
 | Переменная | Default | Описание |
 |---|---|---|
 | `VELA_STORAGE` | `fs` | `fs` или `r2` |
-| `VELA_R2_ACCOUNT_ID` | — | обязательна при `r2` |
+| `VELA_R2_ACCOUNT_ID` | empty | Cloudflare account; required unless endpoint is explicit |
 | `VELA_R2_ENDPOINT` | вычисляется из account ID | переопределение эндпоинта (EU-юрисдикция, MinIO в тестах) |
+| `VELA_R2_REGION` | `auto` | Request signing region; configure for other S3 services |
 | `VELA_R2_BUCKET` | — | обязательна при `r2` |
 | `VELA_R2_PREFIX` | `blobs/` | префикс ключей в бакете |
 | `VELA_R2_ACCESS_KEY_ID` | — | обязательна при `r2` |
@@ -284,3 +285,7 @@ docker exec vela velad storage migrate --from fs --to r2 [--dry-run] [--delete-s
 - R-001/R-003: Go-клиент скрывает исходные транспортные сообщения/URL в диагностике и сохраняет причины через unwrap; при каждом redirect удаляет Authorization и Referer, в том числе с пользовательским HTTP-клиентом.
 - R-002: условные запросы в режиме redirect проксируются, чтобы сохранить решения Vela по SHA-256 ETag и If-Range. HEAD/304 по-прежнему не открывают блоб.
 - R-004: сброс Content-Type читает первые 512 байт до write transaction; общий контекст определения типа и повторов ограничен 10 секундами. Транзакция сверяет object ID, blob ID и revision; при изменении повторяет чтение или возвращает ошибку If-Match.
+
+### Portable S3 configuration (2026-10-11)
+
+`VELA_R2_REGION` selects the request signing region (default `auto` for Cloudflare R2). When `VELA_R2_ENDPOINT` is explicit, `VELA_R2_ACCOUNT_ID` is optional; otherwise an account ID derives the Cloudflare endpoint. Keep the existing `VELA_STORAGE=r2` selector and `VELA_R2_*` variable names for compatibility. Multipart, private-bucket, checksum, and redirect requirements still apply. Filesystem direct delivery is now the default; every proxy example lives under `examples/`.

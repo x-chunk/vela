@@ -3,7 +3,7 @@
 Vela is a self-hosted file store with a Go server (`velad`), a CLI (`vela`), a
 public index, private files, expiring signed links, and a recoverable trash.
 SQLite owns metadata and access decisions. Immutable contents live either on
-the local filesystem or in a private Cloudflare R2 bucket. One server image
+the local filesystem or in a private Cloudflare R2 or compatible S3 bucket. One server image
 supports both backends; the CLI and API v1 do not depend on the storage choice.
 
 ## Build and test
@@ -37,40 +37,40 @@ cleanup. HTTP tests cover full downloads, suffix ranges, 416, HEAD, ETag/304,
 redirect policy, and signed-link lifetime. MinIO tests do not replace a real
 R2 smoke test.
 
-## Deploy the server
+## Quick start
 
-The server image runs as UID/GID 65532. nginx terminates TLS; bind the server
-port only on loopback. Use `deploy/nginx/store.xchunk.org.conf` and its included
-`vela.conf`, adjusting certificate paths, hostnames, and the upstream address.
-The query-free access log and disabled signed-link error logs are necessary
-because a signed URL is a credential.
+The public image is [`xchunk/vela`](https://hub.docker.com/r/xchunk/vela).
+Choose an explicit version from its published tags; pulls require no login.
+The image runs as UID/GID 65532. Start with filesystem direct delivery:
 
 ```sh
 sudo install -d -m 755 -o 65532 -g 65532 /srv/vela
 sudo install -d -m 700 /etc/vela
-sudo install -m 600 deploy/vela.env.example /etc/vela/vela.env
-# Edit VELA_PUBLIC_URL and the backend settings in the env file.
-docker run -d --name vela --restart unless-stopped \
-  --env-file /etc/vela/vela.env \
-  -p 127.0.0.1:8080:8080 -v /srv/vela:/data \
-  xchunk/vela:latest
-
+sudo install -m 600 examples/env/fs.env.example /etc/vela/vela.env
+# Edit /etc/vela/vela.env: set your VELA_PUBLIC_URL and proxy addresses.
+export VELA_IMAGE='xchunk/vela:<version>' # replace <version> with a published tag
+sudo --preserve-env=VELA_IMAGE ./examples/docker/run-fs.sh
 docker logs vela
 docker exec vela velad healthcheck
 docker exec vela velad key create --name workstation --scope admin
 ```
 
-The final command prints the API key once, to stdout. Keep it private. Keys
-can only be created or revoked by administrative `velad key` commands; there
-is no HTTP endpoint for managing keys. To create a key limited to `edu/`, use
-`velad key create --name edu-publish --scope rw --prefix edu/`.
-Check `velad key --help` for listing and revoking keys.
+The server streams file contents itself and works with any reverse proxy.
+The port is published only on loopback; configure TLS separately for remote
+access. For local use, set `VELA_PUBLIC_URL=http://127.0.0.1:8080`.
+The last command prints an API key once; keep it private. Key management is
+available only through `velad`, never through HTTP. A CI key can be limited
+with `velad key create --name ci --scope rw --prefix ci/`.
 
-In filesystem mode (`VELA_STORAGE=fs`, the default), mount `/srv/vela/blobs`
-where nginx's internal `/_blobs/` locations expect it. The default
-`VELA_ACCEL_PREFIX=/_blobs/` enables nginx delivery. Set it to an empty value
-for direct delivery without nginx. Files are published durably and exclusively
-under `blobs/<last-four-ID-characters-sharded>/<ID>`, never under logical paths.
+See [deployment examples](examples/README.md) for filesystem direct delivery,
+explicit nginx accel, and R2/S3. Examples are starting points; you maintain
+your proxy, TLS, firewall, backups, and updates. Behind a host proxy with
+Docker bridge networking, add the actual bridge gateway address to
+`VELA_TRUSTED_PROXIES`; the default trusts only loopback.
+
+Project documentation: [docs.xchunk.org/vela](https://docs.xchunk.org/vela).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and the
+[MIT license](LICENSE) for contributing, reporting vulnerabilities, and reuse.
 
 ## Core configuration
 
@@ -83,8 +83,8 @@ and logging flags. An explicitly empty environment value counts as set.
 | `VELA_LISTEN` | `:8080` | Server listen address |
 | `VELA_DATA_DIR` | `/data` | SQLite, temporary files, and FS blob directory |
 | `VELA_PUBLIC_URL` | required to serve | Public HTTP(S) origin without a path |
-| `VELA_ACCEL_PREFIX` | `/_blobs/` | nginx internal prefix; empty for direct/R2 delivery |
-| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128,172.17.0.1/32` | Proxies permitted to supply forwarded IP and request ID; match your Docker bridge |
+| `VELA_ACCEL_PREFIX` | empty | nginx internal prefix; empty for direct/R2 delivery |
+| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128` | Proxies permitted to supply forwarded IP and request ID; match your Docker bridge |
 | `VELA_MAX_UPLOAD` | `2GiB` | Streaming upload limit; match nginx `client_max_body_size` |
 | `VELA_MAX_CREATE` | `1MiB` | Inline creation limit |
 | `VELA_LINK_DEFAULT_TTL` | `24h` | Default signed-link TTL |
@@ -92,7 +92,7 @@ and logging flags. An explicitly empty environment value counts as set.
 | `VELA_LINK_RETENTION` | `7d` | Retention of expired/revoked link records |
 | `VELA_TRASH_RETENTION` | `14d` | Trash retention |
 | `VELA_JANITOR_INTERVAL` | `24h` | Cleanup interval |
-| `VELA_SITE_TITLE` | `store.xchunk.org` | Public index title |
+| `VELA_SITE_TITLE` | `Vela` | Public index title |
 | `VELA_THEME_DIR` | empty | Optional index theme overrides |
 | `VELA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
 | `VELA_LOG_FORMAT` | `json` | `json` or `text` |
@@ -104,7 +104,14 @@ rotate the HMAC signing key while keeping existing links valid. Use
 `velad signing rotate --revoke-all` for an emergency invalidation of every old
 signing key. API keys and signing keys are different credentials.
 
-## Configure Cloudflare R2
+## Configure Cloudflare R2 or S3
+
+For other S3-compatible services, set `VELA_STORAGE=r2`, an explicit
+`VELA_R2_ENDPOINT`, and the provider's `VELA_R2_REGION`. No Cloudflare account
+ID is needed with an explicit endpoint. Bucket permissions and multipart,
+checksum, and delivery requirements still apply. MinIO is covered by the
+integration suite; validate other providers before production use.
+
 
 1. Create a bucket such as `vela-store`, using a location hint near your VPS.
 2. Disable public access and `r2.dev`. Do not attach a custom domain to the
@@ -117,7 +124,7 @@ signing key. API keys and signing keys are different credentials.
 A minimal R2 env file contains:
 
 ```dotenv
-VELA_PUBLIC_URL=https://store.xchunk.org
+VELA_PUBLIC_URL=https://store.example.com
 VELA_STORAGE=r2
 VELA_ACCEL_PREFIX=
 VELA_R2_ACCOUNT_ID=your-account-id
@@ -142,8 +149,9 @@ omit raw SDK messages and signed request URLs.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `VELA_STORAGE` | `fs` | `fs` or `r2` |
-| `VELA_R2_ACCOUNT_ID` | required for R2 | Cloudflare account ID |
+| `VELA_R2_ACCOUNT_ID` | empty | Cloudflare account ID; required unless endpoint is explicit |
 | `VELA_R2_ENDPOINT` | `https://<account>.r2.cloudflarestorage.com` | Bare S3 origin; set `https://<account>.eu.r2.cloudflarestorage.com` for EU jurisdiction |
+| `VELA_R2_REGION` | `auto` | Request signing region; set the provider's region for other S3 services |
 | `VELA_R2_BUCKET` | required for R2 | Private bucket |
 | `VELA_R2_PREFIX` | `blobs/` | Relative object prefix, ending in `/` |
 | `VELA_R2_ACCESS_KEY_ID` | required for R2 | Bucket-scoped Access Key ID |
@@ -287,7 +295,7 @@ blobs from the matching backup, and start with the same backend settings.
 Install `bin/vela` on your workstation, then log in with the key from deployment:
 
 ```sh
-vela login --url https://store.xchunk.org --profile personal
+vela login --url https://store.example.com --profile main
 export VELA_PROFILE=personal
 vela whoami
 vela ls
@@ -311,7 +319,7 @@ API key or signed link; missing, private, expired, and trashed files all give
 Deleting normally moves it to the trash, retained for 14 days by default.
 
 ```sh
-vela put -r ./materials edu/ --public
+vela put -r ./materials docs/ --public
 vela new notes/hello.txt --content 'Hello' --private
 vela share notes/hello.txt --ttl 2h
 vela links ls

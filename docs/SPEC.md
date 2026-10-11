@@ -1,22 +1,22 @@
 # Vela — спецификация (SPEC)
 
-> Документ для Claude Code. Задача: реализовать проект по этой спецификации. Перед началом работы задай уточняющие вопросы по разделу «Открытые вопросы» (§19) и по всему, что в спеке противоречиво или неоднозначно. Всё, что здесь помечено **MUST**, обязательно; **SHOULD** — по умолчанию да, отступление требует обоснования; **MAY** — на усмотрение.
+> Design specification for Vela. MUST / SHOULD / MAY describe the contract; section 21 records implementation decisions. Contributor guidance lives in AGENTS.md.
 
 ---
 
 ## 0. TL;DR
 
-**Vela** — self-hosted файловое хранилище для личного домена `store.xchunk.org`:
+**Vela** — self-hosted файловое хранилище с REST API, CLI и публичными URL:
 
 - **Сервер `velad`**: standalone Go-бинарник в одном Docker-контейнере (без docker compose). REST API `/api/v1` с аутентификацией по ключу в заголовке, публичная раздача файлов, красивый (кастомизируемый) HTML-индекс, подписанные ссылки с TTL для приватных файлов, корзина, ежедневная фоновая чистка.
 - **CLI `vela`**: standalone бинарник для управления хранилищем с компьютера: создание файлов из сырого контента, загрузка, удаление, переименование/перемещение, управление метаданными и видимостью, выдача подписанных ссылок.
-- **nginx** стоит перед сервером: TLS/HTTPS, проксирование, отдача байтов файлов через `X-Accel-Redirect`. **Вся логика** (маршрутизация путей, проверка доступа, видимость, индекс, подписи, TTL) — **в Go**. nginx ничего не решает сам, он только терминирует TLS и отдаёт байты по указанию Go.
+- **Delivery**: Go streams files directly by default, with or without a reverse proxy. nginx accel is an explicit filesystem optimization; all access decisions remain in Go. TLS and reverse proxy configuration belong to the operator.
 - **Монорепо**, один Go-модуль `go.xchunk.org/vela`, общий код (контракт API, валидация путей, клиент) используется и сервером, и CLI.
 - **CI/CD**: GitHub Actions собирает образ и пушит в **публичный** Docker Hub (`xchunk/vela`). На сервере образ пуллится вручную. *(Изменено, см. §21.)*
 
 ### Проблема, которую решаем
 
-Сейчас на `xchunk.org` разнобой: `xchunk.org/static/` (свалка без индекса), другой path с включённым autoindex, отдельный поддомен со школьными материалами и своим CLI, который умеет только загружать, а edu-publish работает напрямую по SSH. Загрузка через `scp` постоянно упирается в `permission denied` и ручные разборки с правами. Vela заменяет всё это одной системой с одним владельцем файлов (процесс в контейнере), одним API и одним CLI.
+Vela consolidates ad-hoc static file hosting behind one API. One service owns file contents, metadata, permissions, expiring links, and cleanup, while the CLI supports interactive and automated workflows.
 
 ---
 
@@ -38,7 +38,7 @@
 - Веб-UI для управления (загрузка из браузера и т.п.). Управление только через API/CLI.
 - Версионирование содержимого файлов, дедупликация, превью, миниатюры, поиск по содержимому.
 - docker compose, Kubernetes, внешние БД.
-- Миграция существующего `xchunk.org/static/` и школьного поддомена, перевод edu-publish на Vela. Это **отдельный этап после v1** (§18), но архитектура MUST это позволять (scoped-ключи, публичный Go-клиент).
+- Deployment-specific import tools; integrations can use scoped API keys and the public Go client.
 
 ---
 
@@ -47,7 +47,7 @@
 | Термин | Значение |
 |---|---|
 | **Object (объект)** | Логический файл: путь + метаданные + ссылка на блоб. |
-| **Path (путь)** | Логический путь объекта, например `edu/math/q1/test.pdf`. Без ведущего `/`. Регистрозависимый. |
+| **Path (путь)** | Логический путь объекта, например `docs/math/q1/test.pdf`. Без ведущего `/`. Регистрозависимый. |
 | **Directory (директория)** | Неявная: существует, пока под префиксом `dir/` есть хотя бы один объект. Пустых директорий нет. |
 | **Blob** | Файл с содержимым на диске, имя — случайный ID, не связано с логическим путём. |
 | **Visibility** | `public` / `unlisted` / `private`. |
@@ -60,7 +60,7 @@
 
 ## 3. Модель видимости
 
-| | В HTML-индексе | Прямой URL `https://store.xchunk.org/<path>` | Через API с ключом | Через подписанную ссылку |
+| | В HTML-индексе | Прямой URL `https://store.example.com/<path>` | Через API с ключом | Через подписанную ссылку |
 |---|---|---|---|---|
 | `public` | да | да | да | да |
 | `unlisted` | **нет** | да | да | да |
@@ -83,7 +83,7 @@
 ### 4.1 Правила валидации (**MUST**, общий код в `api/`, используется и сервером, и CLI)
 
 - Строка в UTF-8, нормализуется в **Unicode NFC** (`golang.org/x/text/unicode/norm`).
-- Ведущий `/` в пользовательском вводе срезается (CLI и сервер принимают `/edu/a.pdf` как `edu/a.pdf`). Хранится без ведущего `/`.
+- Ведущий `/` в пользовательском вводе срезается (CLI и сервер принимают `/docs/a.pdf` как `docs/a.pdf`). Хранится без ведущего `/`.
 - Объект не может заканчиваться на `/`. Завершающий `/` в операциях листинга/перемещения/удаления означает «директорию/префикс».
 - Нет пустых сегментов (`a//b`), нет сегментов `.` и `..`.
 - Запрещены: `\`, NUL и все управляющие символы (U+0000–U+001F, U+007F), а также сегменты, состоящие только из пробелов. Ведущие/завершающие пробелы в сегменте запрещены.
@@ -237,14 +237,14 @@ vela/
 │   ├── mimetype/               # content type detection
 │   ├── clock/, units/          # injectable clock; byte sizes
 │   └── archtest/               # test enforcing the import rules between layers
-├── deploy/
-│   ├── nginx/store.xchunk.org.conf   # reference nginx config (§14)
+├── examples/
+│   ├── nginx/store.example.com.conf   # reference nginx config (§14)
 │   ├── nginx/vela.conf               # locations, included by the above and by test/e2e
 │   └── vela.env.example              # reference env file for the container
 └── test/e2e/                         # accel delivery through a real nginx (build tag e2e)
 ```
 
-Почему `api/` и `client/` публичные: чтобы позже edu-publish (или любой другой инструмент) мог импортировать `go.xchunk.org/vela/client`, а не дёргать CLI. Всё остальное в `internal/`.
+Почему `api/` и `client/` публичные: чтобы любой инструмент автоматизации мог импортировать `go.xchunk.org/vela/client`, а не дёргать CLI. Всё остальное в `internal/`.
 
 ---
 
@@ -279,8 +279,8 @@ vela_<keyID>_<secret>
 | `rw` | всё из `ro` + create, upload, move, delete в корзину, restore, metadata, создание/отзыв ссылок, просмотр корзины |
 | `admin` | всё из `rw` + purge (окончательное удаление), очистка корзины целиком, работа без ограничения префиксом |
 
-- Опциональный **префикс** (`--prefix edu/`): ключ видит и меняет только объекты с этим префиксом. Перемещение из префикса или в префикс за его пределами → `403 forbidden`. Листинг автоматически ограничивается префиксом.
-- Use case: отдельный ключ `rw` с префиксом `edu/` для edu-publish и школьного CLI, чтобы компрометация не задела остальное.
+- Опциональный **префикс** (`--prefix docs/`): ключ видит и меняет только объекты с этим префиксом. Перемещение из префикса или в префикс за его пределами → `403 forbidden`. Листинг автоматически ограничивается префиксом.
+- Use case: отдельный ключ `rw` с префиксом `ci/` для автоматизации, чтобы компрометация не задела остальное.
 - Ключ `admin` с префиксом допустим (admin-права внутри префикса).
 
 ### 7.5 Управление ключами
@@ -288,8 +288,8 @@ vela_<keyID>_<secret>
 **Только** через серверную CLI-подкоманду внутри контейнера, не через HTTP API (нет пути эскалации привилегий через API):
 
 ```
-docker exec vela velad key create --name laptop --scope admin
-docker exec vela velad key create --name edu-publish --scope rw --prefix edu/
+docker exec vela velad key create --name workstation --scope admin
+docker exec vela velad key create --name ci --scope rw --prefix ci/
 docker exec vela velad key list
 docker exec vela velad key revoke <keyID>
 ```
@@ -311,7 +311,7 @@ docker exec vela velad key revoke <keyID>
 ### 8.1 Формат URL
 
 ```
-https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature}
+https://store.example.com/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature}
 ```
 
 - `linkID`: ULID записи в таблице `links`.
@@ -388,7 +388,7 @@ https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature
 ```json
 {
   "id": "01jabcdxyz...",
-  "path": "edu/math/q1/test.pdf",
+  "path": "docs/math/q1/test.pdf",
   "name": "test.pdf",
   "size": 482193,
   "sha256": "9f86d081884c7d65...",
@@ -403,7 +403,7 @@ https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature
   "expires_at": null,
   "expired": false,
   "revision": 3,
-  "url": "https://store.xchunk.org/edu/math/q1/test.pdf"
+  "url": "https://store.example.com/docs/math/q1/test.pdf"
 }
 ```
 
@@ -419,8 +419,8 @@ https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature
 {
   "error": {
     "code": "path_conflict",
-    "message": "a file exists at a parent path: edu/math",
-    "details": { "conflicting_path": "edu/math" },
+    "message": "a file exists at a parent path: docs/math",
+    "details": { "conflicting_path": "docs/math" },
     "request_id": "01jab..."
   }
 }
@@ -455,8 +455,8 @@ https://store.xchunk.org/s/{linkID}/{filename}?exp={unix_seconds}&sig={signature
 {
   "server_version": "1.0.0",
   "api_version": 1,
-  "public_url": "https://store.xchunk.org",
-  "key": { "id": "k3f9...", "name": "laptop", "scope": "admin", "prefix": "" },
+  "public_url": "https://store.example.com",
+  "key": { "id": "k3f9...", "name": "workstation", "scope": "admin", "prefix": "" },
   "limits": {
     "max_upload_bytes": 2147483648,
     "max_create_bytes": 1048576,
@@ -472,8 +472,8 @@ Query: `prefix` (директория, с завершающим `/` или пу
 
 ```json
 {
-  "prefix": "edu/",
-  "dirs": ["edu/math/", "edu/physics/"],
+  "prefix": "docs/",
+  "dirs": ["docs/math/", "docs/physics/"],
   "objects": [ { ...Object } ],
   "next_cursor": ""
 }
@@ -535,10 +535,10 @@ JSON Merge Patch (RFC 7396). Разрешённые поля: `visibility`, `tit
 
 #### `POST /api/v1/move` — переименование/перемещение
 ```json
-{ "from": "edu/math/old.pdf", "to": "edu/math/new.pdf", "overwrite": false, "recursive": false }
+{ "from": "docs/math/old.pdf", "to": "docs/math/new.pdf", "overwrite": false, "recursive": false }
 ```
 - Одиночный объект: `from` и `to` — пути объектов. Если `to` занят: без `overwrite` → 409; с `overwrite` → старый объект по `to` уходит в корзину, затем перемещение.
-- Рекурсивно: `recursive: true`, `from` и `to` — префиксы с завершающим `/` (`edu/math/` → `school/math/`). Все объекты переносятся **в одной транзакции**. При любом конфликте без `overwrite` → 409 с `details.conflicts` (до 100 путей), ничего не меняется.
+- Рекурсивно: `recursive: true`, `from` и `to` — префиксы с завершающим `/` (`docs/math/` → `archive/math/`). Все объекты переносятся **в одной транзакции**. При любом конфликте без `overwrite` → 409 с `details.conflicts` (до 100 путей), ничего не меняется.
 - Нельзя переместить префикс внутрь самого себя (`a/` → `a/b/`) → 400.
 - Проверки §4.2 для целевых путей.
 - Ответ: `{"moved": 12}`.
@@ -557,11 +557,11 @@ Query: `recursive` (для префикса, путь с завершающим 
 - `DELETE /api/v1/trash?older_than=7d` → очистка (`admin`). `{"purged": n}`. Без `older_than` чистит всё.
 
 #### Ссылки
-- `POST /api/v1/links` с `{"path": "...", "ttl": "2h", "note": "for teacher"}` (вместо `ttl` можно `expires_at`) → `201`:
+- `POST /api/v1/links` с `{"path": "...", "ttl": "2h", "note": "for the reviewer"}` (вместо `ttl` можно `expires_at`) → `201`:
   ```json
-  { "id": "01j...", "object_id": "01j...", "path": "edu/x.pdf",
-    "url": "https://store.xchunk.org/s/01j.../x.pdf?exp=1760100000&sig=...",
-    "created_at": "...", "expires_at": "...", "revoked_at": null, "note": "for teacher" }
+  { "id": "01j...", "object_id": "01j...", "path": "docs/x.pdf",
+    "url": "https://store.example.com/s/01j.../x.pdf?exp=1760100000&sig=...",
+    "created_at": "...", "expires_at": "...", "revoked_at": null, "note": "for the reviewer" }
   ```
 - `GET /api/v1/links?path=&include_expired=false&include_revoked=false` → `{"links":[...]}`. `url` возвращается и в листинге (сервер может его пересобрать, т.к. хранит `expires_at`, а подпись детерминирована).
 - `DELETE /api/v1/links/{id}` → отзыв, `204`.
@@ -634,25 +634,25 @@ Query: `recursive` (для префикса, путь с завершающим 
 default_profile = "main"
 
 [profiles.main]
-url = "https://store.xchunk.org"
-key = "vela_k3f9abcd12_..."
+url = "https://store.example.com"
+key = "vela_EXAMPLEKEY0_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 default_visibility = "private"   # optional, applies to put/new when no flag given
 
-[profiles.edu]
-url = "https://store.xchunk.org"
+[profiles.docs]
+url = "https://store.example.com"
 key = "vela_..."
 ```
 
 - Приоритет: флаг (`--url`, `--profile`) > env (`VELA_URL`, `VELA_KEY`, `VELA_PROFILE`) > конфиг.
 - **MUST**: если у файла конфига права шире `0600` (на Unix), CLI отказывается работать с ошибкой и подсказкой `chmod 600 <path>` (как ssh). На Windows проверка пропускается.
-- `vela login` создаёт/обновляет профиль: спрашивает URL (default `https://store.xchunk.org`) и ключ (ввод без эха, `golang.org/x/term`), проверяет его через `/api/v1/info`, пишет файл атомарно (tmp + rename) с правами 0600, директорию с 0700.
+- `vela login` создаёт/обновляет профиль: спрашивает URL (без встроенного значения по умолчанию; существующий URL профиля сохраняется) и ключ (ввод без эха, `golang.org/x/term`), проверяет его через `/api/v1/info`, пишет файл атомарно (tmp + rename) с правами 0600, директорию с 0700.
 - Ключ никогда не печатается целиком (в `vela whoami`/`--verbose` маскируется: `vela_k3f9abcd12_****`).
 
 ### 12.3 Команды
 
 Общие флаги: `--profile`, `--url`, `--config`, `--json` (машинный вывод, стабильный формат = DTO из `api/`), `-q/--quiet`, `-v/--verbose` (HTTP-трассировка без секретов), `--no-color` (+ уважать `NO_COLOR`), `--timeout`.
 
-Удалённые пути пишутся без схемы: `edu/math/q1.pdf`, ведущий `/` допустим. Директория обозначается завершающим `/`.
+Удалённые пути пишутся без схемы: `docs/math/q1.pdf`, ведущий `/` допустим. Директория обозначается завершающим `/`.
 
 | Команда | Описание |
 |---|---|
@@ -684,10 +684,10 @@ key = "vela_..."
 ### 12.4 `vela put` — подробно
 
 - `vela put file.pdf` → `file.pdf` в корень.
-- `vela put file.pdf edu/math/` → `edu/math/file.pdf`.
-- `vela put file.pdf edu/math/q1.pdf` → ровно этот путь.
-- `vela put a.pdf b.pdf edu/` → несколько файлов в директорию (последний аргумент обязан заканчиваться на `/`).
-- `vela put -r ./dir edu/dir/` → рекурсивно, сохраняя структуру; симлинки не следуются (по умолчанию пропускаются с предупреждением), скрытые файлы (`.*`) пропускаются, если нет `--hidden`.
+- `vela put file.pdf docs/math/` → `docs/math/file.pdf`.
+- `vela put file.pdf docs/math/q1.pdf` → ровно этот путь.
+- `vela put a.pdf b.pdf docs/` → несколько файлов в директорию (последний аргумент обязан заканчиваться на `/`).
+- `vela put -r ./dir docs/dir/` → рекурсивно, сохраняя структуру; симлинки не следуются (по умолчанию пропускаются с предупреждением), скрытые файлы (`.*`) пропускаются, если нет `--hidden`.
 - `vela put - notes/x.txt` → из stdin.
 - Флаги: `--public | --unlisted | --private` (взаимоисключающие), `--title`, `--description`, `--tag` (повторяемый), `--content-type`, `--disposition`, `--expires 7d|<RFC3339>`, `--force` (перезапись; без него upload идёт с `If-None-Match: *`, и существующий файл → понятная ошибка «already exists, use --force»), `-j N` (параллелизм для нескольких файлов, default 4), `--dry-run` (показать, что будет загружено и куда).
 - CLI считает SHA-256 до или во время отправки и шлёт `X-Vela-SHA256`. Для потоковой отправки без двойного чтения: если источник — обычный файл, хэш считается первым проходом (файл можно перечитать); для stdin — без заголовка.
@@ -710,8 +710,8 @@ key = "vela_..."
 
 ### 12.6 UX-требования
 
-- Ошибки в stderr, короткие и с подсказкой действия (`already exists: edu/a.pdf (use --force to overwrite)`).
-- С `--json` stdout содержит только JSON (ошибки — JSON-объектом `{"error":{...}}` в stdout и ненулевой код выхода), чтобы CLI был удобен для скриптов и для edu-publish.
+- Ошибки в stderr, короткие и с подсказкой действия (`already exists: docs/a.pdf (use --force to overwrite)`).
+- С `--json` stdout содержит только JSON (ошибки — JSON-объектом `{"error":{...}}` в stdout и ненулевой код выхода), чтобы CLI был удобен для скриптов и для ci.
 - Таблицы выравниваются, размеры human-readable (KiB/MiB), время в локальной зоне.
 - Цвета только для TTY.
 
@@ -725,9 +725,9 @@ key = "vela_..."
 |---|---|---|
 | `VELA_LISTEN` | `:8080` | адрес HTTP |
 | `VELA_DATA_DIR` | `/data` | корень данных |
-| `VELA_PUBLIC_URL` | — (**обязательна**) | `https://store.xchunk.org`, без `/` в конце |
-| `VELA_ACCEL_PREFIX` | `/_blobs/` | пусто → direct-режим |
-| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128,172.17.0.1/32` | CIDR, от которых доверяем `X-Real-IP`/`X-Forwarded-*` (§19.14) |
+| `VELA_PUBLIC_URL` | — (**обязательна**) | `https://store.example.com`, без `/` в конце |
+| `VELA_ACCEL_PREFIX` | empty (direct) | пусто → direct-режим |
+| `VELA_TRUSTED_PROXIES` | `127.0.0.1/32,::1/128` | CIDR, от которых доверяем `X-Real-IP`/`X-Forwarded-*` (§19.14) |
 | `VELA_MAX_UPLOAD` | `2GiB` | лимит загрузки (согласовать с `client_max_body_size` nginx) |
 | `VELA_MAX_CREATE` | `1MiB` | лимит `POST /objects` |
 | `VELA_LINK_DEFAULT_TTL` | `24h` | |
@@ -735,7 +735,7 @@ key = "vela_..."
 | `VELA_LINK_RETENTION` | `7d` | сколько хранить записи истёкших ссылок |
 | `VELA_TRASH_RETENTION` | `14d` | |
 | `VELA_JANITOR_INTERVAL` | `24h` | |
-| `VELA_SITE_TITLE` | `store.xchunk.org` | заголовок индекса |
+| `VELA_SITE_TITLE` | `Vela` | заголовок индекса |
 | `VELA_THEME_DIR` | пусто | кастомная тема |
 | `VELA_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `VELA_LOG_FORMAT` | `json` | `json`/`text` |
@@ -824,104 +824,13 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); -- schema version
 
 ---
 
-## 14. nginx (референсный конфиг, `deploy/nginx/store.xchunk.org.conf`)
+## 14. Reverse proxy examples
 
-```nginx
-# Reference config for store.xchunk.org.
-# TLS certificates are expected from certbot (Let's Encrypt).
+`examples/nginx/` contains three starting points: `fs-direct.conf`, `fs-accel.conf`, and `r2.conf`. Include exactly one in nginx's `http` context and install the shared snippets as described in `examples/README.md`. These are examples, not supported deployments; the operator owns TLS, firewall rules, reverse proxy security, backups, and updates.
 
-upstream vela {
-    server 127.0.0.1:8080;
-    keepalive 16;
-}
+All examples stream API request bodies, disable response buffering, use query-free access logs in both HTTP and HTTPS servers, and disable signed-link error logs. Security headers must appear exactly once even after an internal redirect. Upload limits must match `VELA_MAX_UPLOAD`; metadata headers require `large_client_header_buffers 4 64k`.
 
-server {
-    listen 80;
-    listen [::]:80;
-    server_name store.xchunk.org;
-
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 301 https://$host$request_uri; }
-}
-
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
-    server_name store.xchunk.org;
-
-    ssl_certificate     /etc/letsencrypt/live/store.xchunk.org/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/store.xchunk.org/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:vela_ssl:10m;
-
-    # Keep in sync with VELA_MAX_UPLOAD.
-    client_max_body_size 2g;
-
-    # Do not log query strings: signed links carry signatures in the query.
-    log_format vela_noquery '$remote_addr - [$time_local] "$request_method $uri $server_protocol" '
-                            '$status $body_bytes_sent "$http_user_agent" $request_time';
-    access_log /var/log/nginx/store.xchunk.org.access.log vela_noquery;
-
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-
-    # API: stream request bodies straight to velad (uploads), long timeouts.
-    location /api/ {
-        proxy_pass http://vela;
-        proxy_request_buffering off;
-        proxy_buffering off;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-
-        add_header Strict-Transport-Security "max-age=31536000" always;
-        add_header X-Content-Type-Options nosniff always;
-    }
-
-    # Everything else (index, public files, signed links) is decided by velad.
-    location / {
-        proxy_pass http://vela;
-        client_max_body_size 1k;   # public side never accepts bodies
-
-        add_header Strict-Transport-Security "max-age=31536000" always;
-        add_header X-Content-Type-Options nosniff always;
-    }
-
-    # Internal-only: velad answers with X-Accel-Redirect: /_blobs/<shard>/<id>.
-    # Clients can never request this location directly.
-    location /_blobs/ {
-        internal;
-        alias /srv/vela/blobs/;
-
-        sendfile on;
-        tcp_nopush on;
-        # Content-Type and Content-Disposition come from the upstream response.
-        # Upstream-only headers are re-emitted via $upstream_http_* variables.
-        add_header Cache-Control $upstream_http_x_vela_cache_control always;
-        add_header X-Robots-Tag $upstream_http_x_vela_robots always;
-        add_header Referrer-Policy $upstream_http_x_vela_referrer_policy always;
-        add_header Strict-Transport-Security "max-age=31536000" always;
-        add_header X-Content-Type-Options nosniff always;
-    }
-}
-```
-
-> **Реализация (§21):** `log_format` вынесен на уровень `http` (внутри `server` nginx его не допускает), `location`-блоки и общие `proxy_set_header` вынесены в `deploy/nginx/vela.conf`, который подключается через `include` и используется e2e-тестом; добавлены `server_tokens off`, проброс `X-Request-ID`.
-
-Замечания для реализации и README:
-- `add_header` в дочерней `location` **заменяет** все унаследованные, поэтому общие заголовки повторены в каждой location (или вынесены в `include snippets/vela-headers.conf`).
-- `add_header` с пустым значением переменной заголовок не добавляет: это нужное поведение (например, для public нет `X-Robots-Tag`).
-- Проверить на реальном nginx, что `Content-Type`/`Content-Disposition` из upstream сохраняются после `X-Accel-Redirect`, а `ETag`/`Last-Modified`/`Range` работают (§11.3).
-- nginx (`www-data`) должен иметь право на чтение `/srv/vela/blobs` и проход (`x`) по `/srv/vela`.
-- Порт контейнера публикуется **только на 127.0.0.1**, наружу смотрит только nginx.
-- Сертификат: `certbot --nginx -d store.xchunk.org` или webroot.
-
----
+Go streams filesystem contents by default (`VELA_ACCEL_PREFIX=`). Opting into `VELA_ACCEL_PREFIX=/_blobs/` requires the matching internal locations in `accel-locations.conf`, including the signed-link location. Only Go decides whether an object may be served. ETag, cache, robots, and referrer policies must survive accel delivery without exposing internal headers. `make test-e2e` exercises the actual example through nginx.
 
 ## 15. Сборка, Docker, CI/CD
 
@@ -987,7 +896,7 @@ CMD ["serve"]
 1. Те же тесты.
 2. `docker/setup-buildx-action`, `docker/login-action` в Docker Hub с `username: ${{ vars.DOCKERHUB_USERNAME }}` (repository variable) и `password: ${{ secrets.DOCKERHUB_TOKEN }}` (Docker Hub PAT с правами Read & Write).
 3. `docker/metadata-action` → теги `X.Y.Z`, `X.Y`, `latest`.
-4. `docker/build-push-action` с build-args `VERSION`, `COMMIT`, `DATE`, push в `docker.io/xchunk/vela`, платформа `linux/amd64`. Образ **публичный**.
+4. `docker/build-push-action` с build-args `VERSION`, `COMMIT`, `DATE`, push в `docker.io/xchunk/vela`, платформы `linux/amd64,linux/arm64`. Образ **публичный**.
 5. GitHub Release с собранными бинарниками `vela` под linux/darwin/windows × amd64/arm64 + `checksums.txt` (решение по §19.10).
 
 Секреты не выводятся в логи, permissions у workflow минимальные (`contents: read`; `contents: write` только у job-а, создающего GitHub Release).
@@ -1001,14 +910,14 @@ CMD ["serve"]
 <meta name="go-source" content="go.xchunk.org/vela https://github.com/x-chunk/vela https://github.com/x-chunk/vela/tree/master{/dir} https://github.com/x-chunk/vela/blob/master{/dir}/{file}#L{line}">
 ```
 
-для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на `go.xchunk.org`, вне этого репо, но README MUST это описать. Репозиторий публичный (§19.1), основная ветка — `master`.
+для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на сервере vanity-модуля, вне этого репо, но README MUST это описать. Репозиторий публичный (§19.1), основная ветка — `master`.
 
 ---
 
 ## 16. Деплой (будет описан в README, здесь — эталонный сценарий)
 
 1. На сервере: `sudo mkdir -p /srv/vela && sudo chown 65532:65532 /srv/vela && sudo chmod 755 /srv/vela`.
-2. `/etc/vela/vela.env` (права 600) по образцу `deploy/vela.env.example`, минимум `VELA_PUBLIC_URL=https://store.xchunk.org`.
+2. `/etc/vela/vela.env` (права 600) по образцу `examples/env/fs.env.example`, минимум `VELA_PUBLIC_URL=https://store.example.com`.
 3. (Логин в реестр не нужен: образ публичный.)
 4. Запуск:
    ```
@@ -1018,9 +927,9 @@ CMD ["serve"]
      --env-file /etc/vela/vela.env \
      xchunk/vela:1.0.0
    ```
-5. DNS A/AAAA для `store.xchunk.org`, nginx-конфиг из `deploy/nginx/`, certbot, `nginx -t && systemctl reload nginx`.
-6. `docker exec vela velad key create --name laptop --scope admin` → ключ в `vela login` на компьютере.
-7. Проверка: `vela whoami`, `vela new hello.txt --content hi --public`, открыть `https://store.xchunk.org/`.
+5. DNS A/AAAA для `store.example.com`, nginx-конфиг из `examples/nginx/`, certbot, `nginx -t && systemctl reload nginx`.
+6. `docker exec vela velad key create --name workstation --scope admin` → ключ в `vela login` на компьютере.
+7. Проверка: `vela whoami`, `vela new hello.txt --content hi --public`, открыть `https://store.example.com/`.
 
 Обновление: `docker pull xchunk/vela:X.Y.Z && docker stop vela && docker rm vela && docker run ...` (та же команда с новым тегом). Миграции БД применяются автоматически при старте; перед обновлением — `velad backup`.
 
@@ -1060,7 +969,7 @@ CMD ["serve"]
 
 ### Этап 1 — реализация (Claude Code)
 
-- Задать уточняющие вопросы (§19), затем реализовать всё из этой спеки: сервер, CLI, общий код, тесты, Makefile, Dockerfile, workflows, референсный nginx-конфиг, `deploy/vela.env.example`.
+- Задать уточняющие вопросы (§19), затем реализовать всё из этой спеки: сервер, CLI, общий код, тесты, Makefile, Dockerfile, workflows, референсный nginx-конфиг, `examples/env/fs.env.example`.
 - Создать **`AGENTS.md`** (не `CLAUDE.md`: файл должен читаться ревью-агентом Astra). Содержимое:
   - назначение проекта в 3–5 предложениях и ссылка на `docs/SPEC.md`;
   - карта репозитория (что в каком пакете, правила зависимостей между слоями: `server → service → (store, blob, sign)`, `api`/`client` не импортируют `internal/server|service|store`);
@@ -1083,9 +992,9 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 Полная human-readable документация, она же User Manual:
 1. Что такое Vela и зачем (коротко), модель видимости (с явным предупреждением, что unlisted ≠ защита).
-2. **Деплой**: требования, подготовка `/srv/vela` и прав, env-файл (таблица всех переменных), `docker login ghcr.io`, `docker run`, DNS, nginx-конфиг и certbot, создание первого ключа, проверка, обновление, бэкап и восстановление, ротация ключей подписи, ручной запуск janitor, чек-лист проверки заголовков через nginx.
+2. **Деплой**: требования, подготовка `/srv/vela` и прав, env-файл (таблица всех переменных), `docker run`, DNS, nginx-конфиг и certbot, создание первого ключа, проверка, обновление, бэкап и восстановление, ротация ключей подписи, ручной запуск janitor, чек-лист проверки заголовков через nginx.
 3. **Установка CLI**: `go install`, `make install`, vanity-мета, `vela login`, профили, права конфига, автодополнение.
-4. **User Manual**: все команды с примерами типичных сценариев (выложить файл публично, выложить временно на неделю, поделиться приватным файлом на 2 часа, переименовать папку, спрятать файл из индекса, восстановить из корзины, использовать в скриптах через `--json`, отдельный ключ для edu-publish с префиксом).
+4. **User Manual**: все команды с примерами типичных сценариев (выложить файл публично, выложить временно на неделю, поделиться приватным файлом на 2 часа, переименовать папку, спрятать файл из индекса, восстановить из корзины, использовать в скриптах через `--json`, отдельный ключ для ci с префиксом).
 5. **UX-нюансы**: перезапись только с `--force`; переименование меняет публичные URL, но не ломает подписанные ссылки; удаление идёт в корзину на N дней; изменение видимости мгновенное; ссылки нельзя сделать бессрочными; истёкшая ссылка показывает 410; кэш public-файлов до 5 минут после перезаписи; ограничения путей и зарезервированные имена.
 6. **Кастомизация индекса**: контракт данных темы, как подключить `VELA_THEME_DIR`.
 7. **API reference**: краткая таблица эндпоинтов со ссылкой на §10 спеки.
@@ -1093,8 +1002,8 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 ### После v1 (вне скоупа, для понимания направления)
 
-- Миграция `xchunk.org/static/`, второго path и школьного поддомена в Vela (`vela put -r`), редиректы со старых URL в nginx.
-- Перевод edu-publish с SSH на `go.xchunk.org/vela/client` или `vela --json` с ключом `rw` + префикс `edu/`.
+- Import existing files with `vela put -r`; operators can configure redirects from old public URLs.
+- Перевод ci с SSH на `go.xchunk.org/vela/client` или `vela --json` с ключом `rw` + префикс `docs/`.
 - Возможно: редиректы при переименовании (alias-таблица), бессрочные «публичные токены», веб-UI.
 
 ---
@@ -1103,14 +1012,10 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 > **Статус: все вопросы закрыты 2026-10-10** перед этапом 1. Ответы — под каждым вопросом; влияние на остальной текст отражено по месту и в §21.
 
-1. **Репозиторий публичный или приватный?** Если приватный, `go install go.xchunk.org/vela/cmd/vela@latest` потребует `GOPRIVATE=go.xchunk.org/*` и git-доступа к GitHub по SSH/токену на каждой машине; vanity-мета при этом всё равно нужна. Образ в ghcr остаётся приватным в любом случае.
-   - **Ответ:** публичный. `GOPRIVATE` не нужен. Образ тоже публичный (Docker Hub), см. §21.
-2. **GitHub owner** для репо и образа: организация `x-chunk` (`ghcr.io/x-chunk/vela`) или личный аккаунт?
-   - **Ответ:** личный аккаунт `x-chunk` (это user, а не организация): `github.com/x-chunk/vela`. Образ — `docker.io/xchunk/vela` (в Docker Hub дефис в namespace недопустим).
-3. **Архитектура сервера**: amd64 или arm64? Собирать multi-arch образ?
-   - **Ответ:** только `linux/amd64`.
-4. **GHCR-аутентификация в Actions**: использовать PAT из `secrets.GHCR_TOKEN` (как задано) или достаточно встроенного `GITHUB_TOKEN` с `packages: write` (проще, без ротации PAT)? Имя secret-а для username.
-   - **Ответ:** вопрос снят: реестр заменён на Docker Hub. Логин — `vars.DOCKERHUB_USERNAME`, токен — `secrets.DOCKERHUB_TOKEN`.
+1. **Repository and image:** public GitHub repository and Docker Hub image; anonymous pulls are supported.
+2. **Project identity:** module `go.xchunk.org/vela`, source `https://github.com/x-chunk/vela`, official image `xchunk/vela`.
+3. **Image platforms:** `linux/amd64` and `linux/arm64`.
+4. **Release credentials:** `secrets.DOCKERHUB_USERNAME` and `secrets.DOCKERHUB_TOKEN`; image name in `vars.DOCKERHUB_IMAGE`. The token is scoped to the image repository with Read & Write access.
 5. **Видимость по умолчанию**: `private` (безопасно) или `unlisted`/`public` (удобнее для «свалки»)?
    - **Ответ:** `unlisted`.
 6. **Просроченные объекты** (`expires_at`): скачивать через API до ежедневной чистки можно (как в спеке) или они недоступны совсем?
@@ -1129,8 +1034,8 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
    - **Ответ:** английский.
 13. **Как именно вызывается Astra** на этапах 2–3 (кто вносит правки по ревью — Astra сама или Claude Code по её отчёту)? Нужен ли определённый формат отчёта ревью в репо (например, `REVIEW.md`)?
    - **Ответ:** Astra пишет `REVIEW.md` в корне репозитория с нумерованными замечаниями; правки вносит Claude Code и отмечает статус каждого замечания там же (отклонённые — с обоснованием).
-14. **Docker-подсеть** для `VELA_TRUSTED_PROXIES`: при `-p 127.0.0.1:8080:8080` запросы от nginx приходят в контейнер с адреса docker-шлюза (обычно `172.17.0.1`). Оставить `172.16.0.0/12` или зафиксировать конкретный адрес? Альтернатива — `--network host` (тогда достаточно `127.0.0.1`).
-   - **Ответ:** доверять только шлюзу bridge: `127.0.0.1/32,::1/128,172.17.0.1/32`; контейнер запускается с `-p 127.0.0.1:8080:8080`.
+14. **Trusted proxies:** loopback only by default. For Docker bridge networking, inspect the actual gateway and explicitly trust only the proxy address (the common `172.17.0.1` is an example). Linux host networking needs only loopback when the proxy runs on the same host.
+
 
 ---
 
@@ -1156,29 +1061,29 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 | Дата | Раздел | Изменение | Причина |
 |---|---|---|---|
-| 2026-10-10 | §0, §15.3, §16, §20 | Образ публикуется **публично** в Docker Hub `xchunk/vela`, а не в приватный `ghcr.io`. На сервере `docker login` не нужен. | Решение владельца. |
+| 2026-10-10 | §0, §15.3, §16, §20 | Образ публикуется **публично** в Docker Hub `xchunk/vela`, с анонимным pull. | Решение владельца. |
 | 2026-10-10 | §5.2 | Блобы шардируются по **последним** 4 символам ULID (`<id[22:24]>/<id[24:26]>/<id>`), а не по первым. | Первые символы ULID — метка времени: все блобы за ~3 суток попадали бы в одну директорию, шардирование не работало бы. Последние символы — случайная часть. |
 | 2026-10-10 | §15.2 | Бинарник в образе — `/usr/local/bin/velad`. | В distroless `/` не входит в `PATH`, и команды `docker exec vela velad ...` из §7.5/§16 не работали бы. |
 | 2026-10-10 | §11.3, §14 | В accel-режиме velad не шлёт `Cache-Control` напрямую, только `X-Vela-Cache-Control`. | nginx при `X-Accel-Redirect` сам пробрасывает upstream `Cache-Control`; вместе с `add_header` из `X-Vela-Cache-Control` получился бы дубль. |
 | 2026-10-10 | §7.4 | `GET /api/v1/links` требует scope `rw`. | Листинг возвращает рабочие подписанные URL, то есть выдаёт доступ к объектам. |
 | 2026-10-10 | §12.4 | Если повтор `PUT` с `If-None-Match: *` получил `409 already_exists`, клиент сверяет sha256 существующего объекта и при совпадении считает загрузку успешной. | Первый запрос мог дойти до сервера, а ответ — потеряться. |
-| 2026-10-10 | §14 | `log_format` на уровне `http`; `location`-блоки в `deploy/nginx/vela.conf` (include). Добавлены `server_tokens off` и `proxy_set_header X-Request-ID $request_id` (+ `add_header X-Request-ID` во внутренней location). | В исходном конфиге `log_format` стоял внутри `server` — `nginx -t` его отвергает. Общий сниппет позволяет e2e-тесту проверять ровно разворачиваемый конфиг. Один request ID в логах nginx и velad. |
+| 2026-10-10 | §14 | `log_format` на уровне `http`; `location`-блоки в `examples/nginx/common.conf` (include). Добавлены `server_tokens off` и `proxy_set_header X-Request-ID $request_id` (+ `add_header X-Request-ID` во внутренней location). | В исходном конфиге `log_format` стоял внутри `server` — `nginx -t` его отвергает. Общий сниппет позволяет e2e-тесту проверять ровно разворачиваемый конфиг. Один request ID в логах nginx и velad. |
 | 2026-10-10 | §11.3, §17.2 | Интеграционный тест с реальным nginx 1.30 (`test/e2e`, `make test-e2e`, отдельный job в CI) вместо ручного чек-листа. Подтверждено: `Content-Type` и `Content-Disposition` переживают `X-Accel-Redirect`, `Cache-Control`/`X-Robots-Tag`/`Referrer-Policy` приходят ровно один раз через `X-Vela-*`, внутренние заголовки не утекают, Range/HEAD/ETag/304 работают. | MUST из §11.3. |
 | 2026-10-10 | §15.2 | Базовый образ `gcr.io/distroless/static-debian13:nonroot`; в образе создан `/data`, принадлежащий 65532. | Debian 13 — текущий стабильный выпуск distroless. `/data` с нужным владельцем позволяет запускать контейнер и с анонимным томом. |
 | 2026-10-10 | §6, §5.4 | Добавлены пакеты `internal/domain` (сущности), `internal/wire` (сборка сервиса и адаптеры store/blob → интерфейсы сервиса), `internal/velad` (подкоманды сервера), `internal/mimetype`, `internal/clock`, `internal/units`, `internal/archtest`. | Интерфейсы объявлены в `service`, а Go требует точного совпадения сигнатур методов, поэтому нужен тонкий адаптер в одном месте. `mimetype` убирает из `service` импорт `net/http`. `archtest` машинно проверяет правила слоёв. |
 | 2026-10-10 | §13.1 | Таблица `trash` хранит все колонки объекта (а не JSON `snapshot`); `trash.object_id` и `blob_id` уникальны. Имена API-ключей уникальны только среди неотозванных. Пулы: один writer (1 соединение, `BEGIN IMMEDIATE`) и reader-пул (`query_only`), оба WAL. | Колонки индексируются (поиск сиротских блобов, фильтр по пути); отозванный ключ освобождает имя; писатели сериализованы без `SQLITE_BUSY` на апгрейде блокировки. |
 | 2026-10-10 | §10.3 | Добавлен код `method_not_allowed` (405) для API. | 405 на `/api/v1/*` должен иметь тот же JSON-формат ошибки. |
 | 2026-10-10 | §10.1, §10.4 | Все запросы под `/api/` аутентифицируются до маршрутизации (неизвестный эндпоинт без ключа → 401). Неканонические пути (`a//b`, `.`/`..`) → 400 `invalid_path` вместо редиректа. JSON-тела разбираются строго: неизвестные поля → 400 `invalid_request`. | Не раскрывать набор эндпоинтов; не превращать молча `a//b` в `a/b` для PUT; опечатка в опции не должна становиться no-op. |
-| 2026-10-10 | §7.4, §10.4 | Листинг каталога-предка префикса ключа (например, корня для ключа `edu/`) сужается до префикса, а не даёт 403; несвязанный каталог — 403. Записи корзины вне префикса ключа — 404. | «Листинг автоматически ограничивается префиксом»; ключ видит путь к своему поддереву и ничего больше. |
+| 2026-10-10 | §7.4, §10.4 | Листинг каталога-предка префикса ключа (например, корня для ключа `docs/`) сужается до префикса, а не даёт 403; несвязанный каталог — 403. Записи корзины вне префикса ключа — 404. | «Листинг автоматически ограничивается префиксом»; ключ видит путь к своему поддереву и ничего больше. |
 | 2026-10-10 | §10.4 | `GET /api/v1/trash` принимает также `path` (точный исходный путь) — для `vela trash restore <path>`. `DELETE /api/v1/objects/` (корень) с `recursive` отклоняется (400). `PUT` с `If-Match` на несуществующий объект → 412. | Удобство CLI; защита от удаления всего хранилища одной командой; семантика HTTP-предусловий. |
 | 2026-10-10 | §8.3, §10.4 | В `Link` поле `path` пустое, если объект в корзине или удалён; `url` — `null`, если ключ подписи уничтожен (`--revoke-all`). Восстановление из корзины снимает уже истёкший `expires_at`. | Ссылка не работает, пока объект не «живой»; URL без ключа построить нельзя. Без снятия срока janitor сразу вернул бы объект в корзину. |
-| 2026-10-10 | §12.4 | `vela put -r DIR REMOTE/` кладёт **содержимое** `DIR` под `REMOTE/` (как `cp -r DIR/. REMOTE/`). При частичном сбое с `--json` выводится один документ `{"error":{"code":"partial_failure","details":{"failed":[...],"objects":[...]}}}`, код выхода 7. | Однозначность примера `put -r ./dir edu/dir/`; в stdout всегда ровно один JSON-документ. |
+| 2026-10-10 | §12.4 | `vela put -r DIR REMOTE/` кладёт **содержимое** `DIR` под `REMOTE/` (как `cp -r DIR/. REMOTE/`). При частичном сбое с `--json` выводится один документ `{"error":{"code":"partial_failure","details":{"failed":[...],"objects":[...]}}}`, код выхода 7. | Однозначность примера `put -r ./dir docs/dir/`; в stdout всегда ровно один JSON-документ. |
 | 2026-10-10 | §7.5 | `velad key create` печатает в stdout **только** ключ, остальное — в stderr. | `KEY=$(docker exec vela velad key create ...)` захватывает ровно ключ. |
 | 2026-10-10 | §15.1, §15.3 | golangci-lint закреплён на v2.14.0 и запускается через `go run` (Makefile) и `install-mode: goinstall` (CI). Добавлены цели `make test-e2e` и `make dist`. | Бинарник линтера, собранный другим тулчейном, не читает export data Go 1.27.2. `make dist` — те же архивы CLI, что публикует релиз. |
 | 2026-10-10 | §5.3, §9, §13.1 | Заменённое, очищенное (purge) и сиротское содержимое не удаляется сразу: транзакция, снимающая последнюю ссылку, ставит блоб в очередь `blob_gc` (миграция 0002); сборщик удаляет файл не раньше чем через 15 минут и только после `PRAGMA wal_checkpoint(FULL)`, повторно проверяя отсутствие ссылок. Сборщик работает в задаче janitor `blob_gc` и в `serve` каждые 5 минут. Ревью R-002, R-012. | При `synchronous=NORMAL` закоммиченная транзакция может откатиться после сбоя питания; немедленный unlink оставил бы строку без содержимого. Период ожидания сохраняет старое содержимое для запросов, разрешённых до перезаписи (в т.ч. для nginx). |
 | 2026-10-10 | §9 | Межпроцессная блокировка janitor продлевается каждые lease/3 (lease по умолчанию 1 ч) всё время прохода; если владение потеряно (захват другим процессом или длительный сбой продления), проход прерывается. Ревью R-029. | Фиксированная аренда без продления истекала у длинного прохода, и второй процесс мог начать параллельную чистку. |
 | 2026-10-10 | §13, §16 | `velad backup` держит межпроцессную блокировку `backup` (с продлением) от снимка БД до копирования последнего блоба; пока она взята, сборщик блобов ничего не удаляет. Отсутствующий или повреждённый (размер; с `--verify` — SHA-256) блоб делает backup неуспешным, частичные файлы удаляются. Параллельные backup исключены. Ревью R-001. | Перезапись или purge между снимком и копированием удаляли блоб, на который ссылается снимок; backup при этом завершался успехом. |
-| 2026-10-10 | §11.3, §14 | Формат `vela_noquery` задан и в HTTP-сервере редиректа. Для `/s/` и новой внутренней location `/_blobs/s/` (velad отдаёт подписанные ссылки через `X-Accel-Redirect: <prefix>s/<shard>/<id>`) error log выключен. e2e-тест запускает весь `store.xchunk.org.conf` с TLS и проверяет фактические журналы. Ревью R-007. | Error log nginx всегда пишет полную строку запроса с query (например, при недоступном upstream или отсутствующем файле); формат access log на него не влияет. |
+| 2026-10-10 | §11.3, §14 | Формат `vela_noquery` задан и в HTTP-сервере редиректа. Для `/s/` и новой внутренней location `/_blobs/s/` (velad отдаёт подписанные ссылки через `X-Accel-Redirect: <prefix>s/<shard>/<id>`) error log выключен. e2e-тест запускает весь `store.example.com.conf` с TLS и проверяет фактические журналы. Ревью R-007. | Error log nginx всегда пишет полную строку запроса с query (например, при недоступном upstream или отсутствующем файле); формат access log на него не влияет. |
 | 2026-10-10 | §10.4, §11.3, §14 | Единственный валидатор содержимого — ETag `"sha256:<hex>"` в обоих режимах. В accel-режиме velad сам отвечает 304 на совпавший `If-None-Match` и передаёт ETag через `X-Vela-ETag`; внутренние location nginx: `etag off`, `if_modified_since off`, `add_header ETag`, удаление `Last-Modified`. `Last-Modified` не отправляется и в direct-режиме. Ревью R-013. | ETag nginx (mtime+size) и Last-Modified с секундной точностью совпадали у разного содержимого одного размера, перезаписанного в ту же секунду: клиент получал 304 или неверный Range. |
 | 2026-10-10 | §10.4, §14 | nginx: `large_client_header_buffers 4 64k` в TLS-сервере; velad: `MaxHeaderBytes` 128 КиБ. Ревью R-014. | Метаданные PUT передаются percent-encoded в заголовках; допустимое описание из 4096 четырёхбайтовых символов — строка заголовка около 48 КиБ, а лимит nginx по умолчанию — 8 КиБ на строку. |
 | 2026-10-10 | §13.1, §10.4 | Записи корзины получают монотонный `seq` (миграция 0003, таблица `counters`); листинг корзины, курсоры, восстановление по пути и очистка упорядочены по `seq`. Ревью R-030. | Случайная часть ULID не упорядочена внутри одной миллисекунды: восстановление по пути могло вернуть не последнюю удалённую версию. |
@@ -1196,3 +1101,6 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 | 2026-10-11 | §10.4; SPEC-storage §5.1 | Resetting Content-Type reads at most 512 bytes before the write transaction, with a 10-second context covering detection/retries. The transaction checks object ID, blob ID and revision; a concurrent change retries, or fails the supplied If-Match. R-004. | Remote reads must not block unrelated SQLite writes or lease renewals; metadata must describe the inspected version. |
 | 2026-10-11 | §13; SPEC-storage §5.3, §6, §9 | R2 upload/create limits must fit fixed part size × 10000. Put rejects unsupported limits before reading; migration preflights all referenced sizes before any copy, including dry-run. R-006. | Streaming wrappers prevent SDK size discovery and automatic part resizing; unsupported limits must fail before transferring thousands of parts. |
 | 2026-10-11 | §11.3; SPEC-storage §5.4 | Invalid or unsatisfiable ranges in FS direct and R2 delivery return 416 with Cache-Control: no-store and no ETag, retaining Content-Range: bytes */size. R-008. | A cached Range error must not replace the normal representation under a URL-only shared cache key. Covered by a real nginx proxy-cache test. |
+
+| 2026-10-11 | §0, §12–16; SPEC-storage §5–6 | Open source under MIT. Neutral examples in `examples/`; filesystem direct delivery is the default; accel requires explicit opt-in. Trusted proxies default to loopback and index title to Vela; login has no built-in URL. Docker Hub releases support amd64 and arm64. | Deployments must set their own origin, proxy trust, delivery mode, and branding; existing accel deployments must retain an explicit prefix. |
+| 2026-10-11 | SPEC-storage §5–6 | `VELA_R2_REGION` defaults to `auto`; an explicit S3 endpoint does not require a Cloudflare account ID. | Other S3-compatible services can use their own signing region without adding another backend or renaming existing configuration. |

@@ -4,7 +4,7 @@ Instructions for agents that review or change this repository: the review agent 
 
 ## What Vela is
 
-Vela is a self-hosted file store for `store.xchunk.org`. A single Go server, `velad`, runs in one Docker container behind nginx and owns every file: it serves a REST API (`/api/v1`) authenticated by API keys, a public HTML index, direct URLs, and expiring HMAC-signed links for private files. It also keeps a trash and runs a daily janitor. A CLI, `vela`, manages the store from a workstation. nginx only terminates TLS and streams blob files when `velad` tells it to via `X-Accel-Redirect`; every decision about paths, access, visibility and caching is made in Go.
+Vela is a self-hosted file store with a Go server (`velad`) and CLI (`vela`). The server serves a REST API (`/api/v1`), a public HTML index, direct URLs, expiring HMAC-signed links, and a recoverable trash. Metadata lives in SQLite; contents live in the local filesystem or a private R2/S3 bucket. Go owns all path, access, visibility, and caching decisions. Files stream directly by default; nginx accel is an explicit filesystem optimization.
 
 The specification is [`docs/SPEC.md`](docs/SPEC.md). Its section 21 records every deliberate deviation from the original text. If code and spec disagree, either the code is wrong or section 21 is missing an entry.
 
@@ -39,8 +39,8 @@ internal/units      byte sizes: parse and format
 internal/velad      velad subcommands: serve, key, signing, janitor, backup, healthcheck, migrate
 internal/version    build metadata from ldflags with a buildinfo fallback
 internal/wire       assembles the service from store and blob (the only place that knows both)
-deploy/nginx        reference nginx config; vela.conf holds the locations and is used by the e2e test
-deploy/             example environment file for the container
+examples/nginx      illustrative proxy configurations, exercised by the e2e test
+examples/           Docker and environment examples for fs-direct, fs-accel, and R2/S3
 test/e2e            delivery through a real nginx in Docker (build tag e2e)
 docs/SPEC.md        the specification
 ```
@@ -74,6 +74,10 @@ make dist       # CLI release archives for 6 platforms + checksums.txt (needs zi
 ```
 
 Before declaring work done: `make test` and `make lint` are green, and `make test-e2e` too if delivery, headers or the nginx config changed.
+
+## Project neutrality
+
+Use reserved example domains, documentation IP ranges, and neutral paths in source, fixtures, and docs. The public module `go.xchunk.org/vela`, documentation URL `https://docs.xchunk.org/vela`, source repository, and official Docker Hub image are project identity. Personal deployment values belong outside the repository. Run `make check-neutrality` during review; CI also scans secrets and validates proxy examples.
 
 ## Conventions
 

@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Package e2e runs velad behind a real nginx with the reference
-// configuration from deploy/nginx (store.xchunk.org.conf and vela.conf),
+// configuration from examples/nginx (fs-accel.conf and its snippets),
 // TLS and the HTTP redirect server included, and checks what reaches the
 // client and what reaches the logs. Run with "make test-e2e"; it needs
 // Docker and uses host networking, so it runs on Linux.
@@ -58,7 +58,7 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// writeCert writes a self-signed certificate for store.xchunk.org in the
+// writeCert writes a self-signed certificate for store.example.com in the
 // layout certbot uses.
 func writeCert(t *testing.T, dir string) {
 	t.Helper()
@@ -68,8 +68,8 @@ func writeCert(t *testing.T, dir string) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "store.xchunk.org"},
-		DNSNames:     []string{"store.xchunk.org"},
+		Subject:      pkix.Name{CommonName: "store.example.com"},
+		DNSNames:     []string{"store.example.com"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 	}
@@ -108,7 +108,7 @@ func startNginx(t *testing.T, upstream, blobsDir string) *nginx {
 		t.Skip("docker not available")
 	}
 	root := repoRoot(t)
-	ref, err := os.ReadFile(filepath.Join(root, "deploy", "nginx", "store.xchunk.org.conf"))
+	ref, err := os.ReadFile(filepath.Join(root, "examples", "nginx", "fs-accel.conf"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +139,8 @@ func startNginx(t *testing.T, upstream, blobsDir string) *nginx {
 	name := fmt.Sprintf("vela-e2e-%d", httpsPort)
 	args := []string{"run", "-d", "--rm", "--name", name, "--network", "host",
 		"-v", filepath.Join(tmp, "default.conf") + ":/etc/nginx/conf.d/default.conf:ro",
-		"-v", filepath.Join(root, "deploy", "nginx", "vela.conf") + ":/etc/nginx/snippets/vela.conf:ro",
-		"-v", certs + ":/etc/letsencrypt/live/store.xchunk.org:ro",
+		"-v", filepath.Join(root, "examples", "nginx") + ":/etc/nginx/snippets:ro",
+		"-v", certs + ":/etc/letsencrypt/live/store.example.com:ro",
 		"-v", blobsDir + ":/srv/vela/blobs:ro",
 		nginxImage}
 	if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
@@ -170,7 +170,7 @@ func startNginx(t *testing.T, upstream, blobsDir string) *nginx {
 // the container output (global error log).
 func (n *nginx) logs() string {
 	var b strings.Builder
-	for _, f := range []string{"/var/log/nginx/store.xchunk.org.access.log", "/var/log/nginx/store.xchunk.org.error.log"} {
+	for _, f := range []string{"/var/log/nginx/vela.access.log", "/var/log/nginx/vela.error.log"} {
 		out, _ := exec.Command("docker", "exec", n.name, "cat", f).CombinedOutput()
 		fmt.Fprintf(&b, "== %s\n%s\n", f, out)
 	}
@@ -186,7 +186,7 @@ type response struct {
 }
 
 var client = &http.Client{
-	Transport:     &http.Transport{TLSClientConfig: &tls.Config{ServerName: "store.xchunk.org", InsecureSkipVerify: true}}, // #nosec G402 -- self-signed test certificate
+	Transport:     &http.Transport{TLSClientConfig: &tls.Config{ServerName: "store.example.com", InsecureSkipVerify: true}}, // #nosec G402 -- self-signed test certificate
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
@@ -200,7 +200,7 @@ func (n *nginx) try(method, rawURL string, headers ...string) (response, error) 
 	if err != nil {
 		return response{}, err
 	}
-	req.Host = "store.xchunk.org"
+	req.Host = "store.example.com"
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
