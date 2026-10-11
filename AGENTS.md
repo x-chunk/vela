@@ -87,6 +87,7 @@ Before declaring work done: `make test` and `make lint` are green, and `make tes
   - `github.com/oklog/ulid/v2`: ULIDs.
   - `golang.org/x/text`: Unicode NFC.
   - `golang.org/x/term`: no-echo key input and TTY detection.
+  - `golang.org/x/sys`: Windows DACLs for the private CLI config (it already came in through `x/term`).
   - `github.com/pelletier/go-toml/v2`: the CLI config.
 
   Justify any new dependency here.
@@ -102,7 +103,7 @@ Before declaring work done: `make test` and `make lint` are green, and `make tes
 6. **Key prefixes are checked on every operation**: list (narrowed for ancestors, 403 for unrelated paths), stat, download, create, upload, patch, delete, the move source **and target**, the restore target, trash listing (trash entries outside the prefix are 404), links create/list/revoke. Scopes: `ro` < `rw` < `admin`; purge needs `admin`; link listing needs `rw` because it returns working URLs.
 7. The `exp` in a signed URL must equal the stored `expires_at`; a link cannot be extended by editing `exp`. Expiry is checked before any database access.
 8. Size limits: `VELA_MAX_UPLOAD` is enforced from `Content-Length` before reading and while streaming (chunked); `VELA_MAX_CREATE` for inline content; JSON bodies are capped; request bodies have a per-read idle deadline.
-9. File permissions are set explicitly, not left to the umask: database 0600, `tmp/` 0700, `blobs/` dirs 0755 and files 0644 (nginx must read them), CLI config 0600 in a 0700 directory. The CLI refuses a config readable by others.
+9. File permissions are set explicitly, not left to the umask: database 0600, `tmp/` 0700, `blobs/` dirs 0755 and files 0644 (nginx must read them), CLI config 0600 in a 0700 directory (on Windows: a protected DACL for the user and SYSTEM only). The CLI refuses a config readable by others on every platform.
 10. `X-Real-IP`, `X-Forwarded-For` and `X-Request-ID` are trusted only from `VELA_TRUSTED_PROXIES`. Otherwise clients could dodge the auth rate limit or inject log IDs.
 11. API keys are managed only by `velad key ...` inside the container, never over HTTP.
 12. Paths are validated in one place (`api.CleanObjectPath`/`CleanPrefix`): NFC, no empty/dot segments, no control characters or backslashes, length limits, reserved first segments (`api`, `s`, `_vela`, `_blobs`, `healthz`, `robots.txt`, `favicon.ico`). Non-canonical API URLs are rejected rather than redirected.

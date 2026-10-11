@@ -3,8 +3,11 @@
 //
 // Because the file holds API keys, the CLI refuses to read it when other
 // users can access it (like ssh does with private keys), and always writes it
-// with mode 0600 through a temporary file and rename, so a crash never
-// leaves a truncated or world-readable config behind.
+// privately through a temporary file and rename, so a crash never leaves a
+// truncated or readable config behind. Privacy means mode 0600 on Unix and,
+// on Windows, a protected DACL that grants access only to the user and
+// SYSTEM (POSIX mode bits do not exist there; os.Chmod only toggles the
+// read-only attribute).
 package config
 
 import (
@@ -13,7 +16,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -56,15 +58,23 @@ func DefaultPath() (string, error) {
 // PermissionError reports a config file that others can read or write.
 type PermissionError struct {
 	Path string
+	// Mode is the file mode on Unix.
 	Mode fs.FileMode
+	// Others names who else has access, on Windows.
+	Others string
 }
 
 func (e *PermissionError) Error() string {
+	if e.Others != "" {
+		return fmt.Sprintf("config file %s can be read by %s, but it contains API keys and must be private; "+
+			"run: icacls \"%s\" /inheritance:r /grant:r \"%%USERNAME%%:F\"", e.Path, e.Others, e.Path)
+	}
 	return fmt.Sprintf("config file %s has permissions %04o, but it contains API keys and must be private; run: chmod 600 %s",
 		e.Path, e.Mode.Perm(), e.Path)
 }
 
-// Load reads the file at path. A missing file yields an empty config.
+// Load reads the file at path. A missing file yields an empty config. A
+// file others can access is refused (see checkPrivate for each platform).
 func Load(path string) (*File, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -73,8 +83,8 @@ func Load(path string) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, &PermissionError{Path: path, Mode: info.Mode()}
+	if err := checkPrivate(path, info); err != nil {
+		return nil, err
 	}
 	b, err := os.ReadFile(path) // #nosec G304 -- the user's own config path.
 	if err != nil {
@@ -90,12 +100,18 @@ func Load(path string) (*File, error) {
 	return f, nil
 }
 
-// Save writes the file atomically with mode 0600, creating its directory
-// with mode 0700.
+// Save writes the file atomically and privately: the temporary file is
+// made private before the key is written into it, then renamed over the
+// target. A directory created for it is private too.
 func (f *File) Save(path string) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create %s: %w", dir, err)
+		}
+		if err := makePrivateDir(dir); err != nil {
+			return fmt.Errorf("protect %s: %w", dir, err)
+		}
 	}
 	b, err := toml.Marshal(f)
 	if err != nil {
@@ -106,9 +122,9 @@ func (f *File) Save(path string) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+	if err := makePrivateFile(tmp); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write config: %w", err)
+		return fmt.Errorf("protect config: %w", err)
 	}
 	if _, err := tmp.Write(b); err != nil {
 		_ = tmp.Close()

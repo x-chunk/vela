@@ -46,6 +46,22 @@ jobs:
           # export data of the Go version in go.mod.
           install-mode: goinstall
 
+  windows:
+    name: CLI config on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The private-config guarantees use Windows DACLs, which only a
+      # Windows runner can exercise.
+      - name: go test
+        run: go test -count=1 ./internal/cli/config/
+      - name: go build
+        run: go build ./cmd/vela
+
   e2e:
     name: nginx end-to-end
     runs-on: ubuntu-latest
