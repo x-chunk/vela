@@ -1,10 +1,12 @@
 package server
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
-	"time"
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/service"
@@ -110,18 +112,55 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 	h.Set("Content-Disposition", contentDisposition(o.Disposition, api.BaseName(o.Path)))
 	setPolicyHeaders(h, pol)
 	h.Set("ETag", etag)
-	f, err := s.svc.OpenContent(c)
+	if values := r.Header.Values("If-Match"); len(values) > 0 && !strongMatch(values, etag) {
+		w.WriteHeader(http.StatusPreconditionFailed)
+		return
+	}
+	if noneMatch(r.Header.Values("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	h.Set("Accept-Ranges", "bytes")
+	off, length, status := int64(0), o.Size, http.StatusOK
+	rangeHeader := r.Header.Get("Range")
+	if ir := r.Header.Get("If-Range"); ir != "" && ir != etag {
+		rangeHeader = ""
+	}
+	if r.Method != http.MethodHead && rangeHeader != "" {
+		var err error
+		off, length, err = parseRange(rangeHeader, o.Size)
+		if err != nil {
+			h.Set("Content-Range", fmt.Sprintf("bytes */%d", o.Size))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if off != 0 || length != o.Size || !strings.Contains(rangeHeader, ",") {
+			status = http.StatusPartialContent
+			h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", off, off+length-1, o.Size))
+		}
+	}
+	h.Set("Content-Length", strconv.FormatInt(length, 10))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	f, err := s.svc.OpenRange(r.Context(), c, off, length)
 	if err != nil {
 		s.log.Error("open content failed", "request_id", info(r).id, "object_id", o.ID, "error", err)
+		h.Del("Content-Length")
 		h.Del("Content-Disposition")
+		h.Del("Content-Range")
 		h.Del("ETag")
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 	defer func() { _ = f.Close() }()
-	// A zero modification time: no Last-Modified, no If-Modified-Since; the
-	// ETag carries all conditional requests (see above).
-	http.ServeContent(w, r, "", time.Time{}, f)
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(status)
+	if _, err := io.CopyBuffer(w, io.LimitReader(f, length), make([]byte, 64<<10)); err != nil && r.Context().Err() == nil {
+		s.log.Warn("content stream interrupted", "object_id", o.ID, "error", err)
+	}
+
 }
 
 func setPolicyHeaders(h http.Header, pol deliveryPolicy) {
@@ -184,4 +223,52 @@ func rfc5987Escape(s string) string {
 		b.WriteByte(hex[c&0x0f])
 	}
 	return b.String()
+}
+
+// parseRange supports one byte range; multipart ranges deliberately use a full response.
+func parseRange(value string, size int64) (int64, int64, error) {
+	bad := errors.New("invalid byte range")
+	if !strings.HasPrefix(value, "bytes=") {
+		return 0, 0, bad
+	}
+	value = strings.TrimPrefix(value, "bytes=")
+	if strings.Contains(value, ",") {
+		return 0, size, nil
+	}
+	a, b, ok := strings.Cut(strings.TrimSpace(value), "-")
+	if !ok || size == 0 {
+		return 0, 0, bad
+	}
+	if a == "" {
+		n, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, bad
+		}
+		n = min(n, size)
+		return size - n, n, nil
+	}
+	start, err := strconv.ParseInt(a, 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, bad
+	}
+	end := size - 1
+	if b != "" {
+		end, err = strconv.ParseInt(b, 10, 64)
+		if err != nil || end < start {
+			return 0, 0, bad
+		}
+		end = min(end, size-1)
+	}
+	return start, end - start + 1, nil
+}
+
+func strongMatch(values []string, etag string) bool {
+	for _, v := range values {
+		for _, tag := range strings.Split(v, ",") {
+			if tag = strings.TrimSpace(tag); tag == "*" || tag == etag {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"go.xchunk.org/vela/internal/content"
 	"go.xchunk.org/vela/internal/ids"
 )
 
@@ -37,7 +38,7 @@ const (
 )
 
 // ErrNotFound is returned when a blob does not exist.
-var ErrNotFound = errors.New("blob not found")
+var ErrNotFound = content.ErrNotFound
 
 // Store is a filesystem blob store rooted at a data directory.
 type Store struct {
@@ -201,10 +202,17 @@ func (p *Pending) Commit(id string) (err error) {
 	if err := p.s.mkShard(id); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpName, dst); err != nil {
+	// An exclusive link publishes complete bytes atomically and prevents an ID
+	// collision from replacing an immutable blob. Both directories share a device.
+	if err := os.Link(tmpName, dst); err != nil {
 		return fmt.Errorf("commit blob: %w", err)
 	}
-	return syncDir(filepath.Dir(dst))
+	if err := syncDir(filepath.Dir(dst)); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	_ = os.Remove(tmpName) // An abandoned temporary link is safe for the janitor.
+	return nil
 }
 
 // Abort discards the pending blob.

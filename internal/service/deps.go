@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"io"
 	"time"
 
+	"go.xchunk.org/vela/internal/content"
 	"go.xchunk.org/vela/internal/domain"
 )
 
@@ -80,24 +80,9 @@ type Store interface {
 	Checkpoint(ctx context.Context) error
 }
 
-// PendingBlob is a blob being written; see Blobs.Create.
-type PendingBlob interface {
-	io.Writer
-	// Commit makes the blob durable and visible under id.
-	Commit(id string) error
-	// Abort discards the blob; it is a no-op after Commit.
-	Abort()
-}
-
-// Blobs stores file contents.
+// Blobs combines persistence with backend maintenance and local delivery paths.
 type Blobs interface {
-	Create() (PendingBlob, error)
-	Open(id string) (io.ReadSeekCloser, error)
-	Delete(id string) error
-	// RelPath is the blob's location relative to the blobs root, used to
-	// build X-Accel-Redirect URIs.
+	content.Store
 	RelPath(id string) string
-	Walk(ctx context.Context, fn func(id string, modTime time.Time) error) error
 	CleanTmp(cutoff time.Time) (int, error)
-	Check() error
 }

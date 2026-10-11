@@ -7,7 +7,6 @@ package wire
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -24,8 +23,9 @@ const DatabaseFile = "vela.db"
 
 // Storage bundles the opened persistence layers.
 type Storage struct {
-	DB    *store.Store
-	Blobs *blob.Store
+	DB      *store.Store
+	Blobs   *blob.Store
+	Backend service.Blobs
 }
 
 // Close closes the database.
@@ -54,7 +54,7 @@ func OpenStorage(ctx context.Context, dataDir string, log *slog.Logger) (*Storag
 	if from != to && log != nil {
 		log.Info("database migrated", "from_version", from, "to_version", to)
 	}
-	return &Storage{DB: db, Blobs: bs}, nil
+	return &Storage{DB: db, Blobs: bs, Backend: blob.Backend{Store: bs}}, nil
 }
 
 // NewService builds a service over opened storage.
@@ -64,7 +64,7 @@ func NewService(st *Storage, clk clock.Clock, log *slog.Logger, opts service.Opt
 	}
 	return service.New(service.Deps{
 		Store:  storeAdapter{st.DB},
-		Blobs:  blobAdapter{st.Blobs},
+		Blobs:  st.Backend,
 		Clock:  clk,
 		IDs:    ids.NewULID(clk.Now),
 		Logger: log,
@@ -79,27 +79,4 @@ func (a storeAdapter) Update(ctx context.Context, fn func(service.Writer) error)
 	return a.Store.Update(ctx, func(tx *store.Tx) error { return fn(tx) })
 }
 
-// blobAdapter returns interface types where the blob store returns concrete
-// ones.
-type blobAdapter struct{ *blob.Store }
-
-func (a blobAdapter) Create() (service.PendingBlob, error) {
-	p, err := a.Store.Create()
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-func (a blobAdapter) Open(id string) (io.ReadSeekCloser, error) {
-	f, err := a.Store.Open(id)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
-var (
-	_ service.Store = storeAdapter{}
-	_ service.Blobs = blobAdapter{}
-)
+var _ service.Store = storeAdapter{}

@@ -99,7 +99,7 @@ func (s *Service) CollectBlobs(ctx context.Context) (int, error) {
 			return removed, err
 		}
 		for _, id := range doomed {
-			if err := s.blobs.Delete(id); err != nil {
+			if err := s.blobs.Delete(ctx, id); err != nil {
 				s.log.Warn("delete blob failed; the janitor will retry", "blob_id", id, "error", err)
 				continue
 			}

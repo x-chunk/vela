@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -18,6 +16,7 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/clock"
+	"go.xchunk.org/vela/internal/content"
 	"go.xchunk.org/vela/internal/domain"
 	"go.xchunk.org/vela/internal/ids"
 )
@@ -40,6 +39,8 @@ type Options struct {
 	// LockLease is the lease of cross-process locks (default
 	// DefaultLockLease); holders renew it while they work.
 	LockLease time.Duration
+	// MaxConcurrentUploads bounds active upload buffers; excess uploads wait.
+	MaxConcurrentUploads int
 }
 
 // Deps are the collaborators of the service.
@@ -64,6 +65,7 @@ type Service struct {
 	janitorMu sync.Mutex
 	gcMu      sync.Mutex
 	backupMu  sync.Mutex
+	uploads   chan struct{}
 	// beforeJanitorTask is a test hook called before each janitor task.
 	beforeJanitorTask func(task string)
 	// owner identifies this process in cross-process advisory locks.
@@ -91,16 +93,20 @@ func New(d Deps, o Options) (*Service, error) {
 	if o.LockLease <= 0 {
 		o.LockLease = DefaultLockLease
 	}
+	if o.MaxConcurrentUploads <= 0 {
+		o.MaxConcurrentUploads = 4
+	}
 	host, _ := os.Hostname()
 	return &Service{
-		store: d.Store,
-		blobs: d.Blobs,
-		clock: d.Clock,
-		ids:   d.IDs,
-		log:   d.Logger,
-		opts:  o,
-		touch: touchThrottle{last: map[string]time.Time{}},
-		owner: fmt.Sprintf("%s:%d:%s", host, os.Getpid(), randomToken()),
+		uploads: make(chan struct{}, o.MaxConcurrentUploads),
+		store:   d.Store,
+		blobs:   d.Blobs,
+		clock:   d.Clock,
+		ids:     d.IDs,
+		log:     d.Logger,
+		opts:    o,
+		touch:   touchThrottle{last: map[string]time.Time{}},
+		owner:   fmt.Sprintf("%s:%d:%s", host, os.Getpid(), randomToken()),
 	}, nil
 }
 
@@ -122,7 +128,7 @@ func (s *Service) Health(ctx context.Context) error {
 	if err := s.store.Ping(ctx); err != nil {
 		return err
 	}
-	return s.blobs.Check()
+	return s.blobs.Check(ctx)
 }
 
 // ObjectDTO converts an object to its API representation.
@@ -173,9 +179,14 @@ func (s *Service) content(o domain.Object) Content {
 	return Content{Object: o, BlobPath: s.blobs.RelPath(o.BlobID)}
 }
 
-// OpenContent opens the blob of c for direct delivery.
-func (s *Service) OpenContent(c Content) (io.ReadSeekCloser, error) {
-	f, err := s.blobs.Open(c.Object.BlobID)
+// OpenContent opens a full blob for administrative readers.
+func (s *Service) OpenContent(c Content) (io.ReadCloser, error) {
+	return s.OpenRange(context.Background(), c, 0, -1)
+}
+
+// OpenRange reads only the authorized content range and honors request cancellation.
+func (s *Service) OpenRange(ctx context.Context, c Content, off, length int64) (io.ReadCloser, error) {
+	f, err := s.blobs.Open(ctx, c.Object.BlobID, off, length)
 	if err != nil {
 		return nil, fmt.Errorf("open content of %s: %w", c.Object.ID, err)
 	}
@@ -194,37 +205,27 @@ type blobInfo struct {
 // set, verifying the checksum before the blob becomes visible. The caller
 // must delete the blob if the database transaction that references it fails.
 func (s *Service) writeBlob(ctx context.Context, r io.Reader, limit int64, wantSHA256 string) (blobInfo, error) {
-	pb, err := s.blobs.Create()
-	if err != nil {
-		return blobInfo{}, err
+	select {
+	case s.uploads <- struct{}{}:
+		defer func() { <-s.uploads }()
+	case <-ctx.Done():
+		return blobInfo{}, newErr(ErrUploadInterrupted, nil, "upload interrupted")
 	}
-	defer pb.Abort()
-
-	h := sha256.New()
 	sn := &sniffer{}
 	lr := &limitReader{r: r, remaining: limit, ctx: ctx}
-	n, err := io.Copy(io.MultiWriter(pb, h, sn), lr)
+	id := s.ids.New()
+	result, err := s.blobs.Put(ctx, id, io.TeeReader(lr, sn), content.PutOptions{MaxSize: limit, SizeHint: -1, ExpectSHA256: wantSHA256})
 	switch {
-	case lr.exceeded:
-		return blobInfo{}, newErr(ErrTooLarge, map[string]any{"limit_bytes": limit},
-			"content exceeds the limit of %d bytes", limit)
-	case ctx.Err() != nil:
-		return blobInfo{}, newErr(ErrUploadInterrupted, nil, "upload interrupted: %v", ctx.Err())
-	case errors.Is(err, errBodyRead):
-		return blobInfo{}, newErr(ErrUploadInterrupted, nil, "upload interrupted: %v", err)
+	case lr.exceeded || errors.Is(err, content.ErrTooLarge):
+		return blobInfo{}, newErr(ErrTooLarge, map[string]any{"limit_bytes": limit}, "content exceeds the limit of %d bytes", limit)
+	case ctx.Err() != nil || errors.Is(err, errBodyRead):
+		return blobInfo{}, newErr(ErrUploadInterrupted, nil, "upload interrupted")
+	case errors.Is(err, content.ErrChecksumMismatch):
+		return blobInfo{}, newErr(ErrChecksumMismatch, nil, "checksum mismatch")
 	case err != nil:
 		return blobInfo{}, fmt.Errorf("write blob: %w", err)
 	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	if wantSHA256 != "" && subtle.ConstantTimeCompare([]byte(strings.ToLower(wantSHA256)), []byte(sum)) != 1 {
-		return blobInfo{}, newErr(ErrChecksumMismatch, map[string]any{"expected": strings.ToLower(wantSHA256), "actual": sum},
-			"checksum mismatch: expected %s, got %s", strings.ToLower(wantSHA256), sum)
-	}
-	id := s.ids.New()
-	if err := pb.Commit(id); err != nil {
-		return blobInfo{}, err
-	}
-	return blobInfo{id: id, size: n, sha256: sum, sniff: sn.buf}, nil
+	return blobInfo{id: id, size: result.Size, sha256: result.SHA256, sniff: sn.buf}, nil
 }
 
 // deleteBlob removes a blob that no committed row has ever referenced (the
@@ -232,7 +233,7 @@ func (s *Service) writeBlob(ctx context.Context, r io.Reader, limit int64, wantS
 // through queueBlob instead. Failure only leaves an orphan, which the janitor
 // collects, so it is logged rather than returned.
 func (s *Service) deleteBlob(id string) {
-	if err := s.blobs.Delete(id); err != nil {
+	if err := s.blobs.Delete(context.Background(), id); err != nil {
 		s.log.Warn("delete blob failed; the janitor will retry", "blob_id", id, "error", err)
 	}
 }

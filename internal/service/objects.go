@@ -544,7 +544,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		case m.contentType != "":
 			o.ContentType = m.contentType
 		case patch.ContentType.Null:
-			sniff, err := s.sniffBlob(o.BlobID)
+			sniff, err := s.sniffBlob(ctx, o.BlobID)
 			if err != nil {
 				return err
 			}
@@ -561,8 +561,8 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 	return s.objectDTO(result, now), nil
 }
 
-func (s *Service) sniffBlob(id string) ([]byte, error) {
-	f, err := s.blobs.Open(id)
+func (s *Service) sniffBlob(ctx context.Context, id string) ([]byte, error) {
+	f, err := s.blobs.Open(ctx, id, 0, 512)
 	if err != nil {
 		return nil, err
 	}

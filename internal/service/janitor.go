@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"go.xchunk.org/vela/internal/content"
 )
 
 const (
@@ -189,7 +191,8 @@ func (s *Service) janitorTmp(_ context.Context, now time.Time) (int, error) {
 func (s *Service) janitorOrphans(ctx context.Context, now time.Time) (int, error) {
 	cutoff := now.Add(-staleAge)
 	queued := 0
-	err := s.blobs.Walk(ctx, func(id string, modTime time.Time) error {
+	err := s.blobs.Walk(ctx, func(info content.BlobInfo) error {
+		id, modTime := info.ID, info.ModTime
 		if !modTime.Before(cutoff) {
 			return nil
 		}

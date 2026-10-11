@@ -22,6 +22,8 @@ type rule struct {
 }
 
 var rules = []rule{
+	{"internal/content", []string{"internal/"}, "the blob contract is backend independent"},
+	{"internal/blobtest", []string{"internal/service", "internal/store", "internal/server"}, "contract tests know only blob interfaces"},
 	{"api", []string{"internal/", "client"}, "the public contract must stand alone"},
 	{"client", []string{"internal/"}, "the public client is importable by other modules"},
 	{"internal/domain", []string{"internal/"}, "entities depend on nothing but the contract"},
@@ -71,5 +73,15 @@ func TestLayering(t *testing.T) {
 	}
 	if checked < len(rules) {
 		t.Fatalf("only %d packages matched %d rules; is the module path right?", checked, len(rules))
+	}
+}
+
+func TestCLIDoesNotLinkS3(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", module+"/cmd/vela").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "github.com/aws/") {
+		t.Fatal("S3 SDK linked into CLI")
 	}
 }
