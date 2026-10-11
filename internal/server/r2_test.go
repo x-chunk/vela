@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.xchunk.org/vela/api"
+	"go.xchunk.org/vela/client"
 	"go.xchunk.org/vela/internal/testutil"
 )
 
@@ -80,6 +81,21 @@ func TestR2RedirectDelivery(t *testing.T) {
 	_ = downloaded.Body.Close()
 	if readErr != nil || downloaded.StatusCode != 200 || string(data) != "contents" || downloaded.Header.Get("Content-Disposition") != u.Query().Get("response-content-disposition") || downloaded.Header.Get("Cache-Control") != "private, no-store" {
 		t.Fatal("presigned response overrides or content differ")
+	}
+	// MinIO and Vela use different ports of the same hostname. The public
+	// client's redirect policy must remove the Vela key before reaching S3.
+	goClient, err := client.New(h.ts.URL, h.ts.AdminKey, client.WithRetries(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, err := goClient.Download(context.Background(), "private/data.txt")
+	if err != nil {
+		t.Fatal("Go client presigned download failed")
+	}
+	data, readErr = io.ReadAll(body)
+	_ = body.Close()
+	if readErr != nil || string(data) != "contents" {
+		t.Fatal("Go client download differs")
 	}
 	r = h.admin("POST", api.RouteLinks, `{"path":"private/data.txt","ttl":"30s"}`)
 	var l api.Link

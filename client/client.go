@@ -49,6 +49,7 @@ type Client struct {
 type Option func(*Client)
 
 // WithHTTPClient sets the underlying HTTP client (timeouts, proxies, TLS).
+// The client is copied; redirect callbacks run before credential removal.
 func WithHTTPClient(hc *http.Client) Option { return func(c *Client) { c.hc = hc } }
 
 // WithUserAgent sets the User-Agent header.
@@ -81,6 +82,26 @@ func New(baseURL, key string, opts ...Option) (*Client, error) {
 	for _, o := range opts {
 		o(c)
 	}
+	// A storage redirect may share a hostname (including a different port or
+	// subdomain) with Vela. Go's default redirect policy would forward its key.
+	// Clone the caller's client to preserve its settings without mutating it.
+	hc := *c.hc
+	checkRedirect := hc.CheckRedirect
+	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		req.Header.Del("Authorization")
+		req.Header.Del("Referer")
+		var err error
+		if checkRedirect != nil {
+			err = checkRedirect(req, via)
+		} else if len(via) >= 10 {
+			err = errors.New("stopped after 10 redirects")
+		}
+		// A user callback can restore headers, so sanitize again before Do.
+		req.Header.Del("Authorization")
+		req.Header.Del("Referer")
+		return err
+	}
+	c.hc = &hc
 	return c, nil
 }
 
