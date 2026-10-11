@@ -81,7 +81,9 @@ func (s *Store) RelPath(id string) string {
 	return id[n-4:n-2] + "/" + id[n-2:] + "/" + id
 }
 
-// Put never stages data on disk; the uploader buffers at most concurrency+1 parts.
+// Put never stages data on disk. The SDK has a separate, growing first-part
+// buffer in addition to its concurrency+1 pooled buffers per active upload.
+// See README for payload and allocation budgets; neither bounds process RSS.
 func (s *Store) Put(ctx context.Context, id string, r io.Reader, opts content.PutOptions) (content.PutResult, error) {
 	key, err := s.key(id)
 	if err != nil {

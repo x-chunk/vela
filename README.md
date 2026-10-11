@@ -155,11 +155,17 @@ omit raw SDK messages and signed request URLs.
 | `VELA_MAX_CONCURRENT_UPLOADS` | `4` | Active uploads for either backend; excess requests wait with cancellation |
 | `VELA_R2_PATH_STYLE` | `true` | Path-style addressing, also used by MinIO |
 
-Uploads stream CLI → nginx → Go → R2, without a temporary disk file. The SDK
-buffers up to **part size × (part concurrency + 1)** per active upload: the
-extra part is the read-ahead buffer. Defaults therefore bound active part
-buffers to about **96 MiB** across four uploads, plus Go, TLS, request, and
-SQLite overhead. Reduce `VELA_MAX_CONCURRENT_UPLOADS` on a small VPS. Size
+Uploads stream CLI → nginx → Go → R2, without a temporary disk file. The pinned
+SDK buffers **part size × (part concurrency + 2) × active uploads** of payload:
+one separate first part plus a pool of `concurrency + 1` parts per upload,
+including read-ahead. At the defaults this is **128 MiB** across four uploads.
+The first part uses `io.ReadAll`, whose growing slice has spare capacity and
+transient old/new allocations. For capacity planning, reserve at least
+**part size × (part concurrency + 4) × active uploads** for upload buffers
+(**192 MiB** at the defaults), then add headroom for Go garbage collection,
+TLS, requests, SQLite, and caller-owned input buffers. This is a planning
+allowance, not a process RSS limit; freed slices may remain until GC runs.
+Reduce `VELA_MAX_CONCURRENT_UPLOADS` on a small VPS. Size
 limits and SHA-256 checks remain enforced. Failed multipart uploads are
 aborted, including after request cancellation; completed objects with a bad
 checksum are deleted. The daily janitor finds orphan blobs and aborts managed
