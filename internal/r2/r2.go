@@ -60,9 +60,19 @@ func New(cfg config.R2Config) (*Store, error) {
 	uploader := manager.NewUploader(immutableClient{client}, func(u *manager.Uploader) {
 		u.PartSize = cfg.PartSize
 		u.Concurrency = cfg.UploadConcurrency
+		u.MaxUploadParts = config.R2MaxUploadParts
 		u.LeavePartsOnError = false
 	})
 	return &Store{client: client, uploader: uploader, presigner: s3.NewPresignClient(client), cfg: cfg}, nil
+}
+
+// ValidateUploadSize allows migration to preflight every referenced blob before
+// transferring any bytes. Part size stays fixed to preserve the memory budget.
+func (s *Store) ValidateUploadSize(size int64) error {
+	if err := s.cfg.ValidateUploadSize(size); err != nil {
+		return fmt.Errorf("%w: %w", content.ErrTooLarge, err)
+	}
+	return nil
 }
 
 func (s *Store) key(id string) (string, error) {
@@ -91,6 +101,9 @@ func (s *Store) Put(ctx context.Context, id string, r io.Reader, opts content.Pu
 	}
 	if opts.MaxSize < 0 || opts.SizeHint > opts.MaxSize {
 		return content.PutResult{}, content.ErrTooLarge
+	}
+	if err := s.ValidateUploadSize(opts.MaxSize); err != nil {
+		return content.PutResult{}, err
 	}
 	if err := ctx.Err(); err != nil {
 		return content.PutResult{}, err

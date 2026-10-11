@@ -11,6 +11,9 @@ import (
 	"go.xchunk.org/vela/internal/units"
 )
 
+// R2MaxUploadParts is the provider's multipart part limit.
+const R2MaxUploadParts = 10_000
+
 // R2Config contains explicit S3 credentials; no AWS provider chain is used.
 type R2Config struct {
 	AccountID         string
@@ -70,7 +73,15 @@ func (c *Config) loadStorage(lookup func(string) (string, bool)) error {
 		r.Endpoint = "https://" + r.AccountID + ".r2.cloudflarestorage.com"
 	}
 	if c.Storage == "r2" {
-		return r.Validate()
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if err := r.ValidateUploadSize(c.MaxUpload); err != nil {
+			return fmt.Errorf("VELA_MAX_UPLOAD: %w", err)
+		}
+		if err := r.ValidateUploadSize(c.MaxCreate); err != nil {
+			return fmt.Errorf("VELA_MAX_CREATE: %w", err)
+		}
 	}
 	return nil
 }
@@ -110,6 +121,17 @@ func (r R2Config) Validate() error {
 	}
 	if r.UploadConcurrency < 1 || r.UploadConcurrency > 16 {
 		return errors.New("VELA_R2_UPLOAD_CONCURRENCY must be between 1 and 16")
+	}
+	return nil
+}
+
+// ValidateUploadSize rejects sizes that require more parts than R2 supports.
+// Settings must pass Validate first. The stream passed to the SDK is not
+// seekable, so its automatic part-size adjustment cannot protect this limit.
+func (r R2Config) ValidateUploadSize(size int64) error {
+	limit := r.PartSize * R2MaxUploadParts
+	if size < 0 || size > limit {
+		return fmt.Errorf("size %d bytes exceeds supported range 0..%d bytes with VELA_R2_PART_SIZE=%d and %d parts; increase VELA_R2_PART_SIZE or reduce the size limit", size, limit, r.PartSize, R2MaxUploadParts)
 	}
 	return nil
 }

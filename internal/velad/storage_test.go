@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/blob"
@@ -178,6 +180,23 @@ func TestStorageCommandMigratesLiveAndTrash(t *testing.T) {
 	for id, ref := range refs {
 		if err := verifyStoredBlob(ctx, blob.Backend{Store: st.Blobs}, id, ref); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestMigrationPreflightsEveryR2Size(t *testing.T) {
+	cfg := config.R2Config{AccountID: "test", Endpoint: "http://127.0.0.1:1", Bucket: "test", Prefix: "blobs/", AccessKeyID: "key", SecretAccessKey: "secret", Delivery: "proxy", PresignTTL: time.Minute, PartSize: 8 << 20, UploadConcurrency: 2, PathStyle: true}
+	target, err := r2.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := map[string]blobRef{"a-small": {size: 1}, "z-large": {size: cfg.PartSize*config.R2MaxUploadParts + 1}}
+	for _, dryRun := range []bool{false, true} {
+		// Any read of source would panic. The unreachable target also ensures
+		// validation finishes before downloading or copying even the small blob.
+		result, err := migrateBlobs(context.Background(), nil, target, refs, dryRun, !dryRun, io.Discard)
+		if !errors.Is(err, content.ErrTooLarge) || result.failed != 1 || result.copied != 0 || result.deleted != 0 || !strings.Contains(err.Error(), "z-large") {
+			t.Fatalf("result=%+v error=%v", result, err)
 		}
 	}
 }

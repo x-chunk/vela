@@ -103,6 +103,19 @@ func migrateBlobs(ctx context.Context, source, target content.Store, refs map[st
 	}
 	sort.Strings(ids)
 	var errs []error
+	// Reject an unsupported destination size before opening either backend's
+	// objects, even on a dry run. Earlier copies must not start a doomed pass.
+	if validator, ok := target.(interface{ ValidateUploadSize(int64) error }); ok {
+		for _, id := range ids {
+			if err := validator.ValidateUploadSize(refs[id].size); err != nil {
+				result.failed++
+				errs = append(errs, fmt.Errorf("blob %s: %w", id, err))
+			}
+		}
+		if len(errs) > 0 {
+			return result, errors.Join(errs...)
+		}
+	}
 	for i, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return result, err

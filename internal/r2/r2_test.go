@@ -2,6 +2,7 @@ package r2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,5 +204,34 @@ func TestMultipartJanitorPagination(t *testing.T) {
 	n, err := s.CleanMultipart(context.Background(), time.Now().Add(-24*time.Hour))
 	if err != nil || n != 1 || pages != 2 || aborts != 1 {
 		t.Fatalf("janitor: %d %v pages=%d aborts=%d", n, err, pages, aborts)
+	}
+}
+
+func TestOversizedMultipartRejectedBeforeReading(t *testing.T) {
+	var requests atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("ETag", `"small"`)
+		w.WriteHeader(200)
+	}))
+	defer ts.Close()
+	cfg := testConfig(ts.URL, "test")
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := cfg.PartSize * config.R2MaxUploadParts
+	for _, hint := range []int64{-1, limit + 1} {
+		var read atomic.Int64
+		reader := &countedSource{remaining: 1, read: &read, progress: make(chan struct{}, 1)}
+		_, err := s.Put(context.Background(), ids.NewULID(nil).New(), reader, content.PutOptions{MaxSize: limit + 1, SizeHint: hint})
+		if !errors.Is(err, content.ErrTooLarge) || read.Load() != 0 || requests.Load() != 0 {
+			t.Fatalf("error=%v read=%d requests=%d", err, read.Load(), requests.Load())
+		}
+	}
+	// The exact capacity is accepted without allocating or sending that size.
+	_, err = s.Put(context.Background(), ids.NewULID(nil).New(), strings.NewReader("x"), content.PutOptions{MaxSize: limit, SizeHint: 1})
+	if err != nil || requests.Load() != 1 {
+		t.Fatalf("exact capacity error=%v requests=%d", err, requests.Load())
 	}
 }

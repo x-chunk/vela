@@ -171,6 +171,15 @@ aborted, including after request cancellation; completed objects with a bad
 checksum are deleted. The daily janitor finds orphan blobs and aborts managed
 multipart uploads older than 24 hours. The bucket lifecycle rule covers crashes.
 
+R2 uploads use a fixed part size and at most
+[10,000 parts](https://developers.cloudflare.com/r2/platform/limits/).
+`VELA_MAX_UPLOAD` and `VELA_MAX_CREATE` must fit within
+`VELA_R2_PART_SIZE × 10000`; startup rejects larger limits. With 8 MiB parts
+the maximum supported size is **78.125 GiB**. For example, a 100 GiB upload
+limit needs at least 11 MiB parts; increasing the part size also increases
+the memory allowance above. Migration checks every destination blob size
+before reading or copying any blob, including on `--dry-run`.
+
 ### Delivery modes
 
 `proxy` streams the authorized byte range through Go. nginx disables response
