@@ -62,9 +62,9 @@ docker exec vela velad key create --name workstation --scope admin
 
 The final command prints the API key once, to stdout. Keep it private. Keys
 can only be created or revoked by administrative `velad key` commands; there
-is no HTTP endpoint for managing keys. `velad key create --scope rw --prefix
-edu/` creates a key limited to that subtree. Check `velad key --help` for
-listing and revoking keys.
+is no HTTP endpoint for managing keys. To create a key limited to `edu/`, use
+`velad key create --name edu-publish --scope rw --prefix edu/`.
+Check `velad key --help` for listing and revoking keys.
 
 In filesystem mode (`VELA_STORAGE=fs`, the default), mount `/srv/vela/blobs`
 where nginx's internal `/_blobs/` locations expect it. The default
@@ -284,7 +284,7 @@ vela login --url https://store.xchunk.org --profile personal
 export VELA_PROFILE=personal
 vela whoami
 vela ls
-vela put ./report.pdf docs/report.pdf --visibility public
+vela put ./report.pdf docs/report.pdf --public
 vela stat docs/report.pdf
 vela get docs/report.pdf report-copy.pdf
 vela mv docs/report.pdf docs/final.pdf
@@ -304,9 +304,9 @@ API key or signed link; missing, private, expired, and trashed files all give
 Deleting normally moves it to the trash, retained for 14 days by default.
 
 ```sh
-vela put -r ./materials edu/ --visibility public
-vela new notes/hello.txt --content 'Hello' --visibility private
-vela link notes/hello.txt --ttl 2h
+vela put -r ./materials edu/ --public
+vela new notes/hello.txt --content 'Hello' --private
+vela share notes/hello.txt --ttl 2h
 vela links ls
 vela trash restore docs/final.pdf
 ```
