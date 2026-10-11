@@ -94,9 +94,12 @@ func (s *Store) Put(ctx context.Context, id string, r io.Reader, opts content.Pu
 		return content.PutResult{}, err
 	}
 	uploadToken := ids.NewULID(nil).New()
-	stream := content.NewStream(ctx, r, opts.MaxSize)
+	uploadCtx, cancelUpload := context.WithCancel(ctx)
+	defer cancelUpload()
+	stream := content.NewStream(uploadCtx, r, opts.MaxSize)
+	body := cancelOnReadError{reader: stream, cancel: cancelUpload}
 	//nolint:staticcheck // See the uploader construction rationale.
-	_, err = s.uploader.Upload(ctx, &s3.PutObjectInput{Bucket: aws.String(s.cfg.Bucket), Key: aws.String(key), Body: stream, ContentType: optionalString(opts.ContentType), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"vela-upload": uploadToken}})
+	_, err = s.uploader.Upload(uploadCtx, &s3.PutObjectInput{Bucket: aws.String(s.cfg.Bucket), Key: aws.String(key), Body: body, ContentType: optionalString(opts.ContentType), IfNoneMatch: aws.String("*"), Metadata: map[string]string{"vela-upload": uploadToken}})
 	if err != nil || ctx.Err() != nil || stream.Err() != nil {
 		// SDK abort uses the request context. Once canceled it cannot reach R2,
 		// so retry cleanup with an independent, short-lived context.
@@ -106,12 +109,9 @@ func (s *Store) Put(ctx context.Context, id string, r io.Reader, opts content.Pu
 		if errors.As(err, &multi) {
 			_, _ = s.client.AbortMultipartUpload(cleanupCtx, &s3.AbortMultipartUploadInput{Bucket: aws.String(s.cfg.Bucket), Key: aws.String(key), UploadId: aws.String(multi.UploadID())})
 		}
-		// A failed conditional publication means another immutable blob owns
-		// the ID. Never remove that existing content on this cleanup path.
-		var deleteErr error
-		if !conditionalConflict(err) {
-			deleteErr = s.cleanFailedObject(cleanupCtx, key, uploadToken)
-		}
+		// An upload response can be lost after remote completion. The token
+		// identifies our content even when a retry reports a precondition failure.
+		deleteErr := s.cleanFailedObject(cleanupCtx, key, uploadToken)
 
 		if stream.Err() != nil {
 			err = stream.Err()
@@ -361,7 +361,18 @@ func (c immutableClient) CompleteMultipartUpload(ctx context.Context, in *s3.Com
 	in.IfNoneMatch = aws.String("*")
 	return c.Client.CompleteMultipartUpload(ctx, in, opts...)
 }
-func conditionalConflict(err error) bool {
-	var apiErr smithy.APIError
-	return errors.As(err, &apiErr) && (apiErr.ErrorCode() == "PreconditionFailed" || apiErr.ErrorCode() == "ConditionalRequestConflict")
+
+// cancelOnReadError interrupts part requests as soon as a size/read failure
+// occurs. The original stream error remains available for domain error mapping.
+type cancelOnReadError struct {
+	reader io.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancelOnReadError) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.cancel()
+	}
+	return n, err
 }

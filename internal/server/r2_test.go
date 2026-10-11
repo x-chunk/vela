@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -65,6 +67,19 @@ func TestR2RedirectDelivery(t *testing.T) {
 	}
 	if u.Query().Get("X-Amz-Expires") != "300" || u.Query().Get("response-content-disposition") == "" {
 		t.Fatal("missing presign policy")
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		t.Fatal("invalid presigned request")
+	}
+	downloaded, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal("presigned download failed")
+	}
+	data, readErr := io.ReadAll(downloaded.Body)
+	_ = downloaded.Body.Close()
+	if readErr != nil || downloaded.StatusCode != 200 || string(data) != "contents" || downloaded.Header.Get("Content-Disposition") != u.Query().Get("response-content-disposition") || downloaded.Header.Get("Cache-Control") != "private, no-store" {
+		t.Fatal("presigned response overrides or content differ")
 	}
 	r = h.admin("POST", api.RouteLinks, `{"path":"private/data.txt","ttl":"30s"}`)
 	var l api.Link

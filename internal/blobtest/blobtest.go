@@ -76,6 +76,8 @@ func Run(t *testing.T, newStore func(*testing.T) content.Store) {
 		want   error
 	}{
 		{"limit", func(context.CancelFunc) io.Reader { return strings.NewReader("too long") }, content.PutOptions{MaxSize: 3, SizeHint: -1}, content.ErrTooLarge},
+		{"multipart-limit", func(context.CancelFunc) io.Reader { return strings.NewReader(strings.Repeat("x", 10<<20)) }, content.PutOptions{MaxSize: 9 << 20, SizeHint: -1}, content.ErrTooLarge},
+		{"multipart-checksum", func(context.CancelFunc) io.Reader { return strings.NewReader(strings.Repeat("x", 9<<20)) }, content.PutOptions{MaxSize: 10 << 20, SizeHint: -1, ExpectSHA256: strings.Repeat("0", 64)}, content.ErrChecksumMismatch},
 		{"checksum", func(context.CancelFunc) io.Reader { return strings.NewReader("x") }, content.PutOptions{MaxSize: 10, SizeHint: -1, ExpectSHA256: strings.Repeat("0", 64)}, content.ErrChecksumMismatch},
 		{"read-error", func(context.CancelFunc) io.Reader {
 			return io.MultiReader(strings.NewReader("partial"), failedReader{})

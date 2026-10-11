@@ -41,6 +41,12 @@ func TestS3Contract(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
+			pending, err := s.client.ListMultipartUploads(context.Background(), &s3.ListMultipartUploadsInput{Bucket: aws.String(cfg.Bucket), Prefix: aws.String(cfg.Prefix)})
+			if err != nil {
+				t.Error("check pending multipart uploads failed")
+			} else if len(pending.Uploads) != 0 {
+				t.Errorf("%d multipart uploads remain after the contract", len(pending.Uploads))
+			}
 			_ = s.Walk(context.Background(), func(i content.BlobInfo) error { return s.Delete(context.Background(), i.ID) })
 			_, _ = s.client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{Bucket: aws.String(cfg.Bucket)})
 		})

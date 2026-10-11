@@ -71,13 +71,15 @@ func NewStream(ctx context.Context, r io.Reader, max int64) *Stream {
 
 // Read hashes only bytes within the limit and preserves source failures.
 func (s *Stream) Read(p []byte) (int, error) {
+	// Preserve the first read error when its caller cancels transport work.
+	if s.err != nil {
+		return 0, s.err
+	}
 	if err := s.ctx.Err(); err != nil {
 		s.err = err
 		return 0, err
 	}
-	if s.err != nil {
-		return 0, s.err
-	}
+
 	if int64(len(p)) > s.max-s.size {
 		p = p[:min(int64(len(p)), s.max-s.size+1)]
 	}
