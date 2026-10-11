@@ -214,12 +214,22 @@ func (a *App) versionCommand() *cobra.Command {
 				serverErr = err
 			}
 			compatible := srv == nil || srv.APIVersion == api.APIVersion
+			clientInfo := map[string]any{"version": cli.Version, "commit": cli.Commit, "date": cli.Date, "api_version": api.APIVersion, "go": cli.GoVersion, "platform": cli.Platform}
+			// Incompatibility is a failure in both output modes: --json
+			// changes the representation, never the exit status.
+			var incompatible error
+			if !compatible {
+				incompatible = &cliError{code: exitError, slug: "incompatible_api",
+					msg:     fmt.Sprintf("the server speaks API v%d, this CLI v%d", srv.APIVersion, api.APIVersion),
+					hint:    "install a vela that matches the server",
+					details: map[string]any{"client": clientInfo, "server": srv},
+					err:     client.ErrIncompatibleAPI}
+			}
 			if a.jsonOut {
-				return a.printer.JSONValue(map[string]any{
-					"client":     map[string]any{"version": cli.Version, "commit": cli.Commit, "date": cli.Date, "api_version": api.APIVersion, "go": cli.GoVersion, "platform": cli.Platform},
-					"server":     srv,
-					"compatible": compatible,
-				})
+				if incompatible != nil {
+					return incompatible // one JSON error document, exit 1
+				}
+				return a.printer.JSONValue(map[string]any{"client": clientInfo, "server": srv, "compatible": true})
 			}
 			a.printer.Printf("vela %s (API v%d)\n", cli, api.APIVersion)
 			switch {
@@ -228,11 +238,7 @@ func (a *App) versionCommand() *cobra.Command {
 			case serverErr != nil:
 				a.printer.Infof("server: unavailable (%v)", serverErr)
 			}
-			if !compatible {
-				return fmt.Errorf("%w: the server speaks API v%d, this CLI v%d; install a matching vela",
-					client.ErrIncompatibleAPI, srv.APIVersion, api.APIVersion)
-			}
-			return nil
+			return incompatible
 		},
 	}
 }

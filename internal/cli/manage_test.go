@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -170,5 +171,37 @@ func TestJSONContract(t *testing.T) {
 	h.ok("open", "file.txt", "--json").json(t, &out)
 	if out["url"] != h.ts.URL+"/file.txt" || out["opened"] != true {
 		t.Fatalf("open --json = %v", out)
+	}
+}
+
+// TestVersionIncompatible covers R-026: an incompatible server fails the
+// command in both output modes.
+func TestVersionIncompatible(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"server_version":"9.0.0","api_version":99,"public_url":"x","key":{},"limits":{}}`)
+	}))
+	defer fake.Close()
+	h.env["VELA_URL"] = fake.URL
+	r := h.exec("", "version")
+	if r.code != exitError || !strings.Contains(r.stdout, "API v99") {
+		t.Fatalf("version = %+v", r)
+	}
+	r = h.exec("", "version", "--json")
+	if r.code != exitError {
+		t.Fatalf("version --json exit = %d", r.code)
+	}
+	var e api.ErrorResponse
+	r.json(t, &e)
+	if e.Error.Code != "incompatible_api" || e.Error.Details["server"] == nil {
+		t.Fatalf("version --json = %s", r.stdout)
+	}
+	delete(h.env, "VELA_URL")
+	var ok map[string]any
+	h.ok("version", "--json").json(t, &ok)
+	if ok["compatible"] != true {
+		t.Fatalf("compatible version --json = %v", ok)
 	}
 }
