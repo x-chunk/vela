@@ -144,7 +144,14 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	deliveryURL, err := s.svc.ContentURL(r.Context(), c, o.ContentType, h.Get("Content-Disposition"), pol.cacheControl)
+	// S3 has different validators and does not implement Vela's If-Range
+	// decision. A redirect preserves the client's original headers, so serve
+	// conditional requests here to keep resume and precondition semantics.
+	var deliveryURL string
+	var err error
+	if !hasDeliveryConditions(r.Header) {
+		deliveryURL, err = s.svc.ContentURL(r.Context(), c, o.ContentType, h.Get("Content-Disposition"), pol.cacheControl)
+	}
 	if err != nil {
 		s.log.Error("content delivery grant failed", "object_id", o.ID, "error", err)
 		h.Del("Content-Length")
@@ -296,4 +303,13 @@ func parseByteNumber(s string) (int64, error) {
 		}
 	}
 	return strconv.ParseInt(s, 10, 64)
+}
+
+func hasDeliveryConditions(h http.Header) bool {
+	for _, name := range []string{"If-Match", "If-None-Match", "If-Range", "If-Modified-Since", "If-Unmodified-Since"} {
+		if len(h.Values(name)) > 0 {
+			return true
+		}
+	}
+	return false
 }

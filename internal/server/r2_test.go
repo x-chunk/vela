@@ -133,3 +133,58 @@ func TestEmptyContentTypeReset(t *testing.T) {
 		})
 	}
 }
+
+func TestR2RedirectConditionalDelivery(t *testing.T) {
+	cfg := testutil.S3Config(t)
+	cfg.R2.Delivery = "redirect"
+	h := newHarness(t, testutil.WithStorage(cfg))
+	old := h.upload("resume.bin", "0123456789", api.HeaderVisibility, "public")
+	current := h.upload("resume.bin", "abcdefghij")
+	oldETag := `"sha256:` + old.SHA256 + `"`
+	etag := `"sha256:` + current.SHA256 + `"`
+	linkResponse := h.admin("POST", api.RouteLinks, `{"path":"resume.bin"}`)
+	var link api.Link
+	linkResponse.json(t, &link)
+	signed, _ := url.Parse(*link.URL)
+	hc := &http.Client{CheckRedirect: func(r *http.Request, _ []*http.Request) error { r.Header.Del("Authorization"); return nil }}
+	for _, route := range []string{"/resume.bin", api.ContentRoute("resume.bin"), signed.RequestURI()} {
+		for _, test := range []struct {
+			name, condition, value, rangeValue string
+			status                             int
+			body                               string
+		}{
+			{"match", "If-Match", etag, "", 200, "abcdefghij"},
+			{"match range", "If-Match", etag, "bytes=3-", 206, "defghij"},
+			{"stale match", "If-Match", oldETag, "", 412, ""},
+			{"resume overwritten", "If-Range", oldETag, "bytes=3-", 200, "abcdefghij"},
+			{"resume current", "If-Range", etag, "bytes=3-", 206, "defghij"},
+			{"weak range", "If-Range", "W/" + etag, "bytes=3-", 200, "abcdefghij"},
+			{"unchanged", "If-None-Match", etag, "", 304, ""},
+			{"changed", "If-None-Match", oldETag, "", 200, "abcdefghij"},
+			{"timestamp ignored", "If-Modified-Since", "Wed, 21 Oct 2037 07:28:00 GMT", "", 200, "abcdefghij"},
+		} {
+			t.Run(route+"/"+test.name, func(t *testing.T) {
+				req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, h.ts.URL+route, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.HasPrefix(route, api.RouteCont) {
+					req.Header.Set("Authorization", "Bearer "+h.ts.AdminKey)
+				}
+				req.Header.Set(test.condition, test.value)
+				if test.rangeValue != "" {
+					req.Header.Set("Range", test.rangeValue)
+				}
+				res, err := hc.Do(req)
+				if err != nil {
+					t.Fatal("conditional download failed")
+				}
+				data, err := io.ReadAll(res.Body)
+				_ = res.Body.Close()
+				if err != nil || res.StatusCode != test.status || string(data) != test.body || res.Header.Get("Location") != "" {
+					t.Fatalf("status=%d body=%q error=%v", res.StatusCode, data, err)
+				}
+			})
+		}
+	}
+}
