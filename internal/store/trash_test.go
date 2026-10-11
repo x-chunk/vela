@@ -18,7 +18,7 @@ func TestTrash(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
 	var entries []domain.TrashEntry
-	for i, p := range []string{"edu/a", "edu/b", "other/c", "edu/a"} {
+	for i, p := range []string{"docs/a", "docs/b", "other/c", "docs/a"} {
 		o := newObject(p, api.Public)
 		e := domain.TrashEntry{ID: gen.New(), Object: o, DeletedAt: t0.Add(time.Duration(i) * time.Hour), DeletedBy: "k1"}
 		entries = append(entries, e)
@@ -37,7 +37,7 @@ func TestTrash(t *testing.T) {
 	}
 
 	got, err := s.TrashByID(ctx, entries[0].ID)
-	if err != nil || got.Object.Path != "edu/a" || got.DeletedBy != "k1" || !got.DeletedAt.Equal(t0) {
+	if err != nil || got.Object.Path != "docs/a" || got.DeletedBy != "k1" || !got.DeletedAt.Equal(t0) {
 		t.Fatalf("TrashByID = %+v, %v", got, err)
 	}
 	if ok, _ := s.BlobReferenced(ctx, entries[2].Object.BlobID); !ok {
@@ -48,11 +48,11 @@ func TestTrash(t *testing.T) {
 	if len(list) != 4 || list[0].ID != entries[3].ID {
 		t.Fatalf("ListTrash order wrong: %d entries, first %s", len(list), list[0].ID)
 	}
-	list, _ = s.ListTrash(ctx, domain.TrashQuery{Prefix: "edu/"})
+	list, _ = s.ListTrash(ctx, domain.TrashQuery{Prefix: "docs/"})
 	if len(list) != 3 {
 		t.Fatalf("prefix filter: %d entries", len(list))
 	}
-	list, _ = s.ListTrash(ctx, domain.TrashQuery{Path: "edu/a"})
+	list, _ = s.ListTrash(ctx, domain.TrashQuery{Path: "docs/a"})
 	if len(list) != 2 || list[0].ID != entries[3].ID {
 		t.Fatalf("path filter: %+v", list)
 	}

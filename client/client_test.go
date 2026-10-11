@@ -237,7 +237,7 @@ func TestTraceAndUserAgent(t *testing.T) {
 
 func TestNetworkErrorsAndValidation(t *testing.T) {
 	t.Parallel()
-	if _, err := client.New("store.xchunk.org", "k"); err == nil {
+	if _, err := client.New("store.example.com", "k"); err == nil {
 		t.Fatal("URL without scheme accepted")
 	}
 	srv := httptest.NewServer(http.NotFoundHandler())

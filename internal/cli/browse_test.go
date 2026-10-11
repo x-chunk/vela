@@ -71,12 +71,12 @@ func TestOpen(t *testing.T) {
 func TestRemoteCompletion(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.seed("edu/math/q1.pdf", "x", api.Unlisted)
-	h.seed("edu/readme.md", "x", api.Unlisted)
+	h.seed("docs/math/q1.pdf", "x", api.Unlisted)
+	h.seed("docs/readme.md", "x", api.Unlisted)
 	h.seed("top.txt", "x", api.Unlisted)
-	r := h.ok("__complete", "stat", "edu/")
+	r := h.ok("__complete", "stat", "docs/")
 	lines := strings.Split(strings.TrimSpace(r.stdout), "\n")
-	if lines[0] != "edu/math/" || lines[1] != "edu/readme.md" || !strings.HasPrefix(lines[len(lines)-1], ":") {
+	if lines[0] != "docs/math/" || lines[1] != "docs/readme.md" || !strings.HasPrefix(lines[len(lines)-1], ":") {
 		t.Fatalf("completion = %q", r.stdout)
 	}
 	r = h.ok("__complete", "stat", "t")

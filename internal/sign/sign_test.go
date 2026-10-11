@@ -26,7 +26,7 @@ func TestSignVerify(t *testing.T) {
 		sig  string
 	}{
 		{"extended exp", key, id, exp + 3600, sig},
-		{"other link", key, "01jabcdefghjkmnpqrstvwxyz1", exp, sig},
+		{"other link", key, "01jabcdefghjkmnpqrstvwxyz1", exp, sig}, // gitleaks:allow -- deterministic link ID, not a credential.
 		{"rotated key", other, id, exp, sig},
 		{"empty key", nil, id, exp, sig},
 		{"truncated sig", key, id, exp, sig[:21]},

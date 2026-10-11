@@ -47,33 +47,33 @@ func TestMoveSingle(t *testing.T) {
 func TestMoveRecursiveIsAtomic(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.put("edu/math/q1.pdf", "1", api.Public)
-	e.put("edu/math/sub/q2.pdf", "2", api.Public)
-	e.put("school/math/q1.pdf", "taken", api.Public)
+	e.put("docs/math/q1.pdf", "1", api.Public)
+	e.put("docs/math/sub/q2.pdf", "2", api.Public)
+	e.put("archive/math/q1.pdf", "taken", api.Public)
 
-	_, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "edu/math/", To: "school/math/", Recursive: true})
+	_, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "docs/math/", To: "archive/math/", Recursive: true})
 	var se *service.Error
 	if !errors.As(err, &se) || !errors.Is(err, service.ErrAlreadyExists) {
 		t.Fatalf("conflicting recursive move = %v", err)
 	}
-	if c, _ := se.Details["conflicts"].([]string); len(c) != 1 || c[0] != "school/math/q1.pdf" {
+	if c, _ := se.Details["conflicts"].([]string); len(c) != 1 || c[0] != "archive/math/q1.pdf" {
 		t.Fatalf("conflicts = %+v", se.Details)
 	}
 	// Nothing moved.
-	if _, err := e.svc.Stat(e.ctx, e.admin, "edu/math/sub/q2.pdf"); err != nil {
+	if _, err := e.svc.Stat(e.ctx, e.admin, "docs/math/sub/q2.pdf"); err != nil {
 		t.Fatalf("partial move happened: %v", err)
 	}
 
-	n, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "edu/math/", To: "school/math/", Recursive: true, Overwrite: true})
+	n, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "docs/math/", To: "archive/math/", Recursive: true, Overwrite: true})
 	if err != nil || n != 2 {
 		t.Fatal(n, err)
 	}
-	c, err := e.svc.Download(e.ctx, e.admin, "school/math/q1.pdf")
+	c, err := e.svc.Download(e.ctx, e.admin, "archive/math/q1.pdf")
 	if err != nil || e.read(c) != "1" {
 		t.Fatalf("moved content: %v", err)
 	}
 
-	_, err = e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "school/", To: "school/inner/", Recursive: true})
+	_, err = e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "archive/", To: "archive/inner/", Recursive: true})
 	wantErr(t, err, service.ErrInvalidRequest)
 	_, err = e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "", To: "x/", Recursive: true})
 	wantErr(t, err, service.ErrInvalidRequest)
@@ -102,15 +102,15 @@ func TestMoveRecursiveOntoOwnSubtree(t *testing.T) {
 func TestMoveRespectsKeyPrefix(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.put("edu/a", "a", api.Public)
-	rw := e.principal(api.ScopeRW, "edu/")
-	_, err := e.svc.Move(e.ctx, rw, api.MoveRequest{From: "edu/a", To: "public/a"})
+	e.put("docs/a", "a", api.Public)
+	rw := e.principal(api.ScopeRW, "docs/")
+	_, err := e.svc.Move(e.ctx, rw, api.MoveRequest{From: "docs/a", To: "public/a"})
 	wantErr(t, err, service.ErrForbidden)
-	_, err = e.svc.Move(e.ctx, rw, api.MoveRequest{From: "edu/", To: "elsewhere/", Recursive: true})
+	_, err = e.svc.Move(e.ctx, rw, api.MoveRequest{From: "docs/", To: "elsewhere/", Recursive: true})
 	wantErr(t, err, service.ErrForbidden)
-	if _, err := e.svc.Move(e.ctx, rw, api.MoveRequest{From: "edu/a", To: "edu/b"}); err != nil {
+	if _, err := e.svc.Move(e.ctx, rw, api.MoveRequest{From: "docs/a", To: "docs/b"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.svc.Move(e.ctx, e.principal(api.ScopeRO, ""), api.MoveRequest{From: "edu/b", To: "edu/c"})
+	_, err = e.svc.Move(e.ctx, e.principal(api.ScopeRO, ""), api.MoveRequest{From: "docs/b", To: "docs/c"})
 	wantErr(t, err, service.ErrForbidden)
 }

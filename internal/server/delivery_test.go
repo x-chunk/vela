@@ -167,7 +167,7 @@ func TestSignedLinkDelivery(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.upload("private/report.pdf", "%PDF-secret", api.HeaderVisibility, "private")
-	r := h.admin("POST", api.RouteLinks, `{"path":"private/report.pdf","ttl":"2h","note":"teacher"}`)
+	r := h.admin("POST", api.RouteLinks, `{"path":"private/report.pdf","ttl":"2h","note":"reviewer"}`)
 	expectStatus(t, r, 201)
 	var l api.Link
 	r.json(t, &l)
@@ -200,7 +200,7 @@ func TestSignedLinkDelivery(t *testing.T) {
 	r = h.admin("GET", api.RouteLinks, "")
 	var list api.LinkList
 	r.json(t, &list)
-	if len(list.Links) != 1 || list.Links[0].Note != "teacher" || *list.Links[0].URL != *l.URL {
+	if len(list.Links) != 1 || list.Links[0].Note != "reviewer" || *list.Links[0].URL != *l.URL {
 		t.Fatalf("links = %+v", list)
 	}
 

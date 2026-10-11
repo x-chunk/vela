@@ -23,7 +23,7 @@ func (a *App) loginCommand() *cobra.Command {
 			"and save them in the config profile (default \"main\"; choose with --profile). The URL\n" +
 			"comes from --url or VELA_URL when set, otherwise it is asked for.\n\n" +
 			"Without a terminal, the key is read from the first line of stdin and the URL from --url,\n" +
-			"so it can be scripted: echo \"$KEY\" | vela login --url https://store.xchunk.org",
+			"so it can be scripted: echo \"$KEY\" | vela login --url https://store.example.com",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			f, path, err := a.loadConfig()
@@ -50,12 +50,15 @@ func (a *App) loginCommand() *cobra.Command {
 			}
 			interactive := a.InIsTerminal()
 			if url == "" {
-				url = config.DefaultURL
 				if prev != nil && prev.URL != "" {
 					url = prev.URL
 				}
 				if interactive {
-					_, _ = fmt.Fprintf(a.Err, "Server URL [%s]: ", url)
+					if url == "" {
+						_, _ = fmt.Fprint(a.Err, "Server URL: ")
+					} else {
+						_, _ = fmt.Fprintf(a.Err, "Server URL [%s]: ", url)
+					}
 					line, err := a.readLine()
 					if err != nil {
 						return err
@@ -64,6 +67,9 @@ func (a *App) loginCommand() *cobra.Command {
 						url = line
 					}
 				}
+			}
+			if url == "" {
+				return usagef("server URL is required; use --url or VELA_URL")
 			}
 			if interactive {
 				_, _ = fmt.Fprint(a.Err, "API key: ")

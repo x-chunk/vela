@@ -75,7 +75,7 @@ func newKeyCommand(env Env) *cobra.Command {
 	}
 	create.Flags().StringVar(&name, "name", "", "human-readable key name (required)")
 	create.Flags().StringVar(&scope, "scope", "", "ro, rw or admin (required)")
-	create.Flags().StringVar(&prefix, "prefix", "", "restrict the key to this directory, e.g. edu/")
+	create.Flags().StringVar(&prefix, "prefix", "", "restrict the key to this directory, e.g. docs/")
 	_ = create.MarkFlagRequired("name")
 	_ = create.MarkFlagRequired("scope")
 

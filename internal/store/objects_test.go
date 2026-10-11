@@ -17,13 +17,13 @@ func TestObjectCRUD(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := openTest(t)
-	o := newObject("edu/a.pdf", api.Unlisted)
+	o := newObject("docs/a.pdf", api.Unlisted)
 	exp := t0.Add(time.Hour)
 	o.ExpiresAt = &exp
 	o.Title = "Контрольная"
 	insert(t, s, o)
 
-	got, err := s.ObjectByPath(ctx, "edu/a.pdf")
+	got, err := s.ObjectByPath(ctx, "docs/a.pdf")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,20 +37,20 @@ func TestObjectCRUD(t *testing.T) {
 		t.Fatalf("missing object error = %v", err)
 	}
 
-	dup := newObject("edu/a.pdf", api.Public)
+	dup := newObject("docs/a.pdf", api.Public)
 	err = s.Update(ctx, func(tx *Tx) error { return tx.InsertObject(ctx, dup) })
 	if !errors.Is(err, domain.ErrDuplicate) {
 		t.Fatalf("duplicate path error = %v", err)
 	}
 
-	o.Path = "edu/b.pdf"
+	o.Path = "docs/b.pdf"
 	o.Revision = 2
 	o.ExpiresAt = nil
 	if err := s.Update(ctx, func(tx *Tx) error { return tx.UpdateObject(ctx, o) }); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.ObjectByID(ctx, o.ID)
-	if got.Path != "edu/b.pdf" || got.Revision != 2 || got.ExpiresAt != nil {
+	if got.Path != "docs/b.pdf" || got.Revision != 2 || got.ExpiresAt != nil {
 		t.Fatalf("after update: %+v", got)
 	}
 	if err := s.Update(ctx, func(tx *Tx) error { return tx.DeleteObject(ctx, o.ID) }); err != nil {
@@ -99,7 +99,7 @@ func TestListObjects(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := openTest(t)
-	expired := newObject("edu/old.txt", api.Public)
+	expired := newObject("docs/old.txt", api.Public)
 	past := t0.Add(-time.Hour)
 	expired.ExpiresAt = &past
 	insert(t, s,
@@ -108,10 +108,10 @@ func TestListObjects(t *testing.T) {
 		newObject("b/2.txt", api.Private),
 		newObject("b.txt", api.Public),
 		newObject("b0", api.Public), // sorts right after "b/" subtree; must not be skipped
-		newObject("edu/math/q1.pdf", api.Public),
-		newObject("edu/math/q2.pdf", api.Unlisted),
-		newObject("edu/phys/x.pdf", api.Private),
-		newObject("edu/readme.md", api.Public),
+		newObject("docs/math/q1.pdf", api.Public),
+		newObject("docs/math/q2.pdf", api.Unlisted),
+		newObject("docs/phys/x.pdf", api.Private),
+		newObject("docs/readme.md", api.Public),
 		expired,
 		newObject("z.txt", api.Unlisted),
 	)
@@ -122,23 +122,23 @@ func TestListObjects(t *testing.T) {
 		want string
 		more bool
 	}{
-		{name: "root", q: domain.ListQuery{}, want: "b/ edu/ a.txt b.txt b0 z.txt"},
-		{name: "dir", q: domain.ListQuery{Prefix: "edu/"}, want: "edu/math/ edu/phys/ edu/old.txt edu/readme.md"},
-		{name: "recursive", q: domain.ListQuery{Prefix: "edu/", Recursive: true},
-			want: "edu/math/q1.pdf edu/math/q2.pdf edu/old.txt edu/phys/x.pdf edu/readme.md"},
-		{name: "public only, live", q: domain.ListQuery{Prefix: "edu/", Visibilities: []api.Visibility{api.Public}, LiveAt: t0},
-			want: "edu/math/ edu/readme.md"},
+		{name: "root", q: domain.ListQuery{}, want: "b/ docs/ a.txt b.txt b0 z.txt"},
+		{name: "dir", q: domain.ListQuery{Prefix: "docs/"}, want: "docs/math/ docs/phys/ docs/old.txt docs/readme.md"},
+		{name: "recursive", q: domain.ListQuery{Prefix: "docs/", Recursive: true},
+			want: "docs/math/q1.pdf docs/math/q2.pdf docs/old.txt docs/phys/x.pdf docs/readme.md"},
+		{name: "public only, live", q: domain.ListQuery{Prefix: "docs/", Visibilities: []api.Visibility{api.Public}, LiveAt: t0},
+			want: "docs/math/ docs/readme.md"},
 		{name: "visibility filter hides dirs", q: domain.ListQuery{Visibilities: []api.Visibility{api.Private}},
-			want: "b/ edu/"},
-		{name: "within narrows root", q: domain.ListQuery{Within: "edu/math/"}, want: "edu/"},
-		{name: "within narrows dir", q: domain.ListQuery{Prefix: "edu/", Within: "edu/math/"}, want: "edu/math/"},
-		{name: "within recursive", q: domain.ListQuery{Within: "edu/math/", Recursive: true},
-			want: "edu/math/q1.pdf edu/math/q2.pdf"},
+			want: "b/ docs/"},
+		{name: "within narrows root", q: domain.ListQuery{Within: "docs/math/"}, want: "docs/"},
+		{name: "within narrows dir", q: domain.ListQuery{Prefix: "docs/", Within: "docs/math/"}, want: "docs/math/"},
+		{name: "within recursive", q: domain.ListQuery{Within: "docs/math/", Recursive: true},
+			want: "docs/math/q1.pdf docs/math/q2.pdf"},
 		// Byte order: "b.txt" < "b/..." < "b0" because '.' < '/' < '0'.
 		{name: "limit", q: domain.ListQuery{Limit: 2}, want: "a.txt b.txt", more: true},
 		{name: "after object", q: domain.ListQuery{After: "a.txt", Limit: 2}, want: "b/ b.txt", more: true},
-		{name: "after dir", q: domain.ListQuery{After: "b/", Limit: 10}, want: "edu/ b0 z.txt"},
-		{name: "exact limit", q: domain.ListQuery{Prefix: "edu/math/", Limit: 2}, want: "edu/math/q1.pdf edu/math/q2.pdf"},
+		{name: "after dir", q: domain.ListQuery{After: "b/", Limit: 10}, want: "docs/ b0 z.txt"},
+		{name: "exact limit", q: domain.ListQuery{Prefix: "docs/math/", Limit: 2}, want: "docs/math/q1.pdf docs/math/q2.pdf"},
 		{name: "empty", q: domain.ListQuery{Prefix: "nope/"}, want: ""},
 	}
 	for _, tt := range tests {

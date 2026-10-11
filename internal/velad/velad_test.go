@@ -48,7 +48,7 @@ func TestKeyCommands(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	vars := newEnv(t)
-	r := execute(t, ctx, vars, nil, "key", "create", "--name", "edu-publish", "--scope", "rw", "--prefix", "edu")
+	r := execute(t, ctx, vars, nil, "key", "create", "--name", "ci", "--scope", "rw", "--prefix", "ci")
 	if r.err != nil {
 		t.Fatal(r.err, r.stderr)
 	}
@@ -57,11 +57,11 @@ func TestKeyCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdout is not just the key: %q", r.stdout)
 	}
-	if !strings.Contains(r.stderr, "prefix edu/") || strings.Contains(r.stderr, full) {
+	if !strings.Contains(r.stderr, "prefix ci/") || strings.Contains(r.stderr, full) {
 		t.Fatalf("stderr = %q", r.stderr)
 	}
 	r = execute(t, ctx, vars, nil, "key", "list")
-	if r.err != nil || !strings.Contains(r.stdout, id) || !strings.Contains(r.stdout, "edu-publish") || strings.Contains(r.stdout, full[16:]) {
+	if r.err != nil || !strings.Contains(r.stdout, id) || !strings.Contains(r.stdout, "ci") || strings.Contains(r.stdout, full[16:]) {
 		t.Fatalf("list = %q, %v", r.stdout, r.err)
 	}
 	if r := execute(t, ctx, vars, nil, "key", "create", "--name", "x", "--scope", "root"); r.err == nil {

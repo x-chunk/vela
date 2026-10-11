@@ -32,7 +32,7 @@ func (p Principal) checkPath(path string) error {
 
 // scopeListing resolves a listing request for a directory against the key
 // prefix. A directory inside the prefix is listed as is. A directory that
-// contains the prefix (for example the root for a key limited to "edu/") is
+// contains the prefix (for example the root for a key limited to "docs/") is
 // listed but narrowed to the prefix, so the key sees the path to its own
 // subtree and nothing else. Anything else is forbidden.
 func (p Principal) scopeListing(prefix string) (within string, err error) {

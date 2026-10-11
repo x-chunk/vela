@@ -14,7 +14,7 @@ func TestAPIKeys(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := openTest(t)
-	k := domain.APIKey{ID: "abcdefghjk", Name: "laptop", SecretHash: []byte{1, 2}, Scope: api.ScopeRW, Prefix: "edu/", CreatedAt: t0}
+	k := domain.APIKey{ID: "abcdefghjk", Name: "workstation", SecretHash: []byte{1, 2}, Scope: api.ScopeRW, Prefix: "docs/", CreatedAt: t0}
 	insertKey := func(k domain.APIKey) error {
 		return s.Update(ctx, func(tx *Tx) error { return tx.InsertAPIKey(ctx, k) })
 	}
@@ -39,7 +39,7 @@ func TestAPIKeys(t *testing.T) {
 		t.Fatalf("name of a revoked key not reusable: %v", err)
 	}
 	got, err := s.APIKeyByID(ctx, k.ID)
-	if err != nil || got.RevokedAt == nil || got.LastUsedAt == nil || got.Scope != api.ScopeRW || got.Prefix != "edu/" {
+	if err != nil || got.RevokedAt == nil || got.LastUsedAt == nil || got.Scope != api.ScopeRW || got.Prefix != "docs/" {
 		t.Fatalf("APIKeyByID = %+v, %v", got, err)
 	}
 	all, err := s.ListAPIKeys(ctx)

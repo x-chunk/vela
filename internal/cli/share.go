@@ -20,7 +20,7 @@ func (a *App) shareCommand() *cobra.Command {
 		Long: "Create a signed link that gives access to one file, of any visibility, until it expires.\n" +
 			"Links cannot be permanent (use unlisted for that) and survive renames. Revoke them with\n" +
 			"\"vela links revoke\".",
-		Example:           "  vela share private/report.pdf --ttl 2h --note 'for the teacher' --copy",
+		Example:           "  vela share private/report.pdf --ttl 2h --note 'for the reviewer' --copy",
 		Args:              exactArgs(1),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {

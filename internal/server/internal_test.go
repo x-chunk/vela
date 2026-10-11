@@ -51,12 +51,12 @@ func TestForwardedIP(t *testing.T) {
 	tests := []struct {
 		name, remote, realIP, xff, want string
 	}{
-		{"untrusted peer ignores headers", "198.51.100.1:1234", "1.2.3.4", "5.6.7.8", "198.51.100.1"},
-		{"trusted peer, X-Real-IP", "172.17.0.1:5555", "1.2.3.4", "", "1.2.3.4"},
-		{"trusted peer, XFF rightmost untrusted", "127.0.0.1:1", "", "9.9.9.9, 1.2.3.4, 172.17.0.1", "1.2.3.4"},
+		{"untrusted peer ignores headers", "198.51.100.1:1234", "192.0.2.4", "192.0.2.8", "198.51.100.1"},
+		{"trusted peer, X-Real-IP", "172.17.0.1:5555", "192.0.2.4", "", "192.0.2.4"},
+		{"trusted peer, XFF rightmost untrusted", "127.0.0.1:1", "", "203.0.113.9, 192.0.2.4, 172.17.0.1", "192.0.2.4"},
 		{"trusted peer, no headers", "127.0.0.1:1", "", "", "127.0.0.1"},
 		{"trusted peer, garbage", "127.0.0.1:1", "nope", "also nope", "127.0.0.1"},
-		{"ipv6 peer", "[2001:db8::1]:443", "1.2.3.4", "", "2001:db8::1"},
+		{"ipv6 peer", "[2001:db8::1]:443", "192.0.2.4", "", "2001:db8::1"},
 	}
 	for _, tt := range tests {
 		r := httptest.NewRequest("GET", "/", nil)

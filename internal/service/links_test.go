@@ -15,11 +15,11 @@ func TestSignedLinks(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	e.put("private/report q1.pdf", "secret", api.Private)
-	l, err := e.svc.CreateLink(e.ctx, e.admin, api.CreateLinkRequest{Path: "private/report q1.pdf", TTL: "2h", Note: "for teacher"})
+	l, err := e.svc.CreateLink(e.ctx, e.admin, api.CreateLinkRequest{Path: "private/report q1.pdf", TTL: "2h", Note: "for reviewer"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !l.ExpiresAt.Equal(t0.Add(2*time.Hour)) || l.Path != "private/report q1.pdf" || l.Note != "for teacher" {
+	if !l.ExpiresAt.Equal(t0.Add(2*time.Hour)) || l.Path != "private/report q1.pdf" || l.Note != "for reviewer" {
 		t.Fatalf("link = %+v", l)
 	}
 	if !strings.HasPrefix(*l.URL, "https://store.example.org/s/"+l.ID+"/report%20q1.pdf?exp=") {
@@ -105,12 +105,12 @@ func TestLinkTTLAndRevocation(t *testing.T) {
 func TestLinkPrefixScoping(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.put("edu/a", "a", api.Private)
+	e.put("docs/a", "a", api.Private)
 	e.put("home/b", "b", api.Private)
-	rw := e.principal(api.ScopeRW, "edu/")
+	rw := e.principal(api.ScopeRW, "docs/")
 	_, err := e.svc.CreateLink(e.ctx, rw, api.CreateLinkRequest{Path: "home/b"})
 	wantErr(t, err, service.ErrForbidden)
-	mine, err := e.svc.CreateLink(e.ctx, rw, api.CreateLinkRequest{Path: "edu/a"})
+	mine, err := e.svc.CreateLink(e.ctx, rw, api.CreateLinkRequest{Path: "docs/a"})
 	if err != nil {
 		t.Fatal(err)
 	}

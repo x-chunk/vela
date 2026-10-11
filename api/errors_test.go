@@ -11,15 +11,15 @@ func TestErrorJSON(t *testing.T) {
 	t.Parallel()
 	in := ErrorResponse{Error: &Error{
 		Code:      CodePathConflict,
-		Message:   "a file exists at a parent path: edu/math",
-		Details:   map[string]any{"conflicting_path": "edu/math"},
+		Message:   "a file exists at a parent path: docs/math",
+		Details:   map[string]any{"conflicting_path": "docs/math"},
 		RequestID: "01jab",
 	}}
 	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"error":{"code":"path_conflict","message":"a file exists at a parent path: edu/math","details":{"conflicting_path":"edu/math"},"request_id":"01jab"}}`
+	want := `{"error":{"code":"path_conflict","message":"a file exists at a parent path: docs/math","details":{"conflicting_path":"docs/math"},"request_id":"01jab"}}`
 	if string(b) != want {
 		t.Fatalf("got  %s\nwant %s", b, want)
 	}

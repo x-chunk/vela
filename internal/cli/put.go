@@ -45,10 +45,10 @@ func (a *App) putCommand() *cobra.Command {
 			"directory, keeping the structure. Symlinks are skipped, and so are hidden files unless\n" +
 			"--hidden is given. Use - as LOCAL to read from stdin.",
 		Example: "  vela put report.pdf                      # -> report.pdf\n" +
-			"  vela put report.pdf edu/math/            # -> edu/math/report.pdf\n" +
-			"  vela put report.pdf edu/math/q1.pdf      # -> edu/math/q1.pdf\n" +
-			"  vela put a.pdf b.pdf edu/                # several files into a directory\n" +
-			"  vela put -r ./site edu/site/ --public    # a whole directory\n" +
+			"  vela put report.pdf docs/math/            # -> docs/math/report.pdf\n" +
+			"  vela put report.pdf docs/math/q1.pdf      # -> docs/math/q1.pdf\n" +
+			"  vela put a.pdf b.pdf docs/                # several files into a directory\n" +
+			"  vela put -r ./site docs/site/ --public    # a whole directory\n" +
 			"  pg_dump db | vela put - backups/db.sql --private --expires 7d",
 		Args: minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

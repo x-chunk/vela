@@ -123,7 +123,7 @@ func TestSnapshot(t *testing.T) {
 
 func TestPrefixUpper(t *testing.T) {
 	t.Parallel()
-	for in, want := range map[string]string{"": "", "a/": "a0", "edu/math/": "edu/math0", "ab": "ac"} {
+	for in, want := range map[string]string{"": "", "a/": "a0", "docs/math/": "docs/math0", "ab": "ac"} {
 		if got := prefixUpper(in); got != want {
 			t.Errorf("prefixUpper(%q) = %q; want %q", in, got, want)
 		}

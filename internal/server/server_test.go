@@ -243,7 +243,7 @@ func TestUpload(t *testing.T) {
 		api.HeaderTags, "math, q1",
 		api.HeaderDisposition, "attachment",
 		api.HeaderExpiresAt, time.Now().Add(48*time.Hour).UTC().Format(time.RFC3339),
-		api.HeaderSHA256, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+		api.HeaderSHA256, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9", // gitleaks:allow -- SHA-256 of "hello world".
 		"If-None-Match", "*")
 	expectStatus(t, r, 201)
 	var o api.Object
@@ -312,15 +312,15 @@ func TestUploadLimits(t *testing.T) {
 func TestListPatchDeleteMoveTrash(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.upload("edu/a.pdf", "a", api.HeaderVisibility, "public")
-	h.upload("edu/sub/b.pdf", "b")
+	h.upload("docs/a.pdf", "a", api.HeaderVisibility, "public")
+	h.upload("docs/sub/b.pdf", "b")
 	h.upload("top.txt", "t")
 
-	r := h.admin("GET", api.RouteObject+"?prefix=edu/", "")
+	r := h.admin("GET", api.RouteObject+"?prefix=docs/", "")
 	expectStatus(t, r, 200)
 	var l api.Listing
 	r.json(t, &l)
-	if l.Prefix != "edu/" || strings.Join(l.Dirs, ",") != "edu/sub/" || len(l.Objects) != 1 {
+	if l.Prefix != "docs/" || strings.Join(l.Dirs, ",") != "docs/sub/" || len(l.Objects) != 1 {
 		t.Fatalf("listing = %+v", l)
 	}
 	r = h.admin("GET", api.RouteObject+"?recursive=true&visibility=unlisted&limit=1", "")
@@ -348,27 +348,27 @@ func TestListPatchDeleteMoveTrash(t *testing.T) {
 		t.Fatal(string(r.body))
 	}
 
-	r = h.admin("DELETE", api.ObjectRoute("edu/"), "")
+	r = h.admin("DELETE", api.ObjectRoute("docs/"), "")
 	if r.status != 400 || !strings.Contains(string(r.body), "recursive") {
 		t.Fatalf("directory delete without recursive: %d %s", r.status, r.body)
 	}
-	r = h.admin("POST", api.RouteMove, `{"from":"edu/","to":"school/","recursive":true}`)
+	r = h.admin("POST", api.RouteMove, `{"from":"docs/","to":"archive/","recursive":true}`)
 	expectStatus(t, r, 200)
 	var mv api.MoveResponse
 	r.json(t, &mv)
 	if mv.Moved != 2 {
 		t.Fatalf("moved = %d", mv.Moved)
 	}
-	h.upload("edu/a.pdf", "conflict")
-	r = h.admin("POST", api.RouteMove, `{"from":"school/","to":"edu/","recursive":true}`)
+	h.upload("docs/a.pdf", "conflict")
+	r = h.admin("POST", api.RouteMove, `{"from":"archive/","to":"docs/","recursive":true}`)
 	expectStatus(t, r, 409)
 	var e api.ErrorResponse
 	r.json(t, &e)
-	if c, _ := e.Error.Details["conflicts"].([]any); len(c) != 1 || c[0] != "edu/a.pdf" {
+	if c, _ := e.Error.Details["conflicts"].([]any); len(c) != 1 || c[0] != "docs/a.pdf" {
 		t.Fatalf("conflicts = %+v", e.Error.Details)
 	}
 
-	r = h.admin("DELETE", api.ObjectRoute("school/")+"?recursive=true", "")
+	r = h.admin("DELETE", api.ObjectRoute("archive/")+"?recursive=true", "")
 	expectStatus(t, r, 200)
 	var del api.DeleteResponse
 	r.json(t, &del)
@@ -376,7 +376,7 @@ func TestListPatchDeleteMoveTrash(t *testing.T) {
 		t.Fatalf("delete = %+v", del)
 	}
 
-	r = h.admin("GET", api.RouteTrash+"?prefix=school/", "")
+	r = h.admin("GET", api.RouteTrash+"?prefix=archive/", "")
 	var trash api.TrashList
 	r.json(t, &trash)
 	if len(trash.Entries) != 2 {
@@ -415,10 +415,10 @@ func TestListPatchDeleteMoveTrash(t *testing.T) {
 func TestScopesAndPrefixes(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.upload("edu/a.pdf", "a")
+	h.upload("docs/a.pdf", "a")
 	h.upload("home/b.pdf", "b")
 	ro := h.ts.Key(t, "ro", api.ScopeRO, "")
-	rw := h.ts.Key(t, "edu", api.ScopeRW, "edu/")
+	rw := h.ts.Key(t, "docs", api.ScopeRW, "docs/")
 
 	expectStatus(t, h.do("GET", api.ObjectRoute("home/b.pdf"), ro, nil), 200)
 	expectStatus(t, h.do("PUT", api.ContentRoute("x"), ro, strings.NewReader("x")), 403)
@@ -427,13 +427,13 @@ func TestScopesAndPrefixes(t *testing.T) {
 
 	expectStatus(t, h.do("GET", api.ObjectRoute("home/b.pdf"), rw, nil), 403)
 	expectStatus(t, h.do("PUT", api.ContentRoute("home/c"), rw, strings.NewReader("x")), 403)
-	expectStatus(t, h.do("PUT", api.ContentRoute("edu/c"), rw, strings.NewReader("x")), 201)
-	expectStatus(t, h.do("POST", api.RouteMove, rw, strings.NewReader(`{"from":"edu/c","to":"home/c"}`)), 403)
-	expectStatus(t, h.do("DELETE", api.ObjectRoute("edu/c")+"?purge=true", rw, nil), 403)
+	expectStatus(t, h.do("PUT", api.ContentRoute("docs/c"), rw, strings.NewReader("x")), 201)
+	expectStatus(t, h.do("POST", api.RouteMove, rw, strings.NewReader(`{"from":"docs/c","to":"home/c"}`)), 403)
+	expectStatus(t, h.do("DELETE", api.ObjectRoute("docs/c")+"?purge=true", rw, nil), 403)
 	r := h.do("GET", api.RouteObject, rw, nil)
 	var l api.Listing
 	r.json(t, &l)
-	if strings.Join(l.Dirs, ",") != "edu/" || len(l.Objects) != 0 {
+	if strings.Join(l.Dirs, ",") != "docs/" || len(l.Objects) != 0 {
 		t.Fatalf("prefixed root listing = %+v", l)
 	}
 	expectStatus(t, h.do("GET", api.RouteObject+"?prefix=home/", rw, nil), 403)

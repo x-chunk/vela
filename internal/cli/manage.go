@@ -22,7 +22,7 @@ func (a *App) mvCommand() *cobra.Command {
 		Long: "Rename or move. FROM ending with / moves a whole directory in one atomic step. TO ending\n" +
 			"with / moves a file into that directory under its own name. Public URLs change; signed\n" +
 			"links keep working.",
-		Example: "  vela mv notes/a.md notes/b.md\n  vela mv report.pdf archive/\n  vela mv edu/math/ school/math/",
+		Example: "  vela mv notes/a.md notes/b.md\n  vela mv report.pdf archive/\n  vela mv docs/math/ archive/math/",
 		Args:    exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			from, to := strings.TrimLeft(args[0], "/"), strings.TrimLeft(args[1], "/")
@@ -280,7 +280,7 @@ func (a *App) visCommand() *cobra.Command {
 		Long: "Change the visibility of files, or with -r of everything below directories (files and\n" +
 			"directories may be mixed). A path that matches nothing is an error. The change takes effect\n" +
 			"immediately. Unlisted is not access control: anyone with the URL can read it.",
-		Example: "  vela vis report.pdf private\n  vela vis -r edu/math/ public",
+		Example: "  vela vis report.pdf private\n  vela vis -r docs/math/ public",
 		Args:    minArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vis, err := api.ParseVisibility(args[len(args)-1])

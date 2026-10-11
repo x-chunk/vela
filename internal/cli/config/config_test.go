@@ -19,8 +19,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "nested", "vela", "config.toml")
 	f := &File{DefaultProfile: "main", Profiles: map[string]*Profile{
-		"main": {URL: "https://store.xchunk.org", Key: "vela_k_secret", DefaultVisibility: "private"},
-		"edu":  {URL: "https://store.xchunk.org", Key: "vela_e_secret"},
+		"main": {URL: "https://store.example.com", Key: "vela_k_secret", DefaultVisibility: "private"},
+		"docs": {URL: "https://store.example.com", Key: "vela_e_secret"},
 	}}
 	if err := f.Save(path); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DefaultProfile != "main" || got.Profiles["edu"].Key != "vela_e_secret" || got.Profiles["main"].DefaultVisibility != "private" {
+	if got.DefaultProfile != "main" || got.Profiles["docs"].Key != "vela_e_secret" || got.Profiles["main"].DefaultVisibility != "private" {
 		t.Fatalf("round trip = %+v", got)
 	}
 	b, _ := os.ReadFile(path)
@@ -80,18 +80,18 @@ func TestResolve(t *testing.T) {
 	t.Parallel()
 	f := &File{DefaultProfile: "main", Profiles: map[string]*Profile{
 		"main": {URL: "https://main.example", Key: "kmain", DefaultVisibility: "public"},
-		"edu":  {URL: "https://edu.example", Key: "kedu"},
+		"docs": {URL: "https://docs.example", Key: "kedu"},
 	}}
 	s, err := Resolve(f, "", "", env(nil))
 	if err != nil || s.Profile != "main" || s.URL != "https://main.example" || s.Key != "kmain" || s.DefaultVisibility != api.Public {
 		t.Fatalf("default = %+v, %v", s, err)
 	}
-	s, _ = Resolve(f, "", "", env(map[string]string{"VELA_PROFILE": "edu", "VELA_KEY": "kenv"}))
-	if s.Profile != "edu" || s.URL != "https://edu.example" || s.Key != "kenv" {
+	s, _ = Resolve(f, "", "", env(map[string]string{"VELA_PROFILE": "docs", "VELA_KEY": "kenv"}))
+	if s.Profile != "docs" || s.URL != "https://docs.example" || s.Key != "kenv" {
 		t.Fatalf("env = %+v", s)
 	}
-	s, _ = Resolve(f, "edu", "https://flag.example", env(map[string]string{"VELA_PROFILE": "main", "VELA_URL": "https://env.example"}))
-	if s.Profile != "edu" || s.URL != "https://flag.example" {
+	s, _ = Resolve(f, "docs", "https://flag.example", env(map[string]string{"VELA_PROFILE": "main", "VELA_URL": "https://env.example"}))
+	if s.Profile != "docs" || s.URL != "https://flag.example" {
 		t.Fatalf("flags = %+v", s)
 	}
 	if _, err := Resolve(f, "nope", "", env(nil)); err == nil {

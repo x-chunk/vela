@@ -113,13 +113,13 @@ func TestPurge(t *testing.T) {
 func TestTrashRespectsKeyPrefix(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.put("edu/a", "a", api.Public)
+	e.put("docs/a", "a", api.Public)
 	e.put("other/b", "b", api.Public)
-	resA, _ := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "edu/a"})
+	resA, _ := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "docs/a"})
 	resB, _ := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "other/b"})
-	rw := e.principal(api.ScopeRW, "edu/")
+	rw := e.principal(api.ScopeRW, "docs/")
 	list, err := e.svc.ListTrash(e.ctx, rw, service.TrashParams{})
-	if err != nil || len(list.Entries) != 1 || list.Entries[0].OriginalPath != "edu/a" {
+	if err != nil || len(list.Entries) != 1 || list.Entries[0].OriginalPath != "docs/a" {
 		t.Fatalf("prefixed trash list = %+v, %v", list, err)
 	}
 	_, err = e.svc.Restore(e.ctx, rw, resB.TrashIDs[0], api.RestoreRequest{})

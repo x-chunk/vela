@@ -20,11 +20,11 @@ func TestRenderIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	page := BuildPage(Site{Title: "store.xchunk.org", URL: "https://store.xchunk.org"}, "1.0.0", "edu/math/",
-		[]DirEntry{{Path: "edu/math/q10/", Count: 3, UpdatedAt: now}, {Path: "edu/math/q2/", Count: 1, UpdatedAt: now}},
+	page := BuildPage(Site{Title: "store.example.com", URL: "https://store.example.com"}, "1.0.0", "docs/math/",
+		[]DirEntry{{Path: "docs/math/q10/", Count: 3, UpdatedAt: now}, {Path: "docs/math/q2/", Count: 1, UpdatedAt: now}},
 		[]domain.Object{
-			{Path: "edu/math/test 2.pdf", Size: 482193, ContentType: "application/pdf", Title: "Контрольная <b>", Tags: []string{"q1"}, UpdatedAt: now},
-			{Path: "edu/math/a.png", Size: 10, ContentType: "image/png", UpdatedAt: now},
+			{Path: "docs/math/test 2.pdf", Size: 482193, ContentType: "application/pdf", Title: "Контрольная <b>", Tags: []string{"q1"}, UpdatedAt: now},
+			{Path: "docs/math/a.png", Size: 10, ContentType: "image/png", UpdatedAt: now},
 		}, now)
 	var buf bytes.Buffer
 	if err := th.RenderIndex(&buf, page); err != nil {
@@ -32,18 +32,18 @@ func TestRenderIndex(t *testing.T) {
 	}
 	html := buf.String()
 	for _, want := range []string{
-		`<a href="/edu/">edu</a>`,
-		`<a href="/edu/math/">math</a>`,
-		`href="/edu/math/test%202.pdf"`,
+		`<a href="/docs/">docs</a>`,
+		`<a href="/docs/math/">math</a>`,
+		`href="/docs/math/test%202.pdf"`,
 		`Контрольная &lt;b&gt;`, // escaped by html/template
 		`<span class="tag">q1</span>`,
 		`470.9 KiB`,
 		`3 files`,
 		`1 file<`,
-		`href="/edu/"`, // parent link
+		`href="/docs/"`, // parent link
 		`/_vela/assets/style.css?v=`,
 		`kind-pdf`,
-		`<title>/edu/math/ · store.xchunk.org</title>`,
+		`<title>/docs/math/ · store.example.com</title>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index page lacks %q", want)

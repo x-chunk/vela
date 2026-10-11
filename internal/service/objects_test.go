@@ -279,21 +279,21 @@ func TestPatch(t *testing.T) {
 func TestListAndScopes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	e.put("edu/a.pdf", "a", api.Public)
-	e.put("edu/sub/b.pdf", "b", api.Private)
+	e.put("docs/a.pdf", "a", api.Public)
+	e.put("docs/sub/b.pdf", "b", api.Private)
 	e.put("other/c", "c", api.Public)
 	e.put("top", "t", api.Unlisted)
 
 	l, err := e.svc.List(e.ctx, e.admin, service.ListParams{})
-	if err != nil || strings.Join(l.Dirs, ",") != "edu/,other/" || len(l.Objects) != 1 {
+	if err != nil || strings.Join(l.Dirs, ",") != "docs/,other/" || len(l.Objects) != 1 {
 		t.Fatalf("root listing = %+v, %v", l, err)
 	}
-	ro := e.principal(api.ScopeRO, "edu/")
+	ro := e.principal(api.ScopeRO, "docs/")
 	l, err = e.svc.List(e.ctx, ro, service.ListParams{})
-	if err != nil || strings.Join(l.Dirs, ",") != "edu/" || len(l.Objects) != 0 {
+	if err != nil || strings.Join(l.Dirs, ",") != "docs/" || len(l.Objects) != 0 {
 		t.Fatalf("prefixed root listing = %+v, %v", l, err)
 	}
-	l, err = e.svc.List(e.ctx, ro, service.ListParams{Prefix: "edu", Recursive: true})
+	l, err = e.svc.List(e.ctx, ro, service.ListParams{Prefix: "docs", Recursive: true})
 	if err != nil || len(l.Objects) != 2 {
 		t.Fatalf("prefixed recursive listing = %+v, %v", l, err)
 	}
@@ -301,7 +301,7 @@ func TestListAndScopes(t *testing.T) {
 	wantErr(t, err, service.ErrForbidden)
 	_, err = e.svc.Stat(e.ctx, ro, "other/c")
 	wantErr(t, err, service.ErrForbidden)
-	if _, err := e.svc.Stat(e.ctx, ro, "edu/sub/b.pdf"); err != nil {
+	if _, err := e.svc.Stat(e.ctx, ro, "docs/sub/b.pdf"); err != nil {
 		t.Fatal(err)
 	}
 	_, err = e.svc.List(e.ctx, e.admin, service.ListParams{Limit: 1001})

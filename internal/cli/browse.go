@@ -39,7 +39,7 @@ func (a *App) lsCommand() *cobra.Command {
 		Short: "List a directory",
 		Long: "List a directory (the root by default). With -r, list every object below it.\n" +
 			"Naming a file instead of a directory shows that file.",
-		Example: "  vela ls\n  vela ls edu/math/ -l\n  vela ls -r edu/ --visibility private",
+		Example: "  vela ls\n  vela ls docs/math/ -l\n  vela ls -r docs/ --visibility private",
 		Args:    rangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw := ""
@@ -70,7 +70,7 @@ func (a *App) lsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// "vela ls edu/a.pdf" names a file: show it rather than an
+			// "vela ls docs/a.pdf" names a file: show it rather than an
 			// empty directory.
 			if len(l.Dirs) == 0 && len(l.Objects) == 0 && raw != "" && !strings.HasSuffix(raw, "/") {
 				if o, err := c.Stat(ctx, raw); err == nil {

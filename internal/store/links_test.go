@@ -14,8 +14,8 @@ func TestLinksAndSigningKeys(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := openTest(t)
-	live := newObject("edu/live.pdf", api.Private)
-	trashed := newObject("edu/trashed.pdf", api.Private)
+	live := newObject("docs/live.pdf", api.Private)
+	trashed := newObject("docs/trashed.pdf", api.Private)
 	insert(t, s, live)
 	key := domain.SigningKey{ID: gen.New(), Secret: []byte("0123456789abcdef0123456789abcdef"), CreatedAt: t0}
 	mk := func(objID string, exp time.Duration) domain.Link {
@@ -47,11 +47,11 @@ func TestLinksAndSigningKeys(t *testing.T) {
 	}
 
 	r, err := s.LinkByID(ctx, l1.ID)
-	if err != nil || r.ObjectState != domain.ObjectLive || r.ObjectPath != "edu/live.pdf" || string(r.KeySecret) != string(key.Secret) {
+	if err != nil || r.ObjectState != domain.ObjectLive || r.ObjectPath != "docs/live.pdf" || string(r.KeySecret) != string(key.Secret) {
 		t.Fatalf("LinkByID(live) = %+v, %v", r, err)
 	}
 	r, _ = s.LinkByID(ctx, l2.ID)
-	if r.ObjectState != domain.ObjectTrashed || r.ObjectPath != "edu/trashed.pdf" {
+	if r.ObjectState != domain.ObjectTrashed || r.ObjectPath != "docs/trashed.pdf" {
 		t.Fatalf("LinkByID(trashed) = %+v", r)
 	}
 	r, _ = s.LinkByID(ctx, l3.ID)

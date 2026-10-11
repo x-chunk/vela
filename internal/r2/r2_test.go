@@ -81,6 +81,35 @@ func TestPresignPolicy(t *testing.T) {
 	}
 }
 
+func TestS3SigningRegion(t *testing.T) {
+	t.Parallel()
+	for _, region := range []string{"", "auto", "us-east-1"} {
+		cfg := testConfig("https://s3.example.com", "test")
+		cfg.AccountID = ""
+		cfg.Region = region
+		cfg.Delivery = "redirect"
+		s, err := New(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := s.ContentURL(context.Background(), ids.NewULID(nil).New(), "text/plain", "inline", "private, no-store", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := region
+		if want == "" {
+			want = "auto"
+		}
+		if !strings.Contains(u.Query().Get("X-Amz-Credential"), "/"+want+"/s3/aws4_request") {
+			t.Fatalf("presign did not use signing region %q", want)
+		}
+	}
+}
+
 func TestErrorsRedactURLs(t *testing.T) {
 	err := safeError("upload", fmt.Errorf("request https://secret@example.com/?X-Amz-Signature=secret failed"))
 	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "https") {

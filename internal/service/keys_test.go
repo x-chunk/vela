@@ -11,14 +11,14 @@ import (
 func TestKeysAndAuthentication(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	k, err := e.svc.CreateKey(e.ctx, "edu-publish", api.ScopeRW, "/edu")
+	k, err := e.svc.CreateKey(e.ctx, "ci", api.ScopeRW, "/docs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(k.Full, "vela_"+k.Key.ID+"_") || k.Key.Prefix != "edu/" {
+	if !strings.HasPrefix(k.Full, "vela_"+k.Key.ID+"_") || k.Key.Prefix != "docs/" {
 		t.Fatalf("created key = %+v", k)
 	}
-	_, err = e.svc.CreateKey(e.ctx, "edu-publish", api.ScopeRO, "")
+	_, err = e.svc.CreateKey(e.ctx, "ci", api.ScopeRO, "")
 	wantErr(t, err, service.ErrAlreadyExists)
 	_, err = e.svc.CreateKey(e.ctx, "bad name", api.ScopeRO, "")
 	wantErr(t, err, service.ErrInvalidRequest)
@@ -28,7 +28,7 @@ func TestKeysAndAuthentication(t *testing.T) {
 	wantErr(t, err, service.ErrInvalidPath)
 
 	p, err := e.svc.Authenticate(e.ctx, k.Full)
-	if err != nil || p.KeyID != k.Key.ID || p.Scope != api.ScopeRW || p.Prefix != "edu/" || p.Name != "edu-publish" {
+	if err != nil || p.KeyID != k.Key.ID || p.Scope != api.ScopeRW || p.Prefix != "docs/" || p.Name != "ci" {
 		t.Fatalf("Authenticate = %+v, %v", p, err)
 	}
 	keys, _ := e.svc.ListKeys(e.ctx)
@@ -49,7 +49,7 @@ func TestKeysAndAuthentication(t *testing.T) {
 	wantErr(t, err, service.ErrUnauthorized)
 	wantErr(t, e.svc.RevokeKey(e.ctx, "zzzzzzzzzz"), service.ErrNotFound)
 	// The name is free again after revocation.
-	if _, err := e.svc.CreateKey(e.ctx, "edu-publish", api.ScopeRW, "edu/"); err != nil {
+	if _, err := e.svc.CreateKey(e.ctx, "ci", api.ScopeRW, "docs/"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -57,8 +57,8 @@ func TestKeysAndAuthentication(t *testing.T) {
 func TestInfo(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	info := e.svc.Info(e.principal(api.ScopeRO, "edu/"))
-	if info.APIVersion != 1 || info.PublicURL != "https://store.example.org" || info.Key.Prefix != "edu/" ||
+	info := e.svc.Info(e.principal(api.ScopeRO, "docs/"))
+	if info.APIVersion != 1 || info.PublicURL != "https://store.example.org" || info.Key.Prefix != "docs/" ||
 		info.Limits.LinkDefaultTTL != "24h" || info.Limits.LinkMaxTTL != "720h" || info.Limits.MaxCreateBytes != 1024 {
 		t.Fatalf("info = %+v", info)
 	}

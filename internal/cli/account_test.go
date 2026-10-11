@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -43,6 +44,20 @@ func TestLoginLogoutWhoami(t *testing.T) {
 	h.ok("logout")
 	if r := h.exec("", "whoami"); r.code != exitAuth {
 		t.Fatalf("whoami after logout = %+v", r)
+	}
+}
+
+func TestLoginRequiresURLBeforeReadingKey(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.config = filepath.Join(t.TempDir(), "config.toml")
+	h.onRequest = func(_ *http.Request) { t.Error("login contacted a server without a configured URL") }
+	r := h.exec("", "login")
+	if r.code != exitUsage || !strings.Contains(r.stderr, "server URL is required") {
+		t.Fatalf("login without a URL = %+v", r)
+	}
+	if _, err := os.Stat(h.config); !os.IsNotExist(err) {
+		t.Fatalf("login wrote a config: %v", err)
 	}
 }
 

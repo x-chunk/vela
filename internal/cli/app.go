@@ -135,7 +135,7 @@ func (a *App) newRootCommand() *cobra.Command {
 		Use:   "vela",
 		Short: "Manage files on a Vela store",
 		Long: "vela manages files on a Vela store: upload, share, organize and delete them.\n\n" +
-			"Remote paths are written without a scheme (edu/math/q1.pdf); a trailing slash\n" +
+			"Remote paths are written without a scheme (docs/math/q1.pdf); a trailing slash\n" +
 			"denotes a directory. Run \"vela login\" first.",
 		SilenceUsage:  true,
 		SilenceErrors: true,

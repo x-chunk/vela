@@ -46,8 +46,12 @@ func New(cfg config.R2Config) (*Store, error) {
 	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	transport.ResponseHeaderTimeout = 30 * time.Second
+	region := cfg.Region
+	if region == "" {
+		region = "auto"
+	}
 	client := s3.New(s3.Options{
-		Region: "auto", BaseEndpoint: aws.String(cfg.Endpoint), UsePathStyle: cfg.PathStyle,
+		Region: region, BaseEndpoint: aws.String(cfg.Endpoint), UsePathStyle: cfg.PathStyle,
 		Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")),
 		HTTPClient:  &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		Retryer:     retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 3 }),

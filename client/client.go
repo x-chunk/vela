@@ -1,10 +1,10 @@
 // Package client is the Go client for the Vela HTTP API v1.
 //
-// It is public so that other tools (edu-publish, scripts) can talk to Vela
+// It is public so that other tools (ci, scripts) can talk to Vela
 // without shelling out to the CLI:
 //
-//	c, err := client.New("https://store.xchunk.org", os.Getenv("VELA_KEY"))
-//	obj, err := c.Upload(ctx, "edu/math/q1.pdf", f, client.UploadOptions{Size: size, CreateOnly: true})
+//	c, err := client.New("https://store.example.com", os.Getenv("VELA_KEY"))
+//	obj, err := c.Upload(ctx, "docs/math/q1.pdf", f, client.UploadOptions{Size: size, CreateOnly: true})
 //
 // API errors are returned as *api.Error, so callers can branch on codes with
 // api.IsCode. Transport failures are returned as *NetworkError. Idempotent
@@ -65,7 +65,7 @@ func WithBackoff(f func(attempt int) time.Duration) Option { return func(c *Clie
 // written.
 func WithTrace(w io.Writer) Option { return func(c *Client) { c.trace = w } }
 
-// New creates a client for baseURL (for example https://store.xchunk.org).
+// New creates a client for baseURL (for example https://store.example.com).
 func New(baseURL, key string, opts ...Option) (*Client, error) {
 	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {

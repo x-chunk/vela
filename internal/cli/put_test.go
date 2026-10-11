@@ -39,12 +39,12 @@ func TestPlanPut(t *testing.T) {
 		want      string
 	}{
 		{[]string{f}, false, false, "report.pdf"},
-		{[]string{f, "edu/math/"}, false, false, "edu/math/report.pdf"},
-		{[]string{f, "/edu/math/q1.pdf"}, false, false, "edu/math/q1.pdf"},
-		{[]string{f, g, "edu/"}, false, false, "edu/report.pdf edu/b.pdf"},
+		{[]string{f, "docs/math/"}, false, false, "docs/math/report.pdf"},
+		{[]string{f, "/docs/math/q1.pdf"}, false, false, "docs/math/q1.pdf"},
+		{[]string{f, g, "docs/"}, false, false, "docs/report.pdf docs/b.pdf"},
 		{[]string{"-", "notes/x.txt"}, false, false, "notes/x.txt"},
-		{[]string{tree, "edu/dir/"}, true, false, "edu/dir/a.txt edu/dir/sub/b.txt"},
-		{[]string{tree, "edu/dir/"}, true, true, "edu/dir/.git/config edu/dir/.hidden edu/dir/a.txt edu/dir/sub/b.txt"},
+		{[]string{tree, "docs/dir/"}, true, false, "docs/dir/a.txt docs/dir/sub/b.txt"},
+		{[]string{tree, "docs/dir/"}, true, true, "docs/dir/.git/config docs/dir/.hidden docs/dir/a.txt docs/dir/sub/b.txt"},
 	}
 	for _, tt := range tests {
 		plan, err := a.planPut(tt.args, tt.recursive, tt.hidden)
@@ -62,20 +62,20 @@ func TestPlanPut(t *testing.T) {
 	}
 
 	bad := [][]string{
-		{f, g, "edu/q.pdf"}, // several sources need a directory
-		{tree, "edu/"},      // directory without -r
-		{"-", "edu/"},       // stdin needs a name
-		{"-", "-", "x"},     // stdin twice
-		{f, "api/x.pdf"},    // reserved path
+		{f, g, "docs/q.pdf"}, // several sources need a directory
+		{tree, "docs/"},      // directory without -r
+		{"-", "docs/"},       // stdin needs a name
+		{"-", "-", "x"},      // stdin twice
+		{f, "api/x.pdf"},     // reserved path
 		{filepath.Join(h.dir, "missing"), "x"},
-		{f, filepath.Join(h.dir, "report.pdf"), "edu/"}, // duplicate destination
+		{f, filepath.Join(h.dir, "report.pdf"), "docs/"}, // duplicate destination
 	}
 	for _, args := range bad {
 		if _, err := a.planPut(args, false, false); err == nil || exitCode(err) != exitUsage {
 			t.Errorf("planPut(%v) = %v; want a usage error", args, err)
 		}
 	}
-	if _, err := a.planPut([]string{tree, "edu/x"}, true, false); err == nil {
+	if _, err := a.planPut([]string{tree, "docs/x"}, true, false); err == nil {
 		t.Error("directory into a file path accepted")
 	}
 }

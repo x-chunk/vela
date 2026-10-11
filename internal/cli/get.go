@@ -41,7 +41,7 @@ func (a *App) getCommand() *cobra.Command {
 			"one that appears while the download runs. Downloads are written to a temporary file,\n" +
 			"verified against the SHA-256 and then moved into place. With -r nothing is written\n" +
 			"outside LOCAL, even through symlinks inside it.",
-		Example: "  vela get edu/math/q1.pdf\n  vela get edu/math/q1.pdf - | less\n  vela get -r edu/math/ ./math",
+		Example: "  vela get docs/math/q1.pdf\n  vela get docs/math/q1.pdf - | less\n  vela get -r docs/math/ ./math",
 		Args:    rangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			local := ""

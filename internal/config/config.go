@@ -96,9 +96,9 @@ func stringSetting(dst func(*Config) *string) func(*Config, string) error {
 var settings = []setting{
 	{"VELA_LISTEN", "listen", ":8080", "HTTP listen address", stringSetting(func(c *Config) *string { return &c.Listen })},
 	{"VELA_DATA_DIR", "data-dir", "/data", "data directory (database, blobs, tmp)", stringSetting(func(c *Config) *string { return &c.DataDir })},
-	{"VELA_PUBLIC_URL", "public-url", "", "public base URL, e.g. https://store.xchunk.org (required to serve)", parsePublicURL},
-	{"VELA_ACCEL_PREFIX", "accel-prefix", "/_blobs/", "nginx X-Accel-Redirect prefix; empty serves files directly", parseAccelPrefix},
-	{"VELA_TRUSTED_PROXIES", "trusted-proxies", "127.0.0.1/32,::1/128,172.17.0.1/32", "CIDRs whose X-Real-IP/X-Forwarded-For/X-Request-ID are trusted", parseProxies},
+	{"VELA_PUBLIC_URL", "public-url", "", "public base URL, e.g. https://store.example.com (required to serve)", parsePublicURL},
+	{"VELA_ACCEL_PREFIX", "accel-prefix", "", "nginx X-Accel-Redirect prefix; empty serves files directly", parseAccelPrefix},
+	{"VELA_TRUSTED_PROXIES", "trusted-proxies", "127.0.0.1/32,::1/128", "CIDRs whose X-Real-IP/X-Forwarded-For/X-Request-ID are trusted", parseProxies},
 	{"VELA_MAX_UPLOAD", "max-upload", "2GiB", "maximum upload size (keep in sync with nginx client_max_body_size)", sizeSetting(func(c *Config) *int64 { return &c.MaxUpload })},
 	{"VELA_MAX_CREATE", "max-create", "1MiB", "maximum size of inline content for POST /api/v1/objects", sizeSetting(func(c *Config) *int64 { return &c.MaxCreate })},
 	{"VELA_LINK_DEFAULT_TTL", "link-default-ttl", "24h", "default signed link lifetime", durationSetting(func(c *Config) *time.Duration { return &c.LinkDefaultTTL })},
@@ -106,7 +106,7 @@ var settings = []setting{
 	{"VELA_LINK_RETENTION", "link-retention", "7d", "how long expired link records are kept", durationSetting(func(c *Config) *time.Duration { return &c.LinkRetention })},
 	{"VELA_TRASH_RETENTION", "trash-retention", "14d", "how long deleted objects stay in the trash", durationSetting(func(c *Config) *time.Duration { return &c.TrashRetention })},
 	{"VELA_JANITOR_INTERVAL", "janitor-interval", "24h", "interval between janitor passes", durationSetting(func(c *Config) *time.Duration { return &c.JanitorInterval })},
-	{"VELA_SITE_TITLE", "site-title", "store.xchunk.org", "title of the HTML index", stringSetting(func(c *Config) *string { return &c.SiteTitle })},
+	{"VELA_SITE_TITLE", "site-title", "Vela", "title of the HTML index", stringSetting(func(c *Config) *string { return &c.SiteTitle })},
 	{"VELA_THEME_DIR", "theme-dir", "", "directory with theme overrides for the HTML index", stringSetting(func(c *Config) *string { return &c.ThemeDir })},
 	{"VELA_LOG_LEVEL", "log-level", "info", "log level: debug, info, warn or error", parseLogLevel},
 	{"VELA_LOG_FORMAT", "log-format", "json", "log format: json or text", parseLogFormat},
@@ -187,7 +187,7 @@ func (c *Config) RequireServe() error {
 		return errors.New("VELA_ACCEL_PREFIX must be empty when VELA_STORAGE=r2")
 	}
 	if c.PublicURL == "" {
-		return errors.New("VELA_PUBLIC_URL is required (for example https://store.xchunk.org)")
+		return errors.New("VELA_PUBLIC_URL is required (for example https://store.example.com)")
 	}
 	return nil
 }

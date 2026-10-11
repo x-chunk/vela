@@ -13,6 +13,7 @@ func TestStorageSettings(t *testing.T) {
 		valid      bool
 	}{
 		{"VELA_STORAGE", "r2", true},
+		{"VELA_R2_REGION", "us-east-1", true}, {"VELA_R2_REGION", "", false}, {"VELA_R2_REGION", "invalid/region", false},
 		{"VELA_MAX_UPLOAD", "100GiB", false}, {"VELA_MAX_CREATE", "100GiB", false},
 		{"VELA_MAX_UPLOAD", fmt.Sprint(int64(8<<20) * R2MaxUploadParts), true},
 		{"VELA_MAX_UPLOAD", fmt.Sprint(int64(8<<20)*R2MaxUploadParts + 1), false}, {"VELA_STORAGE", "other", false}, {"VELA_R2_BUCKET", "", false}, {"VELA_R2_SECRET_ACCESS_KEY", "", false}, {"VELA_R2_ENDPOINT", "https://user:secret@example.com", false}, {"VELA_R2_PREFIX", "../blobs/", false}, {"VELA_R2_PREFIX", "nested/blobs/", true}, {"VELA_R2_DELIVERY", "other", false}, {"VELA_R2_PART_SIZE", "1MiB", false}, {"VELA_R2_UPLOAD_CONCURRENCY", "0", false}, {"VELA_R2_PRESIGN_TTL", "2h", false}, {"VELA_MAX_CONCURRENT_UPLOADS", "0", false},
@@ -51,6 +52,30 @@ func TestStorageSettings(t *testing.T) {
 	}
 	if err := cfg.RequireServe(); err == nil {
 		t.Fatal("r2+accel accepted")
+	}
+}
+
+func TestS3EndpointWithoutCloudflareAccount(t *testing.T) {
+	t.Parallel()
+	vars := map[string]string{
+		"VELA_STORAGE": "r2", "VELA_R2_ENDPOINT": "https://s3.example.com",
+		"VELA_R2_REGION": "us-east-1", "VELA_R2_BUCKET": "test",
+		"VELA_R2_ACCESS_KEY_ID": "example", "VELA_R2_SECRET_ACCESS_KEY": "example-secret",
+		"VELA_PUBLIC_URL": "https://store.example.com",
+	}
+	cfg, err := Load(nil, env(vars))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.RequireServe(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.R2.AccountID != "" || cfg.R2.Region != "us-east-1" {
+		t.Fatalf("unexpected S3 configuration: %+v", cfg.R2)
+	}
+	delete(vars, "VELA_R2_ENDPOINT")
+	if _, err := Load(nil, env(vars)); err == nil || !strings.Contains(err.Error(), "VELA_R2_ACCOUNT_ID or VELA_R2_ENDPOINT") {
+		t.Fatalf("missing endpoint accepted: %v", err)
 	}
 }
 

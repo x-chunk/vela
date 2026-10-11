@@ -20,12 +20,12 @@ func TestShareAndLinks(t *testing.T) {
 		return nil
 	}
 	var l api.Link
-	h.ok("share", "private/report.pdf", "--ttl", "2h", "--note", "teacher", "--copy", "--json").json(t, &l)
-	if l.URL == nil || l.Note != "teacher" || !strings.HasSuffix(copied, *l.URL) {
+	h.ok("share", "private/report.pdf", "--ttl", "2h", "--note", "reviewer", "--copy", "--json").json(t, &l)
+	if l.URL == nil || l.Note != "reviewer" || !strings.HasSuffix(copied, *l.URL) {
 		t.Fatalf("share = %+v (copied %q)", l, copied)
 	}
 	r := h.ok("links", "ls")
-	if !strings.Contains(r.stdout, l.ID) || !strings.Contains(r.stdout, "teacher") {
+	if !strings.Contains(r.stdout, l.ID) || !strings.Contains(r.stdout, "reviewer") {
 		t.Fatalf("links ls = %s", r.stdout)
 	}
 	h.ok("links", "revoke", l.ID)

@@ -129,8 +129,8 @@ func CleanObjectPath(raw string) (string, error) {
 }
 
 // CleanPrefix normalizes a directory prefix. The result is either "" (root) or
-// ends with exactly one slash. A missing trailing slash is added, so "edu" and
-// "edu/" denote the same directory.
+// ends with exactly one slash. A missing trailing slash is added, so "docs" and
+// "docs/" denote the same directory.
 func CleanPrefix(raw string) (string, error) {
 	p, isDir, err := normalize(raw)
 	if err != nil {

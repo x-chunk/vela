@@ -15,9 +15,9 @@ func TestCleanObjectPath(t *testing.T) {
 		wantErr string
 	}{
 		{in: "a.pdf", want: "a.pdf"},
-		{in: "/edu/a.pdf", want: "edu/a.pdf"},
-		{in: "///edu/a.pdf", want: "edu/a.pdf"},
-		{in: "edu/math/q1/test.pdf", want: "edu/math/q1/test.pdf"},
+		{in: "/docs/a.pdf", want: "docs/a.pdf"},
+		{in: "///docs/a.pdf", want: "docs/a.pdf"},
+		{in: "docs/math/q1/test.pdf", want: "docs/math/q1/test.pdf"},
 		{in: "A.pdf", want: "A.pdf"},
 		{in: "dir with space/file name.txt", want: "dir with space/file name.txt"},
 		{in: "кириллица/файл.pdf", want: "кириллица/файл.pdf"},
@@ -25,12 +25,12 @@ func TestCleanObjectPath(t *testing.T) {
 		{in: "café.txt", want: "café.txt"},
 		{in: "q?x#y%z.txt", want: "q?x#y%z.txt"},
 		{in: "api-docs/x", want: "api-docs/x"},
-		{in: "edu/api/x", want: "edu/api/x"},
+		{in: "docs/api/x", want: "docs/api/x"},
 		{in: long, want: long},
 
 		{in: "", wantErr: "must not end with a slash"},
 		{in: "/", wantErr: "must not end with a slash"},
-		{in: "edu/", wantErr: "must not end with a slash"},
+		{in: "docs/", wantErr: "must not end with a slash"},
 		{in: "a//b", wantErr: "empty segment"},
 		{in: "a/./b", wantErr: "dot segment"},
 		{in: "a/../b", wantErr: "dot segment"},
@@ -78,9 +78,9 @@ func TestCleanPrefix(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},
 		{"/", ""},
-		{"edu", "edu/"},
-		{"edu/", "edu/"},
-		{"/edu/math/", "edu/math/"},
+		{"docs", "docs/"},
+		{"docs/", "docs/"},
+		{"/docs/math/", "docs/math/"},
 	}
 	for _, tt := range tests {
 		got, err := CleanPrefix(tt.in)
@@ -88,7 +88,7 @@ func TestCleanPrefix(t *testing.T) {
 			t.Errorf("CleanPrefix(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
 	}
-	for _, bad := range []string{"edu//", "api/", "a/../"} {
+	for _, bad := range []string{"docs//", "api/", "a/../"} {
 		if _, err := CleanPrefix(bad); err == nil {
 			t.Errorf("CleanPrefix(%q) succeeded, want error", bad)
 		}
@@ -97,13 +97,13 @@ func TestCleanPrefix(t *testing.T) {
 
 func TestCleanPath(t *testing.T) {
 	t.Parallel()
-	p, dir, err := CleanPath("/edu/")
-	if err != nil || p != "edu/" || !dir {
-		t.Fatalf("CleanPath(/edu/) = %q, %v, %v", p, dir, err)
+	p, dir, err := CleanPath("/docs/")
+	if err != nil || p != "docs/" || !dir {
+		t.Fatalf("CleanPath(/docs/) = %q, %v, %v", p, dir, err)
 	}
-	p, dir, err = CleanPath("edu/a")
-	if err != nil || p != "edu/a" || dir {
-		t.Fatalf("CleanPath(edu/a) = %q, %v, %v", p, dir, err)
+	p, dir, err = CleanPath("docs/a")
+	if err != nil || p != "docs/a" || dir {
+		t.Fatalf("CleanPath(docs/a) = %q, %v, %v", p, dir, err)
 	}
 	p, dir, err = CleanPath("")
 	if err != nil || p != "" || !dir {
@@ -113,22 +113,22 @@ func TestCleanPath(t *testing.T) {
 
 func TestPathHelpers(t *testing.T) {
 	t.Parallel()
-	if !IsWithin("edu/a", "edu/") || IsWithin("education/a", "edu/") || !IsWithin("x", "") || IsWithin("edu", "edu/") {
+	if !IsWithin("docs/a", "docs/") || IsWithin("education/a", "docs/") || !IsWithin("x", "") || IsWithin("docs", "docs/") {
 		t.Error("IsWithin mismatch")
 	}
-	if got := BaseName("edu/math/q1.pdf"); got != "q1.pdf" {
+	if got := BaseName("docs/math/q1.pdf"); got != "q1.pdf" {
 		t.Errorf("BaseName = %q", got)
 	}
-	if got := BaseName("edu/math/"); got != "math" {
+	if got := BaseName("docs/math/"); got != "math" {
 		t.Errorf("BaseName(dir) = %q", got)
 	}
-	if got := ParentPrefix("edu/math/q1.pdf"); got != "edu/math/" {
+	if got := ParentPrefix("docs/math/q1.pdf"); got != "docs/math/" {
 		t.Errorf("ParentPrefix = %q", got)
 	}
 	if got := ParentPrefix("top.txt"); got != "" {
 		t.Errorf("ParentPrefix(top) = %q", got)
 	}
-	if got := ParentPrefix("edu/math/"); got != "edu/" {
+	if got := ParentPrefix("docs/math/"); got != "docs/" {
 		t.Errorf("ParentPrefix(dir) = %q", got)
 	}
 	if got := strings.Join(Ancestors("a/b/c"), ","); got != "a,a/b" {
@@ -142,17 +142,17 @@ func TestPathHelpers(t *testing.T) {
 func TestEscapePath(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ in, want string }{
-		{"edu/a b.pdf", "edu/a%20b.pdf"},
+		{"docs/a b.pdf", "docs/a%20b.pdf"},
 		{"q?x#y%z.txt", "q%3Fx%23y%25z.txt"},
 		{"файл", "%D1%84%D0%B0%D0%B9%D0%BB"},
-		{"edu/math/", "edu/math/"},
+		{"docs/math/", "docs/math/"},
 	}
 	for _, tt := range tests {
 		if got := EscapePath(tt.in); got != tt.want {
 			t.Errorf("EscapePath(%q) = %q; want %q", tt.in, got, tt.want)
 		}
 	}
-	if got := PublicURL("https://store.xchunk.org/", "a b/c"); got != "https://store.xchunk.org/a%20b/c" {
+	if got := PublicURL("https://store.example.com/", "a b/c"); got != "https://store.example.com/a%20b/c" {
 		t.Errorf("PublicURL = %q", got)
 	}
 }

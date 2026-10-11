@@ -24,9 +24,6 @@ import (
 	"go.xchunk.org/vela/api"
 )
 
-// DefaultURL is offered by "vela login".
-const DefaultURL = "https://store.xchunk.org"
-
 // DefaultProfileName is used when nothing selects a profile.
 const DefaultProfileName = "main"
 

@@ -18,6 +18,7 @@ const R2MaxUploadParts = 10_000
 type R2Config struct {
 	AccountID         string
 	Endpoint          string
+	Region            string
 	Bucket            string
 	Prefix            string
 	AccessKeyID       string
@@ -48,6 +49,10 @@ func (c *Config) loadStorage(lookup func(string) (string, bool)) error {
 	r := &c.R2
 	r.AccountID = get("VELA_R2_ACCOUNT_ID", "")
 	r.Endpoint = get("VELA_R2_ENDPOINT", "")
+	r.Region = get("VELA_R2_REGION", "auto")
+	if strings.TrimSpace(r.Region) == "" || strings.ContainsAny(r.Region, "/\\ \t\r\n") {
+		return errors.New("VELA_R2_REGION must be a nonempty signing region without spaces or slashes")
+	}
 	r.Bucket = get("VELA_R2_BUCKET", "")
 	r.Prefix = get("VELA_R2_PREFIX", "blobs/")
 	r.AccessKeyID = get("VELA_R2_ACCESS_KEY_ID", "")
@@ -89,11 +94,18 @@ func (c *Config) loadStorage(lookup func(string) (string, bool)) error {
 // Validate checks R2 settings even when it is only the migration destination.
 func (r R2Config) Validate() error {
 	for _, v := range []struct{ name, value string }{
-		{"VELA_R2_ACCOUNT_ID", r.AccountID}, {"VELA_R2_BUCKET", r.Bucket}, {"VELA_R2_ACCESS_KEY_ID", r.AccessKeyID}, {"VELA_R2_SECRET_ACCESS_KEY", r.SecretAccessKey},
+		{"VELA_R2_BUCKET", r.Bucket}, {"VELA_R2_ACCESS_KEY_ID", r.AccessKeyID}, {"VELA_R2_SECRET_ACCESS_KEY", r.SecretAccessKey},
 	} {
 		if v.value == "" {
 			return fmt.Errorf("%s is required for r2", v.name)
 		}
+	}
+	// An explicit S3 endpoint does not need a Cloudflare account ID.
+	if r.Endpoint == "" {
+		return errors.New("VELA_R2_ACCOUNT_ID or VELA_R2_ENDPOINT is required for r2")
+	}
+	if strings.ContainsAny(r.Region, "/\\ \t\r\n") {
+		return errors.New("VELA_R2_REGION must be a signing region without spaces or slashes")
 	}
 	u, err := url.Parse(r.Endpoint)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
