@@ -130,6 +130,10 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		var err error
 		off, length, err = parseRange(rangeHeader, o.Size)
 		if err != nil {
+			// A shared cache may key only by URL, so an invalid Range must
+			// never replace the successful representation with a cached 416.
+			h.Set("Cache-Control", "no-store")
+			h.Del("ETag")
 			h.Set("Content-Range", fmt.Sprintf("bytes */%d", o.Size))
 			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
 			return

@@ -317,3 +317,43 @@ func TestContentValidators(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidRangeCannotCacheSuccessfulRepresentation(t *testing.T) {
+	for _, backend := range []string{"fs", "r2-proxy", "r2-redirect"} {
+		t.Run(backend, func(t *testing.T) {
+			var opts []testutil.Option
+			if backend != "fs" {
+				cfg := testutil.S3Config(t)
+				if backend == "r2-redirect" {
+					cfg.R2.Delivery = "redirect"
+				}
+				opts = append(opts, testutil.WithStorage(cfg))
+			}
+			h := newHarness(t, opts...)
+			for _, visibility := range []api.Visibility{api.Public, api.Unlisted} {
+				path := string(visibility) + ".txt"
+				h.upload(path, "0123456789", api.HeaderVisibility, string(visibility))
+				for _, route := range []string{"/" + path, api.ContentRoute(path)} {
+					key := ""
+					if strings.HasPrefix(route, api.RouteCont) {
+						key = h.ts.AdminKey
+					}
+					for _, rangeValue := range []string{"bytes=100-", "bytes=bad", "bytes=-0", "bytes=4-2"} {
+						r := h.do("GET", route, key, nil, "Range", rangeValue)
+						if r.status != 416 || r.header.Get("Cache-Control") != "no-store" || r.header.Get("ETag") != "" || r.header.Get("Content-Range") != "bytes */10" {
+							t.Fatalf("%s %s: status=%d headers=%v", route, rangeValue, r.status, r.header)
+						}
+					}
+					full := h.do("GET", route, key, nil)
+					if backend == "r2-redirect" {
+						if full.status != 302 || full.header.Get("Location") == "" {
+							t.Fatal("valid redirect lost")
+						}
+					} else if full.status != 200 || string(full.body) != "0123456789" || full.header.Get("ETag") == "" {
+						t.Fatalf("valid GET: %d %q", full.status, full.body)
+					}
+				}
+			}
+		})
+	}
+}

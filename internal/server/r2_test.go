@@ -31,8 +31,12 @@ func TestR2ProxyDelivery(t *testing.T) {
 			if r.status != test.status || string(r.body) != test.body || r.header.Get("Content-Range") != test.contentRange {
 				t.Fatalf("response: %d %q %v", r.status, r.body, r.header)
 			}
-			if r.header.Get("ETag") != etag || r.header.Get("X-Accel-Redirect") != "" {
-				t.Fatal("wrong backend headers")
+			wantETag, wantCache := etag, "public, max-age=300"
+			if test.status == http.StatusRequestedRangeNotSatisfiable {
+				wantETag, wantCache = "", "no-store"
+			}
+			if r.header.Get("ETag") != wantETag || r.header.Get("Cache-Control") != wantCache || r.header.Get("X-Accel-Redirect") != "" {
+				t.Fatalf("wrong backend headers: %v", r.header)
 			}
 		})
 	}
