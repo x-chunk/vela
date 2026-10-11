@@ -11,6 +11,7 @@ import (
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/clock"
 	"go.xchunk.org/vela/internal/service"
+	"go.xchunk.org/vela/internal/store"
 	"go.xchunk.org/vela/internal/wire"
 )
 
@@ -178,13 +179,46 @@ func TestConcurrentBackupsExclude(t *testing.T) {
 
 // Metadata backups remain possible while the configured bucket is unreachable.
 func TestR2BackupIsMetadataOnly(t *testing.T) {
+	ctx := context.Background()
 	e := newBackupEnv(t)
-	e.st.Kind = "r2"
-	result, err := backup(context.Background(), e.svc, e.st, t.TempDir(), false)
-	if err != nil || result.blobs != 0 {
-		t.Fatalf("R2 backup: %+v %v", result, err)
+	e.put(t, "doc.txt", "stored in the bucket separately")
+	vars := newEnv(t)
+	vars["VELA_DATA_DIR"] = filepath.Dir(e.st.Blobs.Dir())
+	vars["VELA_STORAGE"] = "r2"
+	vars["VELA_R2_ACCOUNT_ID"] = "test"
+	vars["VELA_R2_BUCKET"] = "test"
+	vars["VELA_R2_ACCESS_KEY_ID"] = "test"
+	vars["VELA_R2_SECRET_ACCESS_KEY"] = "test-secret"
+	vars["VELA_R2_ENDPOINT"] = "http://127.0.0.1:1"
+	// Only metadata is needed: neither local content nor a reachable bucket
+	// may be required to take the snapshot during a storage outage.
+	if err := os.RemoveAll(e.st.Blobs.Dir()); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := backup(context.Background(), e.svc, e.st, t.TempDir(), true); err == nil {
-		t.Fatal("R2 metadata backup silently accepted --verify")
+	dest := t.TempDir()
+	r := execute(t, ctx, vars, nil, "backup", dest)
+	if r.err != nil || !strings.Contains(r.stdout, "Metadata-only R2 backup") || !strings.Contains(r.stdout, "1 object(s)") || !strings.Contains(r.stdout, "Bucket contents are not included") {
+		t.Fatalf("R2 backup: %q %v", r.stdout, r.err)
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil || len(entries) != 1 || entries[0].Name() != wire.DatabaseFile {
+		t.Fatalf("R2 backup files: %v %v", entries, err)
+	}
+	snap, err := store.Open(ctx, filepath.Join(dest, wire.DatabaseFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = snap.Close() }()
+	refs, objects, err := referencedBlobs(ctx, snap)
+	if err != nil || objects != 1 || len(refs) != 1 {
+		t.Fatalf("R2 metadata snapshot: objects=%d refs=%d err=%v", objects, len(refs), err)
+	}
+	verifyDest := t.TempDir()
+	r = execute(t, ctx, vars, nil, "backup", verifyDest, "--verify")
+	if r.err == nil || !strings.Contains(r.err.Error(), "--verify is not supported") || r.stdout != "" {
+		t.Fatalf("R2 backup --verify: %q %v", r.stdout, r.err)
+	}
+	if entries, err := os.ReadDir(verifyDest); err != nil || len(entries) != 0 {
+		t.Fatalf("failed R2 backup left partial files: %v %v", entries, err)
 	}
 }

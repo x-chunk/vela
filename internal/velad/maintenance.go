@@ -28,14 +28,21 @@ func newBackupCommand(env Env) *cobra.Command {
 	var verify bool
 	cmd := &cobra.Command{
 		Use:   "backup DEST_DIR",
-		Short: "Write a consistent snapshot of the database and blobs",
-		Long: "Write a consistent backup to DEST_DIR, which must not exist or be empty. The database is\n" +
-			"copied with VACUUM INTO, which is safe while the server runs; then every blob the snapshot\n" +
-			"references is hard-linked (or copied, across filesystems) and its size checked; --verify\n" +
-			"also checks every SHA-256. While the backup runs, no blob is deleted, in this or any other\n" +
-			"process. A missing or damaged blob makes the backup fail: it is never silently partial.\n\n" +
-			"To restore, stop the container and replace vela.db and blobs/ in the data directory with\n" +
-			"the backup's files (removing vela.db-wal and vela.db-shm).",
+		Short: "Back up the database and filesystem blobs, or only metadata for R2",
+		Long: "Write a backup to DEST_DIR, which must not exist or be empty. SQLite is copied with\n" +
+			"VACUUM INTO, which is safe while the server runs.\n\n" +
+			"With filesystem storage, every referenced blob is hard-linked (or copied, across\n" +
+			"filesystems) and its size checked; --verify also checks every SHA-256. While the backup\n" +
+			"runs, no blob is deleted, in this or any other process. A missing or damaged blob makes\n" +
+			"the backup fail: it is never silently partial.\n\n" +
+			"With R2 storage, the backup is metadata-only: it contains SQLite, but bucket contents\n" +
+			"are neither included nor checked. --verify is available only for filesystem storage.\n" +
+			"Back up the bucket separately. For a consistent database/bucket pair, stop the serving\n" +
+			"container, run this command in a one-shot container, copy the bucket, then restart Vela.\n\n" +
+			"To restore, stop Vela and replace vela.db in the data directory, removing vela.db-wal\n" +
+			"and vela.db-shm. For filesystem storage, also replace blobs/ from the same backup. For\n" +
+			"R2, restore the bucket prefix from the matching bucket backup. Use the same backend\n" +
+			"settings when restarting Vela.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, st, err := adminService(cmd, env)
@@ -47,12 +54,17 @@ func newBackupCommand(env Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if st.Kind == "r2" {
+				_, _ = fmt.Fprintf(env.Stdout, "Metadata-only R2 backup written to %s: %d object(s). Bucket contents are not included; back up the bucket separately.\n",
+					args[0], res.objects)
+				return nil
+			}
 			_, _ = fmt.Fprintf(env.Stdout, "Backup written to %s: %d object(s), %d blob(s): %d linked, %d copied%s.\n",
 				args[0], res.objects, res.blobs, res.linked, res.copied, map[bool]string{true: ", all verified"}[verify])
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&verify, "verify", false, "check the SHA-256 of every blob (reads all data)")
+	cmd.Flags().BoolVar(&verify, "verify", false, "check every filesystem blob's SHA-256 (FS only; reads all data)")
 	return cmd
 }
 
