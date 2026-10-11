@@ -1,12 +1,18 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"go.xchunk.org/vela/api"
 )
@@ -142,6 +148,49 @@ func TestGetLongName(t *testing.T) {
 	for _, p := range []string{filepath.Join(dir, name), filepath.Join(h.dir, "tree", name)} {
 		if b, err := os.ReadFile(p); err != nil || string(b) != "x" {
 			t.Fatalf("%s: %q, %v", p, b, err)
+		}
+	}
+}
+
+func TestPresignedDownloadFailureOutput(t *testing.T) {
+	const secret = "cli-presigned-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == api.ObjectRoute("private.txt") {
+			_ = json.NewEncoder(w).Encode(api.Object{Path: "private.txt", Size: 4})
+			return
+		}
+		http.Redirect(w, r, "https://storage.example/blob?X-Amz-Signature="+secret, http.StatusFound)
+	}))
+	defer srv.Close()
+	for _, flags := range [][]string{nil, {"--verbose"}, {"--json"}, {"--verbose", "--json"}} {
+		var out, errOut bytes.Buffer
+		app := &App{In: strings.NewReader(""), Out: &out, Err: &errOut,
+			InIsTerminal: func() bool { return false }, OutIsTerminal: func() bool { return false }, ErrIsTerminal: func() bool { return false }, Now: time.Now,
+			LookupEnv: func(k string) (string, bool) {
+				switch k {
+				case "VELA_URL":
+					return srv.URL, true
+				case "VELA_KEY":
+					return "cli-key", true
+				case "VELA_CONFIG":
+					return filepath.Join(t.TempDir(), "missing.toml"), true
+				}
+				return "", false
+			},
+			HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Query().Has("X-Amz-Signature") {
+					return nil, errors.New("failed at " + r.URL.String())
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})},
+			RetryBackoff: func(int) time.Duration { return 0 },
+		}
+		args := append([]string{"get", "private.txt", filepath.Join(t.TempDir(), "download")}, flags...)
+		if code := app.Execute(context.Background(), args); code != exitNetwork {
+			t.Fatalf("exit=%d, stderr=%s", code, errOut.String())
+		}
+		if strings.Contains(out.String()+errOut.String(), secret) || strings.Contains(out.String()+errOut.String(), "X-Amz-Signature") {
+			t.Fatal("credential leaked in CLI output")
 		}
 	}
 }

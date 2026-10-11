@@ -97,7 +97,15 @@ type NetworkError struct {
 	Err error
 }
 
-func (e *NetworkError) Error() string { return "cannot reach the server: " + e.Err.Error() }
+func (e *NetworkError) Error() string { return "cannot reach the server: transport request failed" }
+
+// transportError hides transport diagnostics, which may contain credentials in
+// redirect URLs or arbitrary text from a custom RoundTripper. Unwrap preserves
+// the original cause for programmatic inspection without printing its secrets.
+type transportError struct{ cause error }
+
+func (e *transportError) Error() string { return "transport request failed" }
+func (e *transportError) Unwrap() error { return e.cause }
 
 // Unwrap returns the underlying error.
 func (e *NetworkError) Unwrap() error { return e.Err }
@@ -284,14 +292,17 @@ func (c *Client) attempt(ctx context.Context, rq request, upload *attemptBody) (
 	}
 
 	start := time.Now()
-	c.tracef("-> %s %s", rq.method, u.Redacted())
+	traceURL := u
+	traceURL.RawQuery, traceURL.Fragment, traceURL.User = "", "", nil
+	c.tracef("-> %s %s", rq.method, traceURL.String())
 	res, err := c.hc.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		c.tracef("<- error after %s: %v", time.Since(start).Round(time.Millisecond), err)
-		return nil, &NetworkError{Err: err}
+		safe := &transportError{cause: err}
+		c.tracef("<- error after %s: %v", time.Since(start).Round(time.Millisecond), safe)
+		return nil, &NetworkError{Err: safe}
 	}
 	c.tracef("<- %s (%s) request_id=%s", res.Status, time.Since(start).Round(time.Millisecond), res.Header.Get(api.HeaderRequestID))
 	if res.StatusCode >= 200 && res.StatusCode < 300 || res.StatusCode == http.StatusNotModified {
@@ -299,8 +310,9 @@ func (c *Client) attempt(ctx context.Context, rq request, upload *attemptBody) (
 			b, err := io.ReadAll(io.LimitReader(res.Body, maxBufferedResponse))
 			_ = res.Body.Close()
 			if err != nil {
-				c.tracef("<- response body lost: %v", err)
-				return nil, &NetworkError{Err: fmt.Errorf("read response: %w", err)}
+				safe := &transportError{cause: err}
+				c.tracef("<- response body lost: %v", safe)
+				return nil, &NetworkError{Err: safe}
 			}
 			res.Body = io.NopCloser(bytes.NewReader(b))
 		}
