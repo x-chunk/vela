@@ -1,0 +1,7 @@
+# Historical false positives, reviewed during the open-source audit.
+# SHA-256 of the public string "hello world", not a credential.
+414c0fa7af03328cf9179d3b60358a200177d753:internal/server/server_test.go:generic-api-key:241
+# A deterministic link ID in a signature verification test, not a key.
+0a96f74296ec9ac2e8b3b7d68edcc2cf58ec0da4:internal/sign/sign_test.go:generic-api-key:29
+# A truncated example API key in the original design document.
+06779dfc2aae4f749354a5a827571e7eab98ae54:docs/SPEC.md:generic-api-key:629

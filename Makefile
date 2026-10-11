@@ -23,7 +23,7 @@ DEV_DATA ?= .dev-data
 
 export CGO_ENABLED := 0
 
-.PHONY: help build build-cli build-server install dist test test-e2e test-s3 lint fmt tidy docker dev clean
+.PHONY: help build build-cli build-server install dist test test-e2e test-s3 check-neutrality validate-examples lint fmt tidy docker dev clean
 
 help: ## Show this help
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -50,6 +50,7 @@ dist: ## Build release archives of the CLI into ./dist
 		name=vela_$(VERSION)_$${os}_$${arch}; \
 		echo "building $$name"; \
 		mkdir -p dist/$$name; \
+		cp LICENSE dist/$$name/LICENSE; \
 		GOOS=$$os GOARCH=$$arch go build $(GOFLAGS_BUILD) -o dist/$$name/vela$$ext ./cmd/vela; \
 		if [ $$os = windows ]; then (cd dist && zip -qr $$name.zip $$name); \
 		else tar -C dist -czf dist/$$name.tar.gz $$name; fi; \
@@ -67,6 +68,12 @@ test-e2e: ## Check accel delivery through a real nginx (needs Docker)
 
 test-s3: ## Run R2/S3 contracts, HTTP delivery and migration against MinIO (needs Docker)
 	./scripts/test-s3.sh
+
+check-neutrality: ## Check source and examples for private deployment values (needs Python 3)
+	./scripts/check-neutrality.sh
+
+validate-examples: ## Validate all nginx examples (needs Docker and OpenSSL)
+	./scripts/validate-examples.sh
 
 lint: ## Run golangci-lint
 	$(GOLANGCI_LINT) run ./...

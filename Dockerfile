@@ -7,7 +7,7 @@
 # Keep the Go version in sync with the toolchain line in go.mod and the
 # workflows in .github/workflows.
 
-FROM golang:1.27.2-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
 WORKDIR /src
 ENV CGO_ENABLED=0
 COPY go.mod go.sum ./
@@ -16,8 +16,10 @@ COPY . .
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go build -trimpath \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
       -ldflags "-s -w \
         -X go.xchunk.org/vela/internal/version.Version=${VERSION} \
         -X go.xchunk.org/vela/internal/version.Commit=${COMMIT} \
@@ -31,11 +33,14 @@ ARG COMMIT=none
 LABEL org.opencontainers.image.title="vela" \
       org.opencontainers.image.description="Vela: self-hosted file store server (velad)" \
       org.opencontainers.image.source="https://github.com/x-chunk/vela" \
+      org.opencontainers.image.url="https://docs.xchunk.org/vela" \
+      org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}"
 # In PATH, so that "docker exec vela velad key create ..." works; distroless
 # has no shell to resolve anything else.
 COPY --from=build /out/velad /usr/local/bin/velad
+COPY --from=build /src/LICENSE /usr/share/licenses/vela/LICENSE
 # Owned by the runtime user, so the container also works with an anonymous
 # volume instead of a bind mount.
 COPY --from=build --chown=65532:65532 /out/data /data

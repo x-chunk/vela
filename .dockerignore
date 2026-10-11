@@ -10,7 +10,18 @@ dist
 .idea
 .vscode
 docs
-deploy
+examples
 README.md
 AGENTS.md
 REVIEW.md
+
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
+
+# Operator credentials must never enter the build context.
+**/*.env
+**/.env
+**/.env.*
+!**/*.env.example
+!**/.env.example

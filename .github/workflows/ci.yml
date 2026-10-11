@@ -13,6 +13,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  neutrality:
+    name: neutral examples and secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make check-neutrality
+      - run: python3 scripts/test-neutrality.py
+      - name: scan all Git history for credentials
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.0 git --redact --log-opts=--all .
+      - name: scan current source for credentials
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.0 dir --redact .
+
+  examples:
+    name: deployment example validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shellcheck examples/docker/*.sh scripts/*.sh
+      - run: make validate-examples
+
   test:
     name: vet, test, build
     runs-on: ubuntu-latest
