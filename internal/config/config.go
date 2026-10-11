@@ -91,8 +91,8 @@ func stringSetting(dst func(*Config) *string) func(*Config, string) error {
 	}
 }
 
-// settings is the single table of configuration knobs. The README's
-// environment variable table must match it.
+// settings is the single table of core configuration knobs. The environment
+// variable table in docs/configuration.md must match it.
 var settings = []setting{
 	{"VELA_LISTEN", "listen", ":8080", "HTTP listen address", stringSetting(func(c *Config) *string { return &c.Listen })},
 	{"VELA_DATA_DIR", "data-dir", "/data", "data directory (database, blobs, tmp)", stringSetting(func(c *Config) *string { return &c.DataDir })},

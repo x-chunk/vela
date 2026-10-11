@@ -7,7 +7,7 @@
 // server from starting instead of breaking pages at request time.
 //
 // The data passed to the templates (Page, ErrorPage and their parts) is
-// the theme contract documented in the README. Renaming or removing a field
+// the theme contract documented in docs/theme.md. Renaming or removing a field
 // breaks custom themes.
 package index
 

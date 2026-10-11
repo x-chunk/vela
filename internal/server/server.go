@@ -97,7 +97,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 // travels percent-encoded in headers: up to 4096*4*3 = 48 KiB for the
 // description, 3 KiB for the title, 2 KiB for tags and 3 KiB for the path,
 // so 128 KiB leaves room for everything else. nginx's
-// large_client_header_buffers must allow the same (deploy/nginx).
+// large_client_header_buffers must allow the same (examples/nginx).
 const MaxHeaderBytes = 128 << 10
 
 // HTTPServer returns an http.Server with production timeouts. There is no
