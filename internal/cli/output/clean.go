@@ -16,7 +16,7 @@ type Styled string
 // DEL, C1, including ESC, BEL, CR and backspace) could otherwise clear or
 // rewrite the screen or, through OSC sequences, set the clipboard or the
 // window title; bidirectional overrides could make text read differently
-// from what it is. They are shown as visible escapes (\x1b, ‮) instead.
+// from what it is. They are shown as visible escapes (\x1b, \u202e) instead.
 // The stored values and JSON output are untouched.
 func Clean(s string) string { return clean(s, false) }
 
@@ -39,7 +39,7 @@ func clean(s string, keepNewlines bool) string {
 			b.WriteString(`\n`)
 		case unicode.IsControl(r) && r < 0x80:
 			fmt.Fprintf(&b, `\x%02x`, r)
-		case unicode.IsControl(r) || isBidiControl(r) || r == '�':
+		case unicode.IsControl(r) || isBidiControl(r) || r == '\ufffd':
 			fmt.Fprintf(&b, `\u%04x`, r)
 		default:
 			b.WriteRune(r)
@@ -50,7 +50,7 @@ func clean(s string, keepNewlines bool) string {
 
 func needsCleaning(s string, keepNewlines bool) bool {
 	for _, r := range s {
-		if (unicode.IsControl(r) && !(keepNewlines && r == '\n')) || isBidiControl(r) || r == '�' {
+		if (unicode.IsControl(r) && (!keepNewlines || r != '\n')) || isBidiControl(r) || r == '\ufffd' {
 			return true
 		}
 	}
@@ -59,7 +59,7 @@ func needsCleaning(s string, keepNewlines bool) bool {
 
 // isBidiControl reports the invisible characters that change text direction.
 func isBidiControl(r rune) bool {
-	return r == '؜' || r == '‎' || r == '‏' || (r >= '‪' && r <= '‮') || (r >= '⁦' && r <= '⁩')
+	return r == '\u061c' || r == '\u200e' || r == '\u200f' || (r >= '\u202a' && r <= '\u202e') || (r >= '\u2066' && r <= '\u2069')
 }
 
 // text renders a value for terminal output: Styled as is, anything else

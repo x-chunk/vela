@@ -102,7 +102,7 @@ func TestNoTerminalEscapesFromData(t *testing.T) {
 	}
 	ctx := context.Background()
 	title := "T\x1b]52;c;ZXZpbA==\x07"
-	desc := "D\x1b[2J\x1b[H\r‮"
+	desc := "D\x1b[2J\x1b[H\r\u202e"
 	if _, _, err := c.Upload(ctx, "evil.txt", strings.NewReader("x"), client.UploadOptions{Size: 1, Title: &title, Description: &desc}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestNoTerminalEscapesFromData(t *testing.T) {
 	for _, args := range [][]string{{"stat", "evil.txt"}, {"ls", "-l"}, {"meta", "evil.txt"}, {"links", "ls"}} {
 		for _, color := range []string{"--no-color", "-v"} {
 			r := h.ok(append(args, color)...)
-			if strings.ContainsAny(r.stdout+r.stderr, "\x1b\x07\r‮") {
+			if strings.ContainsAny(r.stdout+r.stderr, "\x1b\x07\r\u202e") {
 				t.Errorf("vela %v %s printed raw control characters: %q", args, color, r.stdout)
 			}
 		}
