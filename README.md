@@ -195,7 +195,14 @@ can falsely validate a file replaced twice in one second.
 The signed URL sets the response content type, disposition (including UTF-8
 filename), and cache policy. The redirect itself uses `private, no-store` and
 `no-referrer`. Grants never outlive the object expiry or the original Vela
-signed link. Near expiry, delivery falls back to proxy.
+signed link. Near expiry, delivery falls back to proxy. Requests with
+`If-Match`, `If-None-Match`, `If-Range`, or timestamp conditions also use proxy:
+Vela applies its SHA-256 validator and range decision locally, preserving
+safe download resumption after an overwrite. The Go client removes
+Authorization and Referer on every redirect, including when a custom
+HTTP client or redirect callback is supplied. Transport diagnostics omit
+raw URLs and error text that could contain signatures; `errors.Is` and
+`errors.As` still expose the original cause for programmatic inspection.
 
 The R2 hostname appears in downloads/browser navigation. An issued grant can
 still work until its TTL after a visibility change or link revocation; keep

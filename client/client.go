@@ -49,7 +49,7 @@ type Client struct {
 type Option func(*Client)
 
 // WithHTTPClient sets the underlying HTTP client (timeouts, proxies, TLS).
-// The client is copied; redirect callbacks run before credential removal.
+// The client is copied; redirect credentials are removed even with a custom callback.
 func WithHTTPClient(hc *http.Client) Option { return func(c *Client) { c.hc = hc } }
 
 // WithUserAgent sets the User-Agent header.
