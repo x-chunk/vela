@@ -175,3 +175,16 @@ func TestConcurrentBackupsExclude(t *testing.T) {
 		t.Fatal("second backup ran concurrently")
 	}
 }
+
+// Metadata backups remain possible while the configured bucket is unreachable.
+func TestR2BackupIsMetadataOnly(t *testing.T) {
+	e := newBackupEnv(t)
+	e.st.Kind = "r2"
+	result, err := backup(context.Background(), e.svc, e.st, t.TempDir(), false)
+	if err != nil || result.blobs != 0 {
+		t.Fatalf("R2 backup: %+v %v", result, err)
+	}
+	if _, err := backup(context.Background(), e.svc, e.st, t.TempDir(), true); err == nil {
+		t.Fatal("R2 metadata backup silently accepted --verify")
+	}
+}

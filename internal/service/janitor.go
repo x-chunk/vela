@@ -84,6 +84,16 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 		{"orphan_blobs", s.janitorOrphans},
 		{"blob_gc", func(ctx context.Context, _ time.Time) (int, error) { return s.CollectBlobs(ctx) }},
 	}
+	if cleaner, ok := s.blobs.(interface {
+		CleanMultipart(context.Context, time.Time) (int, error)
+	}); ok {
+		tasks = append(tasks, struct {
+			name string
+			run  func(context.Context, time.Time) (int, error)
+		}{"multipart_uploads", func(ctx context.Context, now time.Time) (int, error) {
+			return cleaner.CleanMultipart(ctx, now.Add(-24*time.Hour))
+		}})
+	}
 	var report JanitorReport
 	for _, t := range tasks {
 		if ctx.Err() != nil {

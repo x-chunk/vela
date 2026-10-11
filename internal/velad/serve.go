@@ -59,22 +59,23 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 	if err != nil {
 		return fmt.Errorf("load theme: %w", err)
 	}
-	st, err := wire.OpenStorage(ctx, cfg.DataDir, log)
+	st, err := wire.OpenConfiguredStorage(ctx, cfg, log)
 	if err != nil {
 		return fmt.Errorf("open data directory %s: %w", cfg.DataDir, err)
 	}
 	defer func() { _ = st.Close() }()
 
 	svc, err := wire.NewService(st, clock.System{}, log, service.Options{
-		PublicURL:         cfg.PublicURL,
-		ServerVersion:     ver.Version,
-		MaxUpload:         cfg.MaxUpload,
-		MaxCreate:         cfg.MaxCreate,
-		LinkDefaultTTL:    cfg.LinkDefaultTTL,
-		LinkMaxTTL:        cfg.LinkMaxTTL,
-		LinkRetention:     cfg.LinkRetention,
-		TrashRetention:    cfg.TrashRetention,
-		DefaultVisibility: cfg.DefaultVisibility,
+		PublicURL:            cfg.PublicURL,
+		ServerVersion:        ver.Version,
+		MaxUpload:            cfg.MaxUpload,
+		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
+		MaxCreate:            cfg.MaxCreate,
+		LinkDefaultTTL:       cfg.LinkDefaultTTL,
+		LinkMaxTTL:           cfg.LinkMaxTTL,
+		LinkRetention:        cfg.LinkRetention,
+		TrashRetention:       cfg.TrashRetention,
+		DefaultVisibility:    cfg.DefaultVisibility,
 	})
 	if err != nil {
 		return err
@@ -101,6 +102,9 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 		env.OnListen(ln.Addr())
 	}
 	delivery := "direct"
+	if cfg.Storage == "r2" {
+		delivery = "r2 " + cfg.R2.Delivery
+	}
 	if cfg.AccelEnabled() {
 		delivery = "accel " + cfg.AccelPrefix
 	}

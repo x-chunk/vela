@@ -22,14 +22,15 @@ func adminService(cmd *cobra.Command, env Env) (*service.Service, *wire.Storage,
 		return nil, nil, err
 	}
 	svc, err := wire.NewService(st, clock.System{}, log, service.Options{
-		PublicURL:         cfg.PublicURL,
-		MaxUpload:         cfg.MaxUpload,
-		MaxCreate:         cfg.MaxCreate,
-		LinkDefaultTTL:    cfg.LinkDefaultTTL,
-		LinkMaxTTL:        cfg.LinkMaxTTL,
-		LinkRetention:     cfg.LinkRetention,
-		TrashRetention:    cfg.TrashRetention,
-		DefaultVisibility: cfg.DefaultVisibility,
+		PublicURL:            cfg.PublicURL,
+		MaxUpload:            cfg.MaxUpload,
+		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
+		MaxCreate:            cfg.MaxCreate,
+		LinkDefaultTTL:       cfg.LinkDefaultTTL,
+		LinkMaxTTL:           cfg.LinkMaxTTL,
+		LinkRetention:        cfg.LinkRetention,
+		TrashRetention:       cfg.TrashRetention,
+		DefaultVisibility:    cfg.DefaultVisibility,
 	})
 	if err != nil {
 		_ = st.Close()

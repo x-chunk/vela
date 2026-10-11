@@ -101,7 +101,16 @@ func openStorage(cmd *cobra.Command, env Env) (*config.Config, *wire.Storage, *s
 		return nil, nil, nil, err
 	}
 	log := adminLogger(cfg, env.Stderr)
-	st, err := wire.OpenStorage(cmd.Context(), cfg.DataDir, log)
+	var st *wire.Storage
+	if cmd.Parent() != nil && cmd.Parent().Name() == "janitor" {
+		st, err = wire.OpenConfiguredStorage(cmd.Context(), cfg, log)
+	} else {
+		// Key management and metadata backups must work during an R2 outage.
+		st, err = wire.OpenStorage(cmd.Context(), cfg.DataDir, log)
+		if err == nil {
+			st.Kind = cfg.Storage
+		}
+	}
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("open data directory %s: %w", cfg.DataDir, err)
 	}

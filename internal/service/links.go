@@ -227,7 +227,9 @@ func (s *Service) ResolveLink(ctx context.Context, linkID, expParam, sig string)
 	if o.ExpiredAt(now) {
 		return Content{}, notFoundf("link not found")
 	}
-	return s.content(o), nil
+	c := s.content(o)
+	c.DeliveryUntil = &r.ExpiresAt
+	return c, nil
 }
 
 // activeSigningKey returns the current signing key, creating one if none is

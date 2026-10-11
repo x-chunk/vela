@@ -22,17 +22,18 @@ type rule struct {
 }
 
 var rules = []rule{
+	{"internal/r2", []string{"internal/service", "internal/store", "internal/server", "internal/wire", "internal/cli"}, "R2 is below the service"},
 	{"internal/content", []string{"internal/"}, "the blob contract is backend independent"},
 	{"internal/blobtest", []string{"internal/service", "internal/store", "internal/server"}, "contract tests know only blob interfaces"},
 	{"api", []string{"internal/", "client"}, "the public contract must stand alone"},
 	{"client", []string{"internal/"}, "the public client is importable by other modules"},
 	{"internal/domain", []string{"internal/"}, "entities depend on nothing but the contract"},
-	{"internal/service", []string{"internal/store", "internal/blob", "internal/server", "internal/wire", "internal/cli",
+	{"internal/service", []string{"internal/store", "internal/blob", "internal/r2", "internal/server", "internal/wire", "internal/cli",
 		"std:net/http", "std:database/sql"}, "services know neither HTTP nor SQL nor the filesystem layout"},
 	{"internal/store", []string{"internal/service", "internal/server", "internal/blob", "internal/cli"}, "storage is below the service"},
 	{"internal/blob", []string{"internal/service", "internal/server", "internal/store", "internal/cli"}, "storage is below the service"},
 	{"internal/sign", []string{"internal/"}, "pure crypto"},
-	{"internal/server", []string{"internal/store", "internal/blob", "internal/wire", "internal/cli", "std:database/sql"},
+	{"internal/server", []string{"internal/store", "internal/blob", "internal/r2", "internal/wire", "internal/cli", "std:database/sql"},
 		"handlers go through the service"},
 	{"internal/index", []string{"internal/service", "internal/store", "internal/server"}, "rendering only"},
 	{"internal/cli", []string{"internal/service", "internal/store", "internal/blob", "internal/server", "internal/wire"},

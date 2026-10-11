@@ -18,6 +18,7 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/clock"
+	serverconfig "go.xchunk.org/vela/internal/config"
 	"go.xchunk.org/vela/internal/index"
 	"go.xchunk.org/vela/internal/server"
 	"go.xchunk.org/vela/internal/service"
@@ -39,6 +40,7 @@ type Server struct {
 
 type config struct {
 	accelPrefix string
+	storage     *serverconfig.Config
 	svcOpts     func(*service.Options)
 	srvOpts     func(*server.Options)
 	start       time.Time
@@ -64,6 +66,9 @@ func WithStartTime(t time.Time) Option { return func(c *config) { c.start = t } 
 // WithLogOutput sends server logs to w (default: discarded).
 func WithLogOutput(w io.Writer) Option { return func(c *config) { c.logOutput = w } }
 
+// WithStorage selects a configured blob backend with a temporary SQLite database.
+func WithStorage(cfg *serverconfig.Config) Option { return func(c *config) { c.storage = cfg } }
+
 // NewServer starts a server and registers its shutdown with t.Cleanup. An
 // admin key without prefix is created and stored in AdminKey.
 func NewServer(t testing.TB, opts ...Option) *Server {
@@ -75,7 +80,15 @@ func NewServer(t testing.TB, opts ...Option) *Server {
 	ctx := context.Background()
 	dir := t.TempDir()
 	log := slog.New(slog.NewTextHandler(cfg.logOutput, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	st, err := wire.OpenStorage(ctx, dir, log)
+	var st *wire.Storage
+	var err error
+	if cfg.storage != nil {
+		storageCfg := *cfg.storage
+		storageCfg.DataDir = dir
+		st, err = wire.OpenConfiguredStorage(ctx, &storageCfg, log)
+	} else {
+		st, err = wire.OpenStorage(ctx, dir, log)
+	}
 	if err != nil {
 		t.Fatalf("testutil: open storage: %v", err)
 	}

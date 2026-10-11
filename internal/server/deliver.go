@@ -64,7 +64,7 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // deliver serves an object's bytes. The access decision has already been
 // made; this function only chooses how the bytes travel. With an accel
 // prefix the response is empty and nginx streams the blob itself (sendfile,
-// Range, HEAD); otherwise http.ServeContent does the same from Go.
+// Range, HEAD); otherwise Go streams the selected backend range.
 //
 // Validators: the ETag is the content's SHA-256, in both modes. nginx's own
 // ETag (mtime and size) would collide for same-size content written within
@@ -142,6 +142,22 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 	h.Set("Content-Length", strconv.FormatInt(length, 10))
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
+		return
+	}
+	deliveryURL, err := s.svc.ContentURL(r.Context(), c, o.ContentType, h.Get("Content-Disposition"), pol.cacheControl)
+	if err != nil {
+		s.log.Error("content delivery grant failed", "object_id", o.ID, "error", err)
+		h.Del("Content-Length")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if deliveryURL != "" {
+		h.Del("Content-Length")
+		h.Del("Content-Range")
+		h.Set("Cache-Control", cachePrivate)
+		h.Set("Referrer-Policy", referrerNone)
+		h.Set("Location", deliveryURL)
+		w.WriteHeader(http.StatusFound)
 		return
 	}
 	f, err := s.svc.OpenRange(r.Context(), c, off, length)
@@ -240,20 +256,20 @@ func parseRange(value string, size int64) (int64, int64, error) {
 		return 0, 0, bad
 	}
 	if a == "" {
-		n, err := strconv.ParseInt(b, 10, 64)
+		n, err := parseByteNumber(b)
 		if err != nil || n <= 0 {
 			return 0, 0, bad
 		}
 		n = min(n, size)
 		return size - n, n, nil
 	}
-	start, err := strconv.ParseInt(a, 10, 64)
+	start, err := parseByteNumber(a)
 	if err != nil || start < 0 || start >= size {
 		return 0, 0, bad
 	}
 	end := size - 1
 	if b != "" {
-		end, err = strconv.ParseInt(b, 10, 64)
+		end, err = parseByteNumber(b)
 		if err != nil || end < start {
 			return 0, 0, bad
 		}
@@ -271,4 +287,13 @@ func strongMatch(values []string, etag string) bool {
 		}
 	}
 	return false
+}
+
+func parseByteNumber(s string) (int64, error) {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, errors.New("invalid byte offset")
+		}
+	}
+	return strconv.ParseInt(s, 10, 64)
 }

@@ -121,6 +121,13 @@ func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest st
 		return res, err
 	}
 	res.objects = objects
+	if st.Kind == "r2" {
+		if verify {
+			return res, errors.New("--verify is not supported for metadata-only R2 backups; verify the bucket backup separately")
+		}
+		return res, nil
+	}
+
 	if backupAfterSnapshot != nil {
 		backupAfterSnapshot()
 	}

@@ -34,24 +34,27 @@ const (
 
 // Config is the validated server configuration.
 type Config struct {
-	Listen            string
-	DataDir           string
-	PublicURL         string
-	AccelPrefix       string
-	TrustedProxies    []netip.Prefix
-	MaxUpload         int64
-	MaxCreate         int64
-	LinkDefaultTTL    time.Duration
-	LinkMaxTTL        time.Duration
-	LinkRetention     time.Duration
-	TrashRetention    time.Duration
-	JanitorInterval   time.Duration
-	SiteTitle         string
-	ThemeDir          string
-	LogLevel          slog.Level
-	LogFormat         string
-	DefaultVisibility api.Visibility
-	Robots            string
+	Storage              string
+	R2                   R2Config
+	MaxConcurrentUploads int
+	Listen               string
+	DataDir              string
+	PublicURL            string
+	AccelPrefix          string
+	TrustedProxies       []netip.Prefix
+	MaxUpload            int64
+	MaxCreate            int64
+	LinkDefaultTTL       time.Duration
+	LinkMaxTTL           time.Duration
+	LinkRetention        time.Duration
+	TrashRetention       time.Duration
+	JanitorInterval      time.Duration
+	SiteTitle            string
+	ThemeDir             string
+	LogLevel             slog.Level
+	LogFormat            string
+	DefaultVisibility    api.Visibility
+	Robots               string
 }
 
 type setting struct {
@@ -149,6 +152,9 @@ func Load(fs *pflag.FlagSet, lookupEnv func(string) (string, bool)) (*Config, er
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
+	if err := c.loadStorage(lookupEnv); err != nil {
+		return nil, err
+	}
 	if err := c.validate(); err != nil {
 		return nil, err
 	}
@@ -177,6 +183,9 @@ func (c *Config) validate() error {
 
 // RequireServe checks the settings that only "velad serve" needs.
 func (c *Config) RequireServe() error {
+	if c.Storage == "r2" && c.AccelPrefix != "" {
+		return errors.New("VELA_ACCEL_PREFIX must be empty when VELA_STORAGE=r2")
+	}
 	if c.PublicURL == "" {
 		return errors.New("VELA_PUBLIC_URL is required (for example https://store.xchunk.org)")
 	}

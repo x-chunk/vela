@@ -173,6 +173,8 @@ type Content struct {
 	Object domain.Object
 	// BlobPath is the blob location relative to the blobs root.
 	BlobPath string
+	// DeliveryUntil caps external grants to the lifetime of a signed link.
+	DeliveryUntil *time.Time
 }
 
 func (s *Service) content(o domain.Object) Content {
@@ -193,6 +195,23 @@ func (s *Service) OpenRange(ctx context.Context, c Content, off, length int64) (
 	return f, nil
 }
 
+// ContentURL requests an optional backend delivery grant after authorization.
+func (s *Service) ContentURL(ctx context.Context, c Content, typ, disposition, cache string) (string, error) {
+	backend, ok := s.blobs.(interface {
+		ContentURL(context.Context, string, string, string, string, time.Duration) (string, error)
+	})
+	if !ok {
+		return "", nil
+	}
+	ttl := time.Hour
+	for _, until := range []*time.Time{c.Object.ExpiresAt, c.DeliveryUntil} {
+		if until != nil {
+			ttl = min(ttl, until.Sub(s.clock.Now()))
+		}
+	}
+	return backend.ContentURL(ctx, c.Object.BlobID, typ, disposition, cache, ttl)
+}
+
 // blobInfo describes a committed blob.
 type blobInfo struct {
 	id     string
@@ -202,7 +221,7 @@ type blobInfo struct {
 }
 
 // writeBlob streams r into a new blob, enforcing limit and, when wantSHA256 is
-// set, verifying the checksum before the blob becomes visible. The caller
+// set, verifying the checksum before the database may reference it. The caller
 // must delete the blob if the database transaction that references it fails.
 func (s *Service) writeBlob(ctx context.Context, r io.Reader, limit int64, wantSHA256 string) (blobInfo, error) {
 	select {

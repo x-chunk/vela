@@ -16,6 +16,9 @@ client/             public Go client for /api/v1 (retries, typed errors); import
 cmd/vela            CLI entrypoint (thin, calls internal/cli)
 cmd/velad           server entrypoint (thin, calls internal/velad)
 internal/archtest   test that enforces the import rules below
+internal/content    backend-independent streaming blob contract
+internal/blobtest   shared blob contract tests
+internal/r2         private S3-compatible R2 backend
 internal/blob       filesystem blob store: tmp/ -> fsync -> rename into blobs/<shard>/<id>
 internal/cli        vela commands (cobra); talks to the server only through client/
 internal/cli/config CLI profiles (TOML), 0600 enforcement, atomic writes
@@ -89,6 +92,8 @@ Before declaring work done: `make test` and `make lint` are green, and `make tes
   - `golang.org/x/term`: no-echo key input and TTY detection.
   - `golang.org/x/sys`: Windows DACLs for the private CLI config (it already came in through `x/term`).
   - `github.com/pelletier/go-toml/v2`: the CLI config.
+
+  - `github.com/aws/aws-sdk-go-v2` (`service/s3`, `feature/s3/manager`, `credentials`) and `github.com/aws/smithy-go`: R2/S3 streaming multipart, static credentials, presigning, and typed/redacted backend errors. Server-only; architecture tests exclude the SDK from the CLI.
 
   Justify any new dependency here.
 - **Commits** are atomic: one logical change per commit, each building with green tests. Mainline branch is `master`.

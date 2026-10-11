@@ -10,10 +10,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"go.xchunk.org/vela/internal/blob"
 	"go.xchunk.org/vela/internal/clock"
+	"go.xchunk.org/vela/internal/config"
 	"go.xchunk.org/vela/internal/ids"
+	"go.xchunk.org/vela/internal/r2"
 	"go.xchunk.org/vela/internal/service"
 	"go.xchunk.org/vela/internal/store"
 )
@@ -23,6 +26,8 @@ const DatabaseFile = "vela.db"
 
 // Storage bundles the opened persistence layers.
 type Storage struct {
+	// Kind identifies the active backend for metadata-only maintenance.
+	Kind    string
 	DB      *store.Store
 	Blobs   *blob.Store
 	Backend service.Blobs
@@ -54,8 +59,42 @@ func OpenStorage(ctx context.Context, dataDir string, log *slog.Logger) (*Storag
 	if from != to && log != nil {
 		log.Info("database migrated", "from_version", from, "to_version", to)
 	}
-	return &Storage{DB: db, Blobs: bs, Backend: blob.Backend{Store: bs}}, nil
+	return &Storage{Kind: "fs", DB: db, Blobs: bs, Backend: blob.Backend{Store: bs}}, nil
 }
+
+// OpenConfiguredStorage selects the backend at runtime using the same binary.
+func OpenConfiguredStorage(ctx context.Context, cfg *config.Config, log *slog.Logger) (*Storage, error) {
+	st, err := OpenStorage(ctx, cfg.DataDir, log)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Storage == "r2" {
+		backend, err := r2.New(cfg.R2)
+		if err == nil {
+			probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err = backend.Check(probeCtx)
+			cancel()
+		}
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+		st.Kind = "r2"
+		st.Backend = r2WithTmp{Store: backend, local: st.Blobs}
+		if log != nil {
+			log.Info("R2 bucket access verified")
+		}
+	}
+	return st, nil
+}
+
+// r2WithTmp preserves cleanup of abandoned local files after switching backends.
+type r2WithTmp struct {
+	*r2.Store
+	local *blob.Store
+}
+
+func (s r2WithTmp) CleanTmp(cutoff time.Time) (int, error) { return s.local.CleanTmp(cutoff) }
 
 // NewService builds a service over opened storage.
 func NewService(st *Storage, clk clock.Clock, log *slog.Logger, opts service.Options) (*service.Service, error) {

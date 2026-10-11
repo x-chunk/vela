@@ -2,7 +2,7 @@
 //
 // Blobs are named by random IDs that have nothing to do with logical paths,
 // so renames and moves are pure database updates. Every blob is written to
-// tmp/ first and renamed into blobs/ only when complete and verified; a crash
+// tmp/ first and published in blobs/ only when complete and verified; a crash
 // can leave garbage in tmp/ or an unreferenced blob, both of which the janitor
 // removes, but never a truncated file under a referenced name.
 //
@@ -47,8 +47,8 @@ type Store struct {
 }
 
 // Open prepares blobs/ and tmp/ under dataDir and verifies that both are on the
-// same filesystem, because committing a blob relies on an atomic rename(2),
-// which fails with EXDEV across filesystems.
+// same filesystem, because exclusive blob publication uses a hard link.
+// The rename probe rejects cross-device configurations before any upload.
 func Open(dataDir string) (*Store, error) {
 	s := &Store{
 		blobsDir: filepath.Join(dataDir, "blobs"),
@@ -169,9 +169,10 @@ func (p *Pending) Write(b []byte) (int, error) { return p.f.Write(b) }
 // Commit makes the blob durable and visible under id. The order matters for
 // crash safety: chmod it readable for nginx first and fsync afterwards, so
 // that the final mode is on disk with the data; create missing shard
-// directories, each followed by an fsync of its parent; rename into the
-// shard; fsync the shard directory so that the rename itself survives a
-// power loss. Only then may the database reference the blob.
+// directories, each followed by an fsync of its parent; publish an exclusive
+// link in the shard; fsync the shard directory so that publication survives a
+// power loss; unlink the temporary name. Only then may the database reference
+// the blob.
 func (p *Pending) Commit(id string) (err error) {
 	if p.done {
 		return errors.New("blob already committed or aborted")

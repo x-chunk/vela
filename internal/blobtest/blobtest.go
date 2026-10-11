@@ -102,6 +102,45 @@ func Run(t *testing.T, newStore func(*testing.T) content.Store) {
 			}
 		})
 	}
+	t.Run("immutable", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		id := ids.NewULID(nil).New()
+		original := strings.Repeat("a", 9<<20)
+		_, err := s.Put(ctx, id, strings.NewReader(original), content.PutOptions{MaxSize: 10 << 20, SizeHint: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.Put(ctx, id, io.MultiReader(strings.NewReader("partial"), failedReader{}), content.PutOptions{MaxSize: 100, SizeHint: -1})
+		if err == nil {
+			t.Fatal("source failure accepted")
+		}
+		reader, err := s.Open(ctx, id, 0, -1)
+		if err != nil {
+			t.Fatal("failed duplicate destroyed old blob", err)
+		}
+		old, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil || string(old) != original {
+			t.Fatal("old bytes changed", err)
+		}
+
+		for _, replacement := range []string{"small", strings.Repeat("b", 9<<20)} {
+			_, err := s.Put(ctx, id, strings.NewReader(replacement), content.PutOptions{MaxSize: 10 << 20, SizeHint: -1})
+			if err == nil {
+				t.Fatal("immutable ID overwritten")
+			}
+			reader, err := s.Open(ctx, id, 0, -1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(reader)
+			_ = reader.Close()
+			if err != nil || string(data) != original {
+				t.Fatal("failed write damaged existing blob", err)
+			}
+		}
+	})
 	t.Run("empty", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
