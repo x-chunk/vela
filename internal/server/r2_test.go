@@ -98,3 +98,23 @@ func TestChecksumMismatchDetails(t *testing.T) {
 		})
 	}
 }
+
+func TestEmptyContentTypeReset(t *testing.T) {
+	for _, backend := range []string{"fs", "r2"} {
+		t.Run(backend, func(t *testing.T) {
+			var opts []testutil.Option
+			if backend == "r2" {
+				opts = append(opts, testutil.WithStorage(testutil.S3Config(t)))
+			}
+			h := newHarness(t, opts...)
+			h.upload("empty.txt", "", "Content-Type", "application/octet-stream")
+			r := h.admin("PATCH", api.ObjectRoute("empty.txt"), `{"content_type":null}`)
+			expectStatus(t, r, 200)
+			var object api.Object
+			r.json(t, &object)
+			if object.ContentType != "text/plain; charset=utf-8" || object.Size != 0 {
+				t.Fatalf("empty metadata reset: %+v", object)
+			}
+		})
+	}
+}

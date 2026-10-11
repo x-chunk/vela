@@ -544,7 +544,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		case m.contentType != "":
 			o.ContentType = m.contentType
 		case patch.ContentType.Null:
-			sniff, err := s.sniffBlob(ctx, o.BlobID)
+			sniff, err := s.sniffBlob(ctx, o.BlobID, o.Size)
 			if err != nil {
 				return err
 			}
@@ -561,8 +561,13 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 	return s.objectDTO(result, now), nil
 }
 
-func (s *Service) sniffBlob(ctx context.Context, id string) ([]byte, error) {
-	f, err := s.blobs.Open(ctx, id, 0, 512)
+func (s *Service) sniffBlob(ctx context.Context, id string, size int64) ([]byte, error) {
+	// Empty contents need no read. S3 rejects any nonempty range on an
+	// empty object, whereas filesystem reads would simply return EOF.
+	if size == 0 {
+		return nil, nil
+	}
+	f, err := s.blobs.Open(ctx, id, 0, min(size, 512))
 	if err != nil {
 		return nil, err
 	}
