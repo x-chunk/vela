@@ -45,8 +45,9 @@ R2/S3 stores only metadata on local disk. Use a private bucket and a
 bucket-scoped Object Read & Write credential. For another S3 service, supply
 `VELA_R2_ENDPOINT` and its `VELA_R2_REGION`; the account ID may stay empty.
 `VELA_R2_PATH_STYLE` controls bucket addressing. Test the service's multipart
-and presigned-URL behavior before production use. See the main README for
-buffer sizing, lifecycle rules, migration, and paired database/bucket backups.
+and presigned-URL behavior before production use. See the
+[storage reference](../docs/storage.md) for buffer sizing, lifecycle rules,
+migration, and paired database/bucket backups.
 
 ## Adapt nginx
 

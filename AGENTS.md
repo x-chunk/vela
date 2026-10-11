@@ -155,4 +155,9 @@ Not breaking: new endpoints, new optional request fields or headers, new respons
    ```
 
 2. **Stage 3 (fixes):** a coding agent fixes the findings in atomic commits that reference the IDs (`fix(R-001): ...`). It sets each `Status:` to `fixed (<commit>)` or `rejected: <rationale>`. Tests and lint stay green.
-3. **Stage 4:** `README.md` with deployment instructions and the user manual (in English).
+3. **Stage 4:** a compact English `README.md` with basics, Getting Started,
+   deployment entry points, and a link to `https://docs.xchunk.org/vela`.
+   Repository documentation is technical: implementation decisions, contracts,
+   limits, and verification. Follow [docs/README.md](docs/README.md); keep
+   integration assumptions with `examples/`. The full user manual and website
+   are maintained separately and are outside this repository's Stage 4 scope.

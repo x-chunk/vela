@@ -30,7 +30,7 @@ Vela consolidates ad-hoc static file hosting behind one API. One service owns fi
 4. Ежедневная серверная чистка: просроченные записи ссылок, просроченные файлы, старая корзина, сиротские блобы и временные файлы.
 5. Кастомный HTML-индекс, рендерится Go.
 6. Ноль ручной возни с правами на сервере после первичной настройки.
-7. Хорошая архитектура, комментарии production-уровня, README с инструкцией по деплою и User Manual.
+7. Хорошая архитектура, комментарии production-уровня, компактный README с Getting Started и технические справки (§18, этап 4).
 
 ### Не-цели (v1)
 
@@ -188,7 +188,7 @@ vela/
 ├── .dockerignore
 ├── .golangci.yml
 ├── AGENTS.md                   # instructions for review agents (Astra) and coding agents
-├── README.md                   # deployment + User Manual (stage 4)
+├── README.md                   # overview + Getting Started (stage 4)
 ├── docs/
 │   └── SPEC.md                 # this document
 ├── .github/workflows/
@@ -589,7 +589,7 @@ Query: `recursive` (для префикса, путь с завершающим 
 
 - Рендер через `html/template` (автоэкранирование), тема встроена через `embed`.
 - **Кастомизация**: если задан `VELA_THEME_DIR`, файлы оттуда (`layout.html`, `index.html`, `error.html`, `assets/...`) переопределяют встроенные по имени. Шаблоны парсятся при старте; ошибка в кастомной теме → сервер не стартует с понятной ошибкой (fail fast).
-- Данные для шаблона (документировать в README как «контракт темы»):
+- Данные для шаблона (документировать в `docs/theme.md` как «контракт темы»):
   - `Site` (title из `VELA_SITE_TITLE`, public URL), `Path`, `Breadcrumbs` (имя + URL), `Dirs` (имя, URL, количество public-объектов внутри, дата последнего изменения), `Files` (имя, URL, title, description, tags, size, human size, content type, updated_at), `Parent` URL, `GeneratedAt`, `Version`.
 - Сортировка: директории сначала, затем файлы, по имени (natural sort SHOULD).
 - Отображаются только `public`. Просроченные (`expires_at < now`) не отображаются.
@@ -606,7 +606,7 @@ Query: `recursive` (для префикса, путь с завершающим 
   - `X-Accel-Redirect: /_blobs/<shard>/<blobID>`
   - `Content-Type`, `Content-Disposition` (передаются nginx-ом из ответа upstream)
   - служебные `X-Vela-Cache-Control`, `X-Vela-Robots`, `X-Vela-Referrer-Policy`, которые nginx выставляет через `$upstream_http_x_vela_*` в internal location (§14). Причина: при internal redirect nginx не пробрасывает произвольные заголовки upstream, а переменные `$upstream_http_*` остаются доступными.
-  - **MUST**: интеграционный тест (или задокументированная ручная проверка в README) с реальным nginx, что `Content-Type`, `Content-Disposition`, `Cache-Control`, `X-Robots-Tag` действительно доходят до клиента. Если какой-то заголовок не доходит, переносить его через `X-Vela-*` + `add_header`.
+  - **MUST**: интеграционный тест (или задокументированная ручная проверка в `CONTRIBUTING.md`) с реальным nginx, что `Content-Type`, `Content-Disposition`, `Cache-Control`, `X-Robots-Tag` действительно доходят до клиента. Если какой-то заголовок не доходит, переносить его через `X-Vela-*` + `add_header`.
 - **Direct-режим** (`VELA_ACCEL_PREFIX=""`): `http.ServeContent` с `modtime = updated_at`, `ETag: "sha256:<hex>"`, те же заголовки, что выше, но выставленные напрямую.
 - Политики:
   - public: `Cache-Control: public, max-age=300` (контент по тому же пути может быть перезаписан, поэтому не immutable);
@@ -910,11 +910,11 @@ CMD ["serve"]
 <meta name="go-source" content="go.xchunk.org/vela https://github.com/x-chunk/vela https://github.com/x-chunk/vela/tree/master{/dir} https://github.com/x-chunk/vela/blob/master{/dir}/{file}#L{line}">
 ```
 
-для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на сервере vanity-модуля, вне этого репо, но README MUST это описать. Репозиторий публичный (§19.1), основная ветка — `master`.
+для запросов `?go-get=1` к `go.xchunk.org/vela` **и** ко всем подпутям (`/vela/cmd/vela`). Это настраивается в существующей vanity-инфраструктуре на сервере vanity-модуля, вне этого репо; требования MUST описать в `CONTRIBUTING.md`. Репозиторий публичный (§19.1), основная ветка — `master`.
 
 ---
 
-## 16. Деплой (будет описан в README, здесь — эталонный сценарий)
+## 16. Деплой (точка входа в README, примеры в examples/)
 
 1. На сервере: `sudo mkdir -p /srv/vela && sudo chown 65532:65532 /srv/vela && sudo chmod 755 /srv/vela`.
 2. `/etc/vela/vela.env` (права 600) по образцу `examples/env/fs.env.example`, минимум `VELA_PUBLIC_URL=https://store.example.com`.
@@ -955,11 +955,11 @@ CMD ["serve"]
 - HTTP: `httptest` для всех эндпоинтов, включая коды ошибок и scope/префикс ключей, публичные маршруты (public/unlisted/private, 404 vs 301 для директорий, индекс без non-public).
 - `client/` тестируется против in-process `velad` (`internal/testutil`).
 - CLI: тесты ключевых команд против in-process сервера (резолв путей `put`, `--json` вывод, коды выхода, проверка прав конфига).
-- MAY: e2e-тест с nginx в CI (контейнер nginx + velad), проверяющий accel-заголовки (§11.3). Если не делается — ручной чек-лист в README.
+- MAY: e2e-тест с nginx в CI (контейнер nginx + velad), проверяющий accel-заголовки (§11.3). Если не делается — ручной чек-лист в `CONTRIBUTING.md`.
 
 ### 17.3 Документация
 
-- `README.md` (этап 4): §18, этап 4.
+- `README.md` и техническая документация (этап 4): §18, этап 4.
 - `AGENTS.md` (этап 1): §18, этап 1.
 - `docs/SPEC.md`: этот документ, обновляемый, если в ходе реализации что-то осознанно изменилось (с пометкой, что и почему).
 
@@ -988,17 +988,17 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 Исправления по замечаниям этапа 2. Осознанно отклонённые замечания фиксируются с обоснованием (в `AGENTS.md` или в описании изменений). Тесты и линтер снова зелёные.
 
-### Этап 4 — README.md
+### Этап 4 — документация
 
-Полная human-readable документация, она же User Manual:
-1. Что такое Vela и зачем (коротко), модель видимости (с явным предупреждением, что unlisted ≠ защита).
-2. **Деплой**: требования, подготовка `/srv/vela` и прав, env-файл (таблица всех переменных), `docker run`, DNS, nginx-конфиг и certbot, создание первого ключа, проверка, обновление, бэкап и восстановление, ротация ключей подписи, ручной запуск janitor, чек-лист проверки заголовков через nginx.
-3. **Установка CLI**: `go install`, `make install`, vanity-мета, `vela login`, профили, права конфига, автодополнение.
-4. **User Manual**: все команды с примерами типичных сценариев (выложить файл публично, выложить временно на неделю, поделиться приватным файлом на 2 часа, переименовать папку, спрятать файл из индекса, восстановить из корзины, использовать в скриптах через `--json`, отдельный ключ для ci с префиксом).
-5. **UX-нюансы**: перезапись только с `--force`; переименование меняет публичные URL, но не ломает подписанные ссылки; удаление идёт в корзину на N дней; изменение видимости мгновенное; ссылки нельзя сделать бессрочными; истёкшая ссылка показывает 410; кэш public-файлов до 5 минут после перезаписи; ограничения путей и зарезервированные имена.
-6. **Кастомизация индекса**: контракт данных темы, как подключить `VELA_THEME_DIR`.
-7. **API reference**: краткая таблица эндпоинтов со ссылкой на §10 спеки.
-8. Troubleshooting: 401/403, permission denied на `/srv/vela`, nginx не отдаёт файл (accel), несовместимость версий CLI/сервера.
+Уточнённый объём этапа: документация на английском, с разделением ответственности.
+
+1. `README.md`: краткое описание, модель видимости (unlisted не защищает доступ), один рабочий Getting Started, установка CLI и ссылки на примеры деплоя.
+2. Основная пользовательская документация: `https://docs.xchunk.org/vela`. Полный User Manual и создание сайта выполняются отдельно, вне этого этапа.
+3. `docs/README.md`: навигация и правила сопровождения документации внутри репозитория.
+4. Технические справки в `docs/`: архитектура и API-контракты со ссылками на код, конфигурация и её приоритеты, хранение и доставка, гарантии backup/migration, контракт темы.
+5. `CONTRIBUTING.md`: требования к разработке, границы тестовых наборов и сопровождение распространения. Предпосылки nginx/Docker и сценарии интеграции остаются рядом с файлами в `examples/`.
+
+Не дублировать полный User Manual в репозитории и не добавлять инструменты сборки сайта. Менять техническую справку вместе с поведением, а намеренные отклонения от спеки фиксировать в §21.
 
 ### После v1 (вне скоупа, для понимания направления)
 
@@ -1104,3 +1104,4 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 
 | 2026-10-11 | §0, §12–16; SPEC-storage §5–6 | Open source under MIT. Neutral examples in `examples/`; filesystem direct delivery is the default; accel requires explicit opt-in. Trusted proxies default to loopback and index title to Vela; login has no built-in URL. Docker Hub releases support amd64 and arm64. | Deployments must set their own origin, proxy trust, delivery mode, and branding; existing accel deployments must retain an explicit prefix. |
 | 2026-10-11 | SPEC-storage §5–6 | `VELA_R2_REGION` defaults to `auto`; an explicit S3 endpoint does not require a Cloudflare account ID. | Other S3-compatible services can use their own signing region without adding another backend or renaming existing configuration. |
+| 2026-10-11 | §0, §11, §15–18 | Stage 4 keeps README compact: overview, visibility, Getting Started, and deployment entry points. Code-linked technical references live in `docs/`; contributor verification stays in `CONTRIBUTING.md`. The full user manual belongs on `https://docs.xchunk.org/vela`, maintained separately. | Explicit documentation scope: keep implementation contracts near the code without duplicating a website or growing the root README into a manual. |
