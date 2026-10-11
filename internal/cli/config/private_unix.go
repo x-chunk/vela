@@ -17,4 +17,5 @@ func checkPrivate(path string, info fs.FileInfo) error {
 
 func makePrivateFile(f *os.File) error { return f.Chmod(0o600) }
 
-func makePrivateDir(dir string) error { return os.Chmod(dir, 0o700) }
+// Directories need the execute bit to be entered.
+func makePrivateDir(dir string) error { return os.Chmod(dir, 0o700) } // #nosec G302 -- owner-only directory

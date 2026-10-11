@@ -83,7 +83,7 @@ func backup(ctx context.Context, svc *service.Service, st *wire.Storage, dest st
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		return res, fmt.Errorf("create %s: %w", dest, err)
 	}
-	if err := os.Chmod(dest, 0o700); err != nil {
+	if err := os.Chmod(dest, 0o700); err != nil { // #nosec G302 -- owner-only directory
 		return res, fmt.Errorf("make %s private: %w", dest, err)
 	}
 	// From here on dest is ours; a failed backup leaves it empty, so it
