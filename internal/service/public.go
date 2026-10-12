@@ -44,18 +44,27 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 	case !isNotFound(err):
 		return PublicResult{}, err
 	}
-	n, _, err := s.store.DirStats(ctx, path+"/", now)
-	if err != nil {
-		return PublicResult{}, err
+	for {
+		view, err := s.directoryPolicies(ctx)
+		if err != nil {
+			return PublicResult{}, err
+		}
+		exists, err := s.store.HasPublicObjects(ctx, path+"/", now)
+		if err != nil {
+			return PublicResult{}, err
+		}
+		version, err := s.store.DirPoliciesVersion(ctx)
+		if err != nil {
+			return PublicResult{}, err
+		}
+		if version != view.version {
+			continue
+		}
+		if exists && view.Effective(path+"/").Index == api.IndexOn {
+			return PublicResult{RedirectDir: path + "/"}, nil
+		}
+		return PublicResult{}, notFoundf("not found")
 	}
-	view, err := s.directoryPolicies(ctx)
-	if err != nil {
-		return PublicResult{}, err
-	}
-	if n > 0 && view.Effective(path+"/").Index == api.IndexOn {
-		return PublicResult{RedirectDir: path + "/"}, nil
-	}
-	return PublicResult{}, notFoundf("not found")
 }
 
 // IndexDir is a sub-directory row of the HTML index.
@@ -77,19 +86,15 @@ type IndexListing struct {
 }
 
 // Index lists a directory for the public HTML index. A directory without
-// public content is ErrNotFound, except the root, which always renders.
+// public content is ErrNotFound, except the root, which can render empty when enabled.
 func (s *Service) Index(ctx context.Context, rawPrefix string) (IndexListing, error) {
 	prefix, err := api.CleanPrefix(rawPrefix)
 	if err != nil {
 		return IndexListing{}, notFoundf("not found")
 	}
-	tree, view, err := s.publicTree(ctx, prefix)
+	tree, view, err := s.publicTree(ctx, prefix, true)
 	if err != nil {
 		return IndexListing{}, err
-	}
-	// Both disabled and absent directories take the same query and error path.
-	if view.Effective(prefix).Index == api.IndexOff || (prefix != "" && !tree.exists) {
-		return IndexListing{}, notFoundf("not found")
 	}
 	out := IndexListing{Prefix: prefix, Files: tree.files, Policies: view}
 	for _, child := range tree.children {

@@ -216,3 +216,29 @@ func TestDirStatsAndExpired(t *testing.T) {
 		t.Fatalf("BlobReferenced(orphan) = %v, %v", ok, err)
 	}
 }
+
+func TestHasPublicObjects(t *testing.T) {
+	t.Parallel()
+	db := openTest(t)
+	live := newObject("docs/file", api.Public)
+	edge := newObject("edge/file", api.Public)
+	edge.ExpiresAt = &t0
+	expired := newObject("old/file", api.Public)
+	past := t0.Add(-time.Millisecond)
+	expired.ExpiresAt = &past
+	insert(t, db, live, edge, expired, newObject("private/file", api.Private), newObject("unlisted/file", api.Unlisted), newObject("ab/file", api.Public))
+	for _, tc := range []struct {
+		prefix string
+		want   bool
+	}{{"", true}, {"docs/", true}, {"edge/", true}, {"old/", false}, {"private/", false}, {"unlisted/", false}, {"a/", false}, {"missing/", false}} {
+		got, err := db.HasPublicObjects(context.Background(), tc.prefix, t0)
+		if err != nil || got != tc.want {
+			t.Fatalf("%q: exists=%t error=%v", tc.prefix, got, err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := db.HasPublicObjects(ctx, "docs/", t0); err == nil {
+		t.Fatal("cancellation ignored")
+	}
+}

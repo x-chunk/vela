@@ -433,10 +433,9 @@ Resolved compatibility and implementation details:
   replace an existing field's type and break public JSON compatibility.
 - **Cache:** a persistent `counters.dir_policies` generation is incremented by
   SQLite triggers in every policy transaction. All rules load at startup; each
-  operation checks this generation before using an immutable snapshot. The generation is also validated after all object-listing batches, retrying
-  the listing when it changes. Local writes invalidate the cache synchronously
-  after commit. This also detects
-  edits made through another process/pool; pooled `PRAGMA data_version` is not
+  operation checks this generation before using an immutable snapshot. The
+  generation is also validated after all object-listing batches, retrying the listing when it changes. Local writes invalidate the cache synchronously
+  after commit. This also detects edits made through another process/pool; pooled `PRAGMA data_version` is not
   used because its value is connection-local.
 - **Move:** policy-only prefixes can move recursively. Destination conflicts
   cover every rule under the target, excluding rules already moving from the
@@ -455,3 +454,9 @@ Resolved compatibility and implementation details:
 - **Documentation:** implementation contracts and the hidden-entrance scenario
   are documented in `docs/directories.md`. The separately maintained user
   website is outside this repository's documentation scope (AGENTS.md Stage 4).
+
+- **Public rejection cost (R-003):** disabled and absent indexes perform the same
+  bounded existence lookup without fetching object metadata or building a tree.
+  Slashless directory URLs also use this lookup. Enabled indexes read objects
+  through one repository listing, which uses multiple SQL batches; generation
+  validation covers the complete listing and may retry it.

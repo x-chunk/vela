@@ -30,8 +30,10 @@ and descriptions have the same Unicode character limits as object metadata.
 A root DB rule overrides the configuration fallback; startup logs its final
 value and source. Root cannot be hidden.
 
-Disabled indexes and absent directories return the same themed 404, with the
-same queries and headers. A non-root index exists only when its subtree contains
+Disabled indexes and absent directories use the same bounded public-existence
+lookup and return the same themed 404 and headers. Rejection does not fetch
+object metadata or build a subtree; slashless directory URLs use that bounded
+lookup as well. A non-root index exists only when its subtree contains
 a live public object. An enabled root preserves its empty index. Slashless URLs
 redirect only to existing enabled indexes. Files retain their visibility/access
 rules. Authenticated object operations are unaffected by directory policies.
@@ -93,12 +95,13 @@ must satisfy root validation. Responses add `policies_moved` to `moved`.
 All rules load at service startup into an immutable map. A persistent SQLite
 counter, advanced by insert/update/delete triggers in the same transaction,
 invalidates local and cross-process readers. Each operation checks the counter;
-local mutations synchronously invalidate after commit. After the complete batched object read, the service rechecks that generation
-and retries the listing on a change. This prevents a concurrent cross-process
+local mutations synchronously invalidate after commit. After the complete
+batched object read, the service rechecks that generation and retries the listing on a change. This prevents a concurrent cross-process
 move from combining new object paths with old hidden rules; theme fields and
-visible counts/dates use the validated policy snapshot. The public index
-fetches all live public objects under its prefix once, then computes visible
-entries and dates in memory; it does not query recursively per child.
+visible counts/dates use the validated policy snapshot. For an enabled, existing
+public index, one repository listing reads its live public objects in SQL batches, then computes visible entries and dates in
+memory. It does not query recursively per child; a policy-generation change
+restarts the complete listing.
 
 ## Hidden entrance scenario
 

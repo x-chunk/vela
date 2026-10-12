@@ -121,7 +121,7 @@ func (s *Service) ShowDir(ctx context.Context, p Principal, rawPrefix string) (a
 }
 
 func (s *Service) describeDir(ctx context.Context, prefix string) (api.EffectiveDir, error) {
-	tree, view, err := s.publicTree(ctx, prefix)
+	tree, view, err := s.publicTree(ctx, prefix, false)
 	if err != nil {
 		return api.EffectiveDir{}, err
 	}
@@ -391,15 +391,30 @@ type publicNode struct {
 // publicTree validates the persistent policy generation after the entire
 // object listing, including every SQL batch. A move through another process
 // can otherwise pair new paths with old rules and disclose a hidden entrance.
-func (s *Service) publicTree(ctx context.Context, prefix string) (*publicNode, *DirPolicies, error) {
+func (s *Service) publicTree(ctx context.Context, prefix string, forIndex bool) (*publicNode, *DirPolicies, error) {
 	for {
 		view, err := s.directoryPolicies(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		res, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: prefix, Recursive: true, Visibilities: []api.Visibility{api.Public}, LiveAt: s.now()})
-		if err != nil {
-			return nil, nil, err
+		now := s.now()
+		reject := false
+		if forIndex {
+			// Disabled and absent indexes share a bounded existence lookup. Do not
+			// allocate a tree or fetch metadata for a page that will return 404.
+			exists, err := s.store.HasPublicObjects(ctx, prefix, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			reject = view.Effective(prefix).Index == api.IndexOff || (prefix != "" && !exists)
+		}
+		var objects []domain.Object
+		if !reject {
+			res, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: prefix, Recursive: true, Visibilities: []api.Visibility{api.Public}, LiveAt: now})
+			if err != nil {
+				return nil, nil, err
+			}
+			objects = res.Objects
 		}
 		version, err := s.store.DirPoliciesVersion(ctx)
 		if err != nil {
@@ -408,7 +423,10 @@ func (s *Service) publicTree(ctx context.Context, prefix string) (*publicNode, *
 		if version != view.version {
 			continue
 		}
-		return buildPublicTree(prefix, view, res.Objects), view, nil
+		if reject {
+			return nil, view, notFoundf("not found")
+		}
+		return buildPublicTree(prefix, view, objects), view, nil
 	}
 }
 

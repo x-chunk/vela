@@ -20,6 +20,7 @@ type Reader interface {
 	FirstUnder(ctx context.Context, prefix string) (string, error)
 	ObjectsUnder(ctx context.Context, prefix string) ([]domain.Object, error)
 	ListObjects(ctx context.Context, q domain.ListQuery) (domain.ListResult, error)
+	HasPublicObjects(ctx context.Context, prefix string, now time.Time) (bool, error)
 	DirStats(ctx context.Context, prefix string, now time.Time) (int, time.Time, error)
 	ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]domain.Object, error)
 	BlobReferenced(ctx context.Context, blobID string) (bool, error)

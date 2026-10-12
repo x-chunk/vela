@@ -138,8 +138,26 @@ func (q reads) ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]
 		WHERE expires_at IS NOT NULL AND expires_at < ? ORDER BY expires_at LIMIT ?`, ms(now), limit)
 }
 
+// HasPublicObjects checks public index existence without loading metadata or
+// counting the entire subtree. Only a matching live row is needed.
+func (q reads) HasPublicObjects(ctx context.Context, prefix string, now time.Time) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM objects WHERE visibility = 'public'
+  AND (expires_at IS NULL OR expires_at >= ?)`
+	args := []any{ms(now)}
+	if prefix != "" {
+		query += " AND path >= ? AND path < ?"
+		args = append(args, prefix, prefixUpper(prefix))
+	}
+	query += " LIMIT 1)"
+	var exists bool
+	if err := q.db.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check public directory existence: %w", err)
+	}
+	return exists, nil
+}
+
 // DirStats counts public, unexpired objects below prefix and returns the
-// latest update time among them. The HTML index uses it for directory rows.
+// latest update time among them. Policy listings use it to find orphaned rules.
 func (q reads) DirStats(ctx context.Context, prefix string, now time.Time) (int, time.Time, error) {
 	var (
 		n      int
