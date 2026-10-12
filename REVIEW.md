@@ -11,8 +11,8 @@ Reviewed on 2026-10-12:
 - References: `AGENTS.md`, `docs/SPEC.md`, `docs/SPEC-dirs.md` (including the
   accepted decisions in section 16), and the affected technical references.
 
-**Three findings remain open: one high and two medium.** The earlier R-001 is
-fixed and retained below for continuity. No implementation or permanent test
+**All findings are fixed.** R-002, R-003, and R-004 were implemented in separate
+commits; the earlier R-001 remains fixed and is retained below for continuity. No implementation or permanent test
 files were changed during this review; only this report was updated.
 
 Accepted decisions about legacy counts/HTML without policies, additive JSON
@@ -48,7 +48,12 @@ were identified; R-003 also identifies an inaccurate query-cost comment.
   batches of `ListObjects`, and must work across processes, not only behind a
   local mutex. Add a deterministic concurrent-move test for public HTML/JSON
   showing that neither hidden names nor their counts/dates become visible.
-- Status: open
+- Resolution: The service checks the persistent policy generation after the complete
+  object listing, including every SQL batch, and retries on a change. Public
+  HTML/JSON and the effective-directory API use the validated policy snapshot.
+  Deterministic tests move a hidden subtree through independent SQLite pools
+  before the read and between batches, verifying names, counts, and dates.
+- Status: fixed (0da796a)
 
 ## R-003 [severity: medium] Disabled indexes scan the full subtree before returning 404
 
@@ -78,7 +83,12 @@ were identified; R-003 also identifies an inaccurate query-cost comment.
   that counts reads/rows or otherwise proves a disabled index does not scan
   its full subtree; retain the existing identical-body/header assertions.
   Correct the related query-cost claims in comments and documentation.
-- Status: open
+- Resolution: Public index rejection uses a bounded existence query without loading
+  object metadata or building a subtree. Disabled, absent, and disabled-root
+  paths perform the same existence check; slashless directory URLs avoid full
+  subtree statistics too. Read-count tests verify no metadata listings/rows
+  or aggregate statistics, and the store tests cover visibility and expiry.
+- Status: fixed (f843e93)
 
 ## R-004 [severity: medium] Existing CLI commands now fail against older API v1 servers
 
@@ -106,7 +116,12 @@ were identified; R-003 also identifies an inaccurate query-cost comment.
   transport, and disabled-index errors on servers that support policies.
   Add CLI compatibility tests against a server without `/dirs`; new `dir`
   commands can report that the server lacks the feature.
-- Status: open
+- Resolution: Long listings omit annotations only when the directory collection is
+  absent. Directory URL/open requests verify collection support before using
+  legacy /info resolution. Authorization, unavailable/transport, supported
+  individual 404, and disabled-index errors remain errors. Compatibility
+  tests exercise the authenticated unknown-route behavior of older API v1.
+- Status: fixed (1df36e9)
 
 ## R-001 [severity: high] Recursive overwrite can remove the root policy without admin
 
@@ -127,7 +142,7 @@ were identified; R-003 also identifies an inaccurate query-cost comment.
 
 ## Verification
 
-The following checks were run for this review on the current head:
+The following checks were run for the original review on `d20dee4`:
 
 | Check | Result |
 | --- | --- |
@@ -148,3 +163,25 @@ sandbox passed; those initial environment failures are not code findings.
 Temporary overlay tests and their fixtures were kept under `/tmp`, with no
 changes to repository implementation or test files. Passing existing suites
 does not cover or invalidate the three confirmed findings above.
+
+
+## Fix verification
+
+Each fix commit passed `make test` with the race detector and `make lint`.
+Final verification after all three implementation commits also passed:
+
+- `make test-e2e` against real nginx.
+- `make test-s3` against isolated MinIO, including the new concurrency tests.
+- `make validate-examples` for nginx/Caddy configurations.
+- `make build` for both cgo-free binaries.
+- `make check-neutrality` and `git diff --check master`.
+
+The R-002 deterministic HTTP test failed against the original service with
+hidden names/counts/dates in its output, then passed after the fix. The R-003
+read-cost test first observed a full 300-object metadata listing before 404;
+after the fix it observes one existence lookup and no metadata listings or
+statistics. The R-004 legacy-server test first failed with an unknown endpoint,
+then passed with the fallback; supporting-server error cases also pass.
+
+No open findings remain. This closure is saved in Git history before the report
+is removed in a separate commit at the user's request.
