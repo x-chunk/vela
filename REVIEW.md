@@ -1,6 +1,6 @@
 # Directory policy review
 
-Reviewed the working-tree directory-policy feature on `codex/directory-policies`
+Reviewed the directory-policy feature (baseline `ab6735a`) on `codex/directory-policies`
 against `AGENTS.md`, `docs/SPEC.md`, `docs/SPEC-dirs.md` (including the accepted
 decisions in section 16), and `docs/directories.md` on 2026-10-12.
 
@@ -38,7 +38,21 @@ actionable architecture or comment-quality findings were identified.
   paths and rules remain unchanged, including when only descendant source
   policies move. Retain successful behavior for an unrestricted admin and for
   moves that do not mutate a root policy.
-- Status: open
+- Status: fixed (d02e66f)
+
+## Resolution
+
+Commit `d02e66f` requires admin scope whenever overwrite deletes an existing
+root policy, independently of which source policies are moving. The check runs
+inside the write transaction before any objects or rules change. Existing
+prefix checks ensure the admin is unrestricted at root.
+
+The coding agent added service tests for both vulnerable source shapes, intact
+object/rule revisions after rejection, successful admin replacement, and an rw
+move that does not mutate root. An HTTP test verifies 403 and the unchanged
+public root index. These tests failed against the baseline before the fix.
+Astra independently re-ran the original overlay reproducer and the new service
+and HTTP tests after the fix; all passed. No findings remain open.
 
 ## Verification
 
@@ -46,4 +60,22 @@ The independent review ran the focused root-authorization reproducer through a
 temporary Go overlay; it failed the expected authorization assertion as
 described above. No implementation or test files were changed by the review.
 `make check-neutrality` passed.
-The coordinating coding agent runs the full test, lint, nginx, and S3 suites.
+The coordinating coding agent completed:
+
+| Check | Result |
+| --- | --- |
+| `make fmt` | Passed |
+| `make test` (race detector) | Passed after R-001 fix |
+| `make lint` | Passed, 0 issues |
+| `make test-e2e` | Passed against real nginx after fix |
+| `make test-s3` | Passed against isolated MinIO after fix |
+| `make validate-examples` | Passed nginx and Caddy validation |
+| `make check-neutrality` | Passed |
+| `make build` | Both cgo-free binaries built |
+| `git diff --check` | Passed |
+
+Golden fixtures captured before implementation preserve the no-policy HTML
+byte-for-byte. Existing public JSON fields are preserved while allowing the
+new additive theme metadata. The separately maintained documentation website
+was outside the repository scope; technical documentation and accepted
+specification decisions are included in this branch.
