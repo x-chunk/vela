@@ -40,6 +40,7 @@ internal/velad      velad subcommands: serve, key, signing, janitor, backup, hea
 internal/version    build metadata from ldflags with a buildinfo fallback
 internal/wire       assembles the service from store and blob (the only place that knows both)
 examples/nginx      illustrative proxy configurations, exercised by the e2e test
+examples/caddy      Caddy alternative for fs-direct and r2, checked by validate-examples
 examples/           Docker and environment examples for fs-direct, fs-accel, and R2/S3
 test/e2e            delivery through a real nginx in Docker (build tag e2e)
 docs/SPEC.md        the specification

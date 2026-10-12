@@ -1,0 +1,79 @@
+# Example configuration for Vela — not a supported deployment.
+# Scenario: fs-direct, r2
+# Requires: VELA_ACCEL_PREFIX= (Caddy has no equivalent of nginx accel)
+# Replace: store.example.com, upstream address.
+# You are responsible for securing and maintaining your reverse proxy.
+
+# Caddy obtains and renews the TLS certificate itself and redirects HTTP to
+# HTTPS with the query intact, so signed links keep working.
+
+{
+	# Never log query strings: signed links carry their signatures there.
+	# Caddy's handler errors (for example when velad is unreachable) record
+	# the full request, so they go through the same filter as access logs.
+	log default {
+		exclude http.log.error
+	}
+	log vela_errors {
+		include http.log.error
+		format filter {
+			wrap json
+			request>uri regexp \?.*$ ""
+			request>headers delete
+		}
+	}
+}
+
+# CHANGE ME: public hostname.
+store.example.com {
+	log {
+		output file /var/log/caddy/vela.access.log
+		format filter {
+			wrap json
+			request>uri regexp \?.*$ ""
+			# Caddy already redacts Authorization and Cookie; drop all headers
+			# so neither credentials nor referrers with queries reach the log.
+			request>headers delete
+			resp_headers delete
+		}
+	}
+
+	# Replaces the client's value: velad trusts these only from
+	# VELA_TRUSTED_PROXIES, so they must always be set by the proxy.
+	# X-Forwarded-For and X-Forwarded-Proto are set by reverse_proxy itself.
+	request_header X-Real-IP {remote_host}
+	request_header X-Request-ID {http.request.uuid}
+
+	# velad sends X-Content-Type-Options itself; ">" replaces it after the
+	# proxy, so every response, Caddy's own errors included, has it once.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		>X-Content-Type-Options nosniff
+	}
+
+	# Caddy's own error responses (413, 502, ...) start from fresh headers.
+	handle_errors {
+		header {
+			Strict-Transport-Security "max-age=31536000"
+			X-Content-Type-Options nosniff
+		}
+	}
+
+	# API: request bodies stream to velad. Keep in sync with VELA_MAX_UPLOAD.
+	handle /api/* {
+		request_body {
+			max_size 2GiB
+		}
+		reverse_proxy 127.0.0.1:8080
+	}
+
+	# Signed links, the index, direct URLs and theme assets are decided by
+	# velad; the public side never accepts request bodies.
+	handle {
+		request_body {
+			max_size 1KiB
+		}
+		# CHANGE ME: upstream address (VELA_HOST_PORT) if not 8080.
+		reverse_proxy 127.0.0.1:8080
+	}
+}

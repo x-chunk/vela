@@ -72,7 +72,7 @@ test-s3: ## Run R2/S3 contracts, HTTP delivery and migration against MinIO (need
 check-neutrality: ## Check source and examples for private deployment values (needs Python 3)
 	./scripts/check-neutrality.sh
 
-validate-examples: ## Validate all nginx examples (needs Docker and OpenSSL)
+validate-examples: ## Validate all nginx and Caddy examples (needs Docker and OpenSSL)
 	./scripts/validate-examples.sh
 
 lint: ## Run golangci-lint

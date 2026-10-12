@@ -72,6 +72,16 @@ Run `nginx -t` before reloading. `make validate-examples` checks all three
 unmodified examples in `nginx:stable` with temporary self-signed certificates;
 `make test-e2e` verifies real accel delivery, headers, and logs.
 
+## Or use Caddy
+
+`caddy/Caddyfile` covers fs-direct and r2 (accel needs nginx). Caddy obtains
+and renews certificates itself, so no certbot or certificate paths are
+needed; ports 80 and 443 must reach it. Replace `store.example.com`, keep
+`max_size` for `/api/*` in sync with `VELA_MAX_UPLOAD`, and adjust the upstream
+if you changed `VELA_HOST_PORT`. The file filters queries and request headers
+out of both access and handler error logs; keep those filters if you change
+logging. Run `caddy validate` before reloading.
+
 ## Check after deployment
 
 1. `curl -I https://store.example.com/healthz` returns 200.
