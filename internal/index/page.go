@@ -28,9 +28,11 @@ type Crumb struct {
 
 // Dir is a sub-directory row.
 type Dir struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	// Count is the number of public objects anywhere below the directory.
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Count is the number of visible entries; without rules it preserves the legacy subtree file count.
 	Count     int       `json:"count"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -54,31 +56,41 @@ type File struct {
 
 // Page is the data of an index page (and of ?format=json).
 type Page struct {
-	Site        Site      `json:"site"`
-	Path        string    `json:"path"`
-	Breadcrumbs []Crumb   `json:"breadcrumbs"`
-	Dirs        []Dir     `json:"dirs"`
-	Files       []File    `json:"files"`
-	Parent      string    `json:"parent"`
-	GeneratedAt time.Time `json:"generated_at"`
-	Version     string    `json:"version"`
+	Title        string    `json:"title"`
+	Description  string    `json:"description"`
+	NoIndex      bool      `json:"noindex"`
+	RootDisabled bool      `json:"-"`
+	PolicyCounts bool      `json:"-"`
+	CustomTitle  bool      `json:"-"`
+	Site         Site      `json:"site"`
+	Path         string    `json:"path"`
+	Breadcrumbs  []Crumb   `json:"breadcrumbs"`
+	Dirs         []Dir     `json:"dirs"`
+	Files        []File    `json:"files"`
+	Parent       string    `json:"parent"`
+	GeneratedAt  time.Time `json:"generated_at"`
+	Version      string    `json:"version"`
 }
 
 // ErrorPage is the data of an error page.
 type ErrorPage struct {
-	Site        Site      `json:"site"`
-	Status      int       `json:"status"`
-	Title       string    `json:"title"`
-	Message     string    `json:"message"`
-	GeneratedAt time.Time `json:"generated_at"`
-	Version     string    `json:"version"`
+	NoIndex      bool      `json:"-"`
+	RootDisabled bool      `json:"-"`
+	Site         Site      `json:"site"`
+	Status       int       `json:"status"`
+	Title        string    `json:"title"`
+	Message      string    `json:"message"`
+	GeneratedAt  time.Time `json:"generated_at"`
+	Version      string    `json:"version"`
 }
 
 // DirEntry is the input for one directory row.
 type DirEntry struct {
-	Path      string
-	Count     int
-	UpdatedAt time.Time
+	Title       string
+	Description string
+	Path        string
+	Count       int
+	UpdatedAt   time.Time
 }
 
 // BuildPage assembles the template data for a directory. URLs are
@@ -93,11 +105,14 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 		GeneratedAt: now.UTC(),
 		Version:     version,
 	}
+	p.Title = site.Title
 	if prefix != "" {
+		p.Title = api.BaseName(prefix)
 		p.Parent = "/" + api.EscapePath(api.ParentPrefix(prefix))
 	}
 	for _, d := range dirs {
 		p.Dirs = append(p.Dirs, Dir{
+			Title: d.Title, Description: d.Description,
 			Name:      api.BaseName(d.Path),
 			URL:       "/" + api.EscapePath(d.Path),
 			Count:     d.Count,
@@ -235,4 +250,37 @@ func samplePage() Page {
 	return BuildPage(Site{Title: "sample", URL: "https://example.org"}, "test", "a/",
 		[]DirEntry{{Path: "a/b/", Count: 1, UpdatedAt: now}},
 		[]domain.Object{{Path: "a/c.pdf", ContentType: "application/pdf", Tags: []string{"t"}, UpdatedAt: now}}, now)
+}
+
+// PolicyResolver keeps theme data independent of persistence and service wiring.
+type PolicyResolver interface {
+	Effective(prefix string) api.EffectiveDirPolicy
+}
+
+// ApplyPolicies removes links to disabled ancestors and adds page metadata.
+func (p *Page) ApplyPolicies(view PolicyResolver) {
+	prefix := strings.TrimPrefix(p.Path, "/")
+	if rules, ok := view.(interface{ HasRules() bool }); ok {
+		p.PolicyCounts = rules.HasRules()
+	}
+	policy := view.Effective(prefix)
+	p.NoIndex = policy.NoIndex == api.IndexOn
+	p.Description = policy.Description
+	if policy.Title != "" {
+		p.Title = policy.Title
+		p.CustomTitle = true
+	}
+	p.RootDisabled = view.Effective("").Index == api.IndexOff
+	at := ""
+	for i := range p.Breadcrumbs {
+		if i > 0 {
+			at += p.Breadcrumbs[i].Name + "/"
+		}
+		if view.Effective(at).Index == api.IndexOff {
+			p.Breadcrumbs[i].URL = ""
+		}
+	}
+	if prefix != "" && view.Effective(api.ParentPrefix(prefix)).Index == api.IndexOff {
+		p.Parent = ""
+	}
 }

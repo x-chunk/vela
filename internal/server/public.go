@@ -75,12 +75,16 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	dirs := make([]index.DirEntry, 0, len(listing.Dirs))
 	for _, d := range listing.Dirs {
-		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt})
+		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt, Title: d.Title, Description: d.Description})
 	}
 	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now())
+	page.ApplyPolicies(listing.Policies)
 
 	h := w.Header()
 	h.Set("Cache-Control", "public, max-age=60")
+	if page.NoIndex {
+		h.Set("X-Robots-Tag", noIndex)
+	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Query().Get("format") == "json" {
 		// Same data as the HTML, so it can expose nothing non-public.
@@ -119,7 +123,11 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target, http.StatusMovedPermanently) // #nosec G710 -- see above
 		return
 	}
-	s.deliver(w, r, *res.Content, policyFor(res.Content.Object.Visibility))
+	pol := policyFor(res.Content.Object.Visibility)
+	if res.Content.NoIndex {
+		pol.robots = noIndex
+	}
+	s.deliver(w, r, *res.Content, pol)
 }
 
 // serveLink serves /s/{linkID}/{filename}. The filename is cosmetic and

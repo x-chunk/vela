@@ -119,3 +119,18 @@ func TestValidation(t *testing.T) {
 		t.Fatalf("single address proxy = %+v, %v", c, err)
 	}
 }
+
+func TestRootIndex(t *testing.T) {
+	for _, value := range []string{"on", "off", "inherit", "", "true"} {
+		t.Run(value, func(t *testing.T) {
+			cfg, err := Load(nil, func(name string) (string, bool) { return value, name == "VELA_ROOT_INDEX" })
+			valid := value == "on" || value == "off"
+			if valid && (err != nil || string(cfg.RootIndex) != value) {
+				t.Fatalf("root index: %+v %v", cfg, err)
+			}
+			if !valid && err == nil {
+				t.Fatal("invalid root default accepted")
+			}
+		})
+	}
+}

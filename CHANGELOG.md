@@ -4,6 +4,11 @@
 
 ### Added
 
+- Independent directory policies with inherited index/crawler settings, hidden
+  entrances, titles/descriptions, `/api/v1/dirs`, and `vela dir` commands.
+- `VELA_ROOT_INDEX` defaults to `on`; an explicit root database rule overrides it.
+- Recursive moves atomically carry policies and report `policies_moved`.
+
 - MIT license, contribution guide, and security reporting policy.
 - MIT license included in the server image and CLI release archives.
 - Separate deployment examples for filesystem direct delivery, explicit nginx
@@ -15,6 +20,13 @@
   documentation OCI labels.
 
 ### Changed
+
+- **Breaking for custom themes:** breadcrumb URLs can be empty for disabled
+  ancestors; render those names as text. Honor `Page.NoIndex` in the layout and
+  empty `Page.Parent`. Directory rows add title/description and use visible-entry
+  counts once a rule exists. Without rules, legacy HTML/counts remain unchanged.
+- Directory `vela url` and `vela open` resolve public index availability and
+  explain a disabled or absent index instead of returning an unusable URL.
 
 - **Breaking for existing deployments:** `VELA_ACCEL_PREFIX` now defaults to
   empty (Go streams file contents). Existing nginx accel deployments must set

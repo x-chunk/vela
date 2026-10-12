@@ -32,6 +32,11 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 	case err == nil:
 		if o.Visibility != api.Private && !o.ExpiredAt(now) {
 			c := s.content(o)
+			view, err := s.directoryPolicies(ctx)
+			if err != nil {
+				return PublicResult{}, err
+			}
+			c.NoIndex = view.Effective(api.ParentPrefix(path)).NoIndex == api.IndexOn
 			return PublicResult{Content: &c}, nil
 		}
 		// A file cannot also be a directory, so there is nothing else here.
@@ -43,7 +48,11 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 	if err != nil {
 		return PublicResult{}, err
 	}
-	if n > 0 {
+	view, err := s.directoryPolicies(ctx)
+	if err != nil {
+		return PublicResult{}, err
+	}
+	if n > 0 && view.Effective(path+"/").Index == api.IndexOn {
 		return PublicResult{RedirectDir: path + "/"}, nil
 	}
 	return PublicResult{}, notFoundf("not found")
@@ -51,17 +60,20 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 
 // IndexDir is a sub-directory row of the HTML index.
 type IndexDir struct {
-	Path      string
-	Count     int
-	UpdatedAt time.Time
+	Path        string
+	Title       string
+	Description string
+	Count       int
+	UpdatedAt   time.Time
 }
 
 // IndexListing is the data behind one HTML index page: only public,
 // unexpired objects and the directories that contain at least one of them.
 type IndexListing struct {
-	Prefix string
-	Dirs   []IndexDir
-	Files  []domain.Object
+	Policies *DirPolicies
+	Prefix   string
+	Dirs     []IndexDir
+	Files    []domain.Object
 }
 
 // Index lists a directory for the public HTML index. A directory without
@@ -71,25 +83,29 @@ func (s *Service) Index(ctx context.Context, rawPrefix string) (IndexListing, er
 	if err != nil {
 		return IndexListing{}, notFoundf("not found")
 	}
-	now := s.now()
-	res, err := s.store.ListObjects(ctx, domain.ListQuery{
-		Prefix:       prefix,
-		Visibilities: []api.Visibility{api.Public},
-		LiveAt:       now,
-	})
+	view, err := s.directoryPolicies(ctx)
 	if err != nil {
 		return IndexListing{}, err
 	}
-	if prefix != "" && len(res.Dirs) == 0 && len(res.Objects) == 0 {
+	tree, err := s.publicTree(ctx, prefix, view)
+	if err != nil {
+		return IndexListing{}, err
+	}
+	// Both disabled and absent directories take the same query and error path.
+	if view.Effective(prefix).Index == api.IndexOff || (prefix != "" && !tree.exists) {
 		return IndexListing{}, notFoundf("not found")
 	}
-	out := IndexListing{Prefix: prefix, Files: res.Objects}
-	for _, d := range res.Dirs {
-		n, latest, err := s.store.DirStats(ctx, d, now)
-		if err != nil {
-			return IndexListing{}, err
+	out := IndexListing{Prefix: prefix, Files: tree.files, Policies: view}
+	for _, child := range tree.children {
+		policy := view.Effective(child.prefix)
+		if policy.Hidden || policy.Index == api.IndexOff || child.count == 0 {
+			continue
 		}
-		out.Dirs = append(out.Dirs, IndexDir{Path: d, Count: n, UpdatedAt: latest})
+		count := child.count
+		if !view.HasRules() {
+			count = child.total
+		}
+		out.Dirs = append(out.Dirs, IndexDir{Path: child.prefix, Count: count, UpdatedAt: child.latest, Title: policy.Title, Description: policy.Description})
 	}
 	return out, nil
 }

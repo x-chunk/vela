@@ -56,6 +56,7 @@ func TestOpen(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.seed("pub.txt", "x", api.Public)
+	h.seed("docs/readme.txt", "x", api.Public)
 	var opened []string
 	h.run = func(_ context.Context, _ io.Reader, _ bool, _ string, args ...string) error {
 		opened = append(opened, args[len(args)-1])

@@ -63,6 +63,8 @@ accept HEAD. Routing lives in [`internal/server/api.go`](../internal/server/api.
 | --- | --- | --- |
 | GET | `/healthz` (outside API prefix) | Unauthenticated health probe |
 | GET | `/info` | Version, limits, defaults, and authenticated key |
+| GET | `/dirs` | Paginated explicit directory policies |
+| GET / PUT / PATCH / DELETE | `/dirs/{prefix...}` | Effective view / replace / merge patch / remove rule |
 | GET / POST | `/objects` | List metadata / create from inline content |
 | GET / PATCH / DELETE | `/objects/{path...}` | Stat / merge patch / delete |
 | GET / PUT | `/content/{path...}` | Download / streaming upload |
@@ -89,7 +91,9 @@ ETags (`"r<number>"`), while download validators use content SHA-256 ETags.
 
 The public transport serves directory indexes, object URLs, `/s/` links,
 `/_vela/assets/`, `robots.txt`, and the favicon. Directory `?format=json` returns
-the same public data as the HTML [theme contract](theme.md). Access decisions
+the same public data as the HTML [theme contract](theme.md). [Directory policies](directories.md)
+control index availability, hidden entrances, and crawler hints independently
+of file access; recursive moves carry their rules in the same transaction. Access decisions
 remain in Go in every delivery mode.
 
 ## Transport and compatibility

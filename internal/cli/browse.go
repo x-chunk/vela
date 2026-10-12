@@ -81,7 +81,17 @@ func (a *App) lsCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.printer.JSONValue(l)
 			}
-			a.printListing(l, long)
+			policies := map[string]api.DirPolicy{}
+			if long && len(l.Dirs) > 0 {
+				rules, err := c.ListAllDirPolicies(ctx, client.DirListOptions{Prefix: prefix, Recursive: false, Limit: 1000})
+				if err != nil {
+					return err
+				}
+				for _, rule := range rules.Policies {
+					policies[rule.Prefix] = rule
+				}
+			}
+			a.printListing(l, long, policies)
 			return nil
 		},
 		ValidArgsFunction: a.completeRemote(),
@@ -92,7 +102,7 @@ func (a *App) lsCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *App) printListing(l *api.Listing, long bool) {
+func (a *App) printListing(l *api.Listing, long bool, policies map[string]api.DirPolicy) {
 	p := a.printer
 	rel := func(path string) string { return strings.TrimPrefix(path, l.Prefix) }
 	if !long {
@@ -106,7 +116,16 @@ func (a *App) printListing(l *api.Listing, long bool) {
 	}
 	var rows [][]any
 	for _, d := range l.Dirs {
-		rows = append(rows, []any{"", "-", "-", p.Dir(rel(d)), ""})
+		labels := ""
+		if rule, ok := policies[d]; ok {
+			if rule.Hidden {
+				labels += " [hidden]"
+			}
+			if rule.Index == api.IndexOff {
+				labels += " [no index]"
+			}
+		}
+		rows = append(rows, []any{"", "-", "-", output.Styled(string(p.Dir(rel(d))) + labels), ""})
 	}
 	for _, o := range l.Objects {
 		var name any = rel(o.Path)
@@ -195,7 +214,7 @@ func (a *App) printObject(o *api.Object) {
 func (a *App) urlCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:               "url PATH",
-		Short:             "Print the public URL of an object",
+		Short:             "Print the public URL of an object or directory index",
 		Args:              exactArgs(1),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -226,11 +245,18 @@ func (a *App) publicURL(cmd *cobra.Command, raw string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		info, err := c.Info(ctx)
+		dir, err := c.ShowDir(ctx, prefix)
 		if err != nil {
 			return "", err
 		}
-		return api.PublicURL(info.PublicURL, prefix), nil
+		if dir.URL == nil {
+			reason := "directory index is disabled"
+			if dir.Effective.Index == api.IndexOn {
+				reason = "directory has no live public objects"
+			}
+			return "", &cliError{code: exitNotFound, slug: "not_found", msg: reason + " (404)", hint: "public files remain accessible through their direct URLs"}
+		}
+		return *dir.URL, nil
 	}
 	path, err := remotePath(raw)
 	if err != nil {

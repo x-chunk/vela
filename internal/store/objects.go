@@ -145,9 +145,14 @@ func (q reads) DirStats(ctx context.Context, prefix string, now time.Time) (int,
 		n      int
 		latest sql.NullInt64
 	)
-	err := q.db.QueryRowContext(ctx, `SELECT COUNT(*), MAX(updated_at) FROM objects
-		WHERE path >= ? AND path < ? AND visibility = 'public' AND (expires_at IS NULL OR expires_at >= ?)`,
-		prefix, prefixUpper(prefix), ms(now)).Scan(&n, &latest)
+	query := `SELECT COUNT(*), MAX(updated_at) FROM objects
+  WHERE visibility = 'public' AND (expires_at IS NULL OR expires_at >= ?)`
+	args := []any{ms(now)}
+	if prefix != "" {
+		query += " AND path >= ? AND path < ?"
+		args = append(args, prefix, prefixUpper(prefix))
+	}
+	err := q.db.QueryRowContext(ctx, query, args...).Scan(&n, &latest)
 	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("directory stats: %w", err)
 	}

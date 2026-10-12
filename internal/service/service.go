@@ -24,6 +24,7 @@ import (
 // Options are the tunables of the service, normally taken from the server
 // configuration.
 type Options struct {
+	RootIndex         api.IndexMode
 	PublicURL         string
 	ServerVersion     string
 	MaxUpload         int64
@@ -61,6 +62,7 @@ type Service struct {
 	log   *slog.Logger
 	opts  Options
 
+	dirs      dirPolicyCache
 	touch     touchThrottle
 	janitorMu sync.Mutex
 	gcMu      sync.Mutex
@@ -86,6 +88,12 @@ func New(d Deps, o Options) (*Service, error) {
 	if o.MaxUpload <= 0 || o.MaxCreate <= 0 || o.LinkDefaultTTL <= 0 || o.LinkMaxTTL < o.LinkDefaultTTL {
 		return nil, errors.New("service: invalid size or TTL limits")
 	}
+	if o.RootIndex == "" {
+		o.RootIndex = api.IndexOn
+	}
+	if o.RootIndex != api.IndexOn && o.RootIndex != api.IndexOff {
+		return nil, errors.New("service: root index must be on or off")
+	}
 	o.PublicURL = strings.TrimSuffix(o.PublicURL, "/")
 	if o.BlobGrace <= 0 {
 		o.BlobGrace = DefaultBlobGrace
@@ -97,7 +105,7 @@ func New(d Deps, o Options) (*Service, error) {
 		o.MaxConcurrentUploads = 4
 	}
 	host, _ := os.Hostname()
-	return &Service{
+	svc := &Service{
 		uploads: make(chan struct{}, o.MaxConcurrentUploads),
 		store:   d.Store,
 		blobs:   d.Blobs,
@@ -107,7 +115,11 @@ func New(d Deps, o Options) (*Service, error) {
 		opts:    o,
 		touch:   touchThrottle{last: map[string]time.Time{}},
 		owner:   fmt.Sprintf("%s:%d:%s", host, os.Getpid(), randomToken()),
-	}, nil
+	}
+	if _, err := svc.directoryPolicies(context.Background()); err != nil {
+		return nil, fmt.Errorf("load directory policies: %w", err)
+	}
+	return svc, nil
 }
 
 func randomToken() string {
@@ -171,6 +183,8 @@ func (s *Service) objectDTO(o domain.Object, now time.Time) api.Object {
 // Content locates the bytes of an object for delivery.
 type Content struct {
 	Object domain.Object
+	// NoIndex applies the directory crawler policy to public delivery.
+	NoIndex bool
 	// BlobPath is the blob location relative to the blobs root.
 	BlobPath string
 	// DeliveryUntil caps external grants to the lifetime of a signed link.

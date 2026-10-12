@@ -25,6 +25,7 @@ var errorCodes = []struct {
 	{service.ErrForbidden, api.CodeForbidden},
 	{service.ErrNotFound, api.CodeNotFound},
 	{service.ErrLinkExpired, api.CodeNotFound},
+	{service.ErrConflict, api.CodeConflict},
 	{service.ErrAlreadyExists, api.CodeAlreadyExists},
 	{service.ErrPathConflict, api.CodePathConflict},
 	{service.ErrPreconditionFailed, api.CodePreconditionFailed},

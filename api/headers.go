@@ -14,6 +14,7 @@ const APIVersion = 1
 // Route prefixes and collection paths of API v1.
 const (
 	APIPrefix   = "/api/v1"
+	RouteDirs   = APIPrefix + "/dirs"
 	RouteInfo   = APIPrefix + "/info"
 	RouteObject = APIPrefix + "/objects"
 	RouteCont   = APIPrefix + "/content"

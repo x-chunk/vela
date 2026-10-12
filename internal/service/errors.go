@@ -16,6 +16,7 @@ var (
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
 	ErrNotFound            = errors.New("not found")
+	ErrConflict            = errors.New("conflict")
 	ErrAlreadyExists       = errors.New("already exists")
 	ErrPathConflict        = errors.New("path conflict")
 	ErrPreconditionFailed  = errors.New("precondition failed")

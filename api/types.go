@@ -69,9 +69,10 @@ type MoveRequest struct {
 	Recursive bool   `json:"recursive"`
 }
 
-// MoveResponse reports how many objects were moved.
+// MoveResponse reports how many objects and directory policies were moved.
 type MoveResponse struct {
-	Moved int `json:"moved"`
+	Moved         int `json:"moved"`
+	PoliciesMoved int `json:"policies_moved"`
 }
 
 // DeleteResponse reports deleted objects. TrashIDs is empty for purges.

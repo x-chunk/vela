@@ -45,6 +45,11 @@ func (s *Server) apiRoutes() http.Handler {
 			return requestError(errMethodNotAllowed, "method not allowed; allowed: "+strings.Join(allow, ", "))
 		}))
 	}
+	route(api.RouteDirs, map[string]apiHandler{http.MethodGet: s.handleDirList})
+	route(api.RouteDirs+"/{prefix...}", map[string]apiHandler{
+		http.MethodGet: s.handleDirShow, http.MethodPut: s.handleDirPut,
+		http.MethodPatch: s.handleDirPatch, http.MethodDelete: s.handleDirDelete,
+	})
 	route(api.RouteInfo, map[string]apiHandler{http.MethodGet: s.handleInfo})
 	route(api.RouteObject, map[string]apiHandler{http.MethodGet: s.handleList, http.MethodPost: s.handleCreate})
 	route(api.RouteObject+"/{path...}", map[string]apiHandler{
@@ -325,11 +330,11 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, p service.Pr
 	if err := decodeJSON(w, r, smallBodyLimit, &req); err != nil {
 		return err
 	}
-	n, err := s.svc.Move(r.Context(), p, req)
+	out, err := s.svc.MoveWithPolicies(r.Context(), p, req)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, api.MoveResponse{Moved: n})
+	writeJSON(w, http.StatusOK, out)
 	return nil
 }
 

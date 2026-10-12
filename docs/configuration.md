@@ -23,6 +23,7 @@ and credentials are environment-only; use `velad serve --help` for core flags.
 | `VELA_LINK_RETENTION` | `7d` | Retention of expired/revoked link records |
 | `VELA_TRASH_RETENTION` | `14d` | Retention of deleted objects |
 | `VELA_JANITOR_INTERVAL` | `24h` | Janitor interval; at least one minute |
+| `VELA_ROOT_INDEX` | `on` | Default root index: `on` or `off`; an explicit root DB rule overrides it |
 | `VELA_SITE_TITLE` | `Vela` | Public index title |
 | `VELA_THEME_DIR` | empty | Optional [theme overrides](theme.md) |
 | `VELA_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error` |
@@ -81,7 +82,7 @@ and precedence live in [`internal/cli/config`](../internal/cli/config/config.go)
 | --- | --- |
 | API 401 | Bearer key validity/revocation and selected CLI profile |
 | API 403 | Required scope and key prefix, including move/restore target |
-| Public 404 | Visibility, expiry, trash, and path; private objects intentionally hide existence |
+| Public 404 | Directory index policy, visibility, expiry, trash, and path; private objects intentionally hide existence |
 | Empty download or proxy 404 in accel | Prefix matches both internal nginx locations and readable blob mount |
 | Wrong client IP or shared auth throttling | Actual proxy peer is explicitly trusted; defaults assume no Docker subnet |
 | Data directory permission failure | Container UID/GID 65532 owns the writable mount |

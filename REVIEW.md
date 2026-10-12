@@ -1,0 +1,49 @@
+# Directory policy review
+
+Reviewed the working-tree directory-policy feature on `codex/directory-policies`
+against `AGENTS.md`, `docs/SPEC.md`, `docs/SPEC-dirs.md` (including the accepted
+decisions in section 16), and `docs/directories.md` on 2026-10-12.
+
+The review covered the changed API, client, CLI, configuration, service, store,
+migration, public delivery and theme code, documentation, and associated tests.
+Accepted compatibility decisions (legacy counts/HTML without rules, additive
+JSON fields, and the string `Page.Parent`) are not findings. The new code
+preserves the repository's layering and adds no dependencies. No additional
+actionable architecture or comment-quality findings were identified.
+
+## R-001 [severity: high] Recursive overwrite can remove the root policy without admin
+
+- Where: `internal/service/move.go:220` (destination policy deletion), with the
+  incomplete root authorization check at `internal/service/move.go:125`.
+- Problem: The admin check applies only when a source policy maps onto the root.
+  An unrestricted `rw` key can instead move a source subtree with no rule on its
+  own prefix to root with `overwrite: true`. The existing root rule is included
+  in `destinationPolicies` and deleted without checking admin scope. This
+  violates `SPEC-dirs.md` section 9.3, which reserves root policy mutations for
+  unrestricted admins. With the default `VELA_ROOT_INDEX=on`, deleting an
+  admin-created `index: off` root rule immediately re-enables the public root
+  index and can reveal its public directory/file listing.
+- Reproduction: As admin, store a public object at `from/file` and set the root
+  policy to `{"index":"off"}`; leave `from/` without a policy. As an unrestricted
+  `rw` key, send `POST /api/v1/move` with
+  `{"from":"from/","to":"","recursive":true,"overwrite":true}`. The operation
+  succeeds, `GET /api/v1/dirs/` reports `rule: null` and effective `index: on`
+  from `config`, and the root public index is enabled. A temporary Go test
+  supplied through `go test -overlay` reproduced this against the real SQLite
+  service: the move returned no error and removed the root rule.
+- Suggestion: Check admin authorization whenever a recursive move will delete
+  or replace an existing root policy, in addition to when a source policy maps
+  onto root. Perform the check inside the same transaction before mutations.
+  Add service and HTTP regression tests that require 403 and verify all object
+  paths and rules remain unchanged, including when only descendant source
+  policies move. Retain successful behavior for an unrestricted admin and for
+  moves that do not mutate a root policy.
+- Status: open
+
+## Verification
+
+The independent review ran the focused root-authorization reproducer through a
+temporary Go overlay; it failed the expected authorization assertion as
+described above. No implementation or test files were changed by the review.
+`make check-neutrality` passed.
+The coordinating coding agent runs the full test, lint, nginx, and S3 suites.

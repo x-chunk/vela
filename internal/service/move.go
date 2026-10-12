@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 
 	"go.xchunk.org/vela/api"
 )
@@ -15,28 +16,34 @@ const maxReportedConflicts = 100
 // prefix, in one transaction. Objects keep their IDs, so signed links keep
 // working; public URLs change.
 func (s *Service) Move(ctx context.Context, p Principal, req api.MoveRequest) (int, error) {
+	out, err := s.MoveWithPolicies(ctx, p, req)
+	return out.Moved, err
+}
+
+// MoveWithPolicies atomically renames objects and recursive directory rules.
+func (s *Service) MoveWithPolicies(ctx context.Context, p Principal, req api.MoveRequest) (api.MoveResponse, error) {
 	if err := p.require(api.ScopeRW); err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
 	if req.Recursive {
 		return s.moveTree(ctx, p, req)
 	}
 	from, err := api.CleanObjectPath(req.From)
 	if err != nil {
-		return 0, pathError(err)
+		return api.MoveResponse{}, pathError(err)
 	}
 	to, err := api.CleanObjectPath(req.To)
 	if err != nil {
-		return 0, pathError(err)
+		return api.MoveResponse{}, pathError(err)
 	}
 	if err := p.checkPath(from); err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
 	if err := p.checkPath(to); err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
 	if from == to {
-		return 0, invalidf("source and destination are the same: %s", from)
+		return api.MoveResponse{}, invalidf("source and destination are the same: %s", from)
 	}
 	now := s.now()
 	err = s.store.Update(ctx, func(w Writer) error {
@@ -60,45 +67,79 @@ func (s *Service) Move(ctx context.Context, p Principal, req api.MoveRequest) (i
 		return w.UpdateObject(ctx, o)
 	})
 	if err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
-	return 1, nil
+	return api.MoveResponse{Moved: 1}, nil
 }
 
-func (s *Service) moveTree(ctx context.Context, p Principal, req api.MoveRequest) (int, error) {
+func (s *Service) moveTree(ctx context.Context, p Principal, req api.MoveRequest) (api.MoveResponse, error) {
 	from, err := api.CleanPrefix(req.From)
 	if err != nil {
-		return 0, pathError(err)
+		return api.MoveResponse{}, pathError(err)
 	}
 	to, err := api.CleanPrefix(req.To)
 	if err != nil {
-		return 0, pathError(err)
+		return api.MoveResponse{}, pathError(err)
 	}
 	if from == "" {
-		return 0, invalidf("cannot move the root directory")
+		return api.MoveResponse{}, invalidf("cannot move the root directory")
 	}
 	if from == to {
-		return 0, invalidf("source and destination are the same: %s", from)
+		return api.MoveResponse{}, invalidf("source and destination are the same: %s", from)
 	}
 	if api.IsWithin(to, from) {
-		return 0, invalidf("cannot move %s into itself (%s)", from, to)
+		return api.MoveResponse{}, invalidf("cannot move %s into itself (%s)", from, to)
 	}
 	if err := p.checkPath(from); err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
 	if err := p.checkPath(to); err != nil {
-		return 0, err
+		return api.MoveResponse{}, err
 	}
 
 	now := s.now()
-	moved := 0
+	out := api.MoveResponse{}
 	err = s.store.Update(ctx, func(w Writer) error {
 		objs, err := w.ObjectsUnder(ctx, from)
 		if err != nil {
 			return err
 		}
-		if len(objs) == 0 {
-			return notFoundf("no objects under %s", from)
+		policies, err := w.DirPolicies(ctx)
+		if err != nil {
+			return err
+		}
+		var movingPolicies []api.DirPolicy
+		var destinationPolicies []string
+		for _, rule := range policies {
+			switch {
+			case strings.HasPrefix(rule.Prefix, from):
+				moved := rule
+				moved.Prefix = to + strings.TrimPrefix(rule.Prefix, from)
+				clean, err := api.CleanPrefix(moved.Prefix)
+				if err != nil {
+					return pathError(err)
+				}
+				if clean != moved.Prefix {
+					return invalidf("destination policy prefix is not normalized")
+				}
+				if moved.Prefix == "" {
+					if err := p.require(api.ScopeAdmin); err != nil {
+						return err
+					}
+				}
+				if err := validateDirPolicy(moved); err != nil {
+					return err
+				}
+				movingPolicies = append(movingPolicies, moved)
+			case api.IsWithin(rule.Prefix, to):
+				destinationPolicies = append(destinationPolicies, rule.Prefix)
+			}
+		}
+		if len(objs) == 0 && len(movingPolicies) == 0 {
+			return notFoundf("no objects or directory policies under %s", from)
+		}
+		if len(destinationPolicies) > 0 && !req.Overwrite {
+			return newErr(ErrConflict, map[string]any{"conflicting_policies": capList(destinationPolicies)}, "destination directory policies already exist; use overwrite")
 		}
 		moving := make(map[string]bool, len(objs))
 		for _, o := range objs {
@@ -168,10 +209,36 @@ func (s *Service) moveTree(ctx context.Context, p Principal, req api.MoveRequest
 				return err
 			}
 		}
-		moved = len(objs)
+		// Remove source names before insertion to support moves to an ancestor.
+		for _, rule := range policies {
+			if strings.HasPrefix(rule.Prefix, from) {
+				if err := w.DeleteDirPolicy(ctx, rule.Prefix); err != nil {
+					return err
+				}
+			}
+		}
+		if req.Overwrite {
+			for _, prefix := range destinationPolicies {
+				if err := w.DeleteDirPolicy(ctx, prefix); err != nil {
+					return err
+				}
+			}
+		}
+		for _, rule := range movingPolicies {
+			rule.Revision++
+			rule.UpdatedAt = now
+			if err := w.PutDirPolicy(ctx, rule); err != nil {
+				return err
+			}
+		}
+		out.Moved, out.PoliciesMoved = len(objs), len(movingPolicies)
 		return nil
 	})
-	return moved, err
+	if err != nil {
+		return api.MoveResponse{}, err
+	}
+	s.invalidateDirs()
+	return out, nil
 }
 
 func capList(paths []string) []string {

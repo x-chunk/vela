@@ -333,3 +333,43 @@ func TestMaximalMetadataThroughNginx(t *testing.T) {
 		t.Fatalf("maximal metadata through nginx: %d %.200s", r.status, r.body)
 	}
 }
+
+func TestDirectoryPoliciesThroughNginx(t *testing.T) {
+	_, n, c := setup(t)
+	ctx := context.Background()
+	obj := upload(t, c, "hidden/file.txt", "public content", api.Public, "")
+	if _, err := c.PatchDir(ctx, "hidden/", api.DirPolicyPatch{Hidden: api.Some(true), Index: api.Some(api.IndexOn)}, velaclient.DirWriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"GET", "HEAD"} {
+		r := n.get(method, n.https+"/hidden/file.txt")
+		if r.status != 200 {
+			t.Fatal(r.status)
+		}
+		expectHeaders(t, "hidden public file", r, map[string]string{"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "public, max-age=300"})
+	}
+	r := n.get("GET", n.https+"/hidden/file.txt", "If-None-Match", `"sha256:`+obj.SHA256+`"`)
+	if r.status != 304 {
+		t.Fatal(r.status)
+	}
+	expectHeaders(t, "hidden conditional file", r, map[string]string{"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "public, max-age=300"})
+	r = n.get("GET", n.https+"/hidden/")
+	if r.status != 200 || !strings.Contains(r.body, `<meta name="robots" content="noindex, nofollow">`) {
+		t.Fatal(r.status, r.body)
+	}
+	expectHeaders(t, "hidden index", r, map[string]string{"X-Robots-Tag": "noindex, nofollow", "Cache-Control": "public, max-age=60"})
+	if r := n.get("GET", n.https+"/"); strings.Contains(r.body, "hidden/") {
+		t.Fatal("root leaked a hidden directory")
+	}
+	if _, err := c.PatchDir(ctx, "", api.DirPolicyPatch{Index: api.Some(api.IndexOff)}, velaclient.DirWriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if r := n.get("GET", n.https+"/"); r.status != 404 {
+		t.Fatal(r.status)
+	}
+	if _, err := c.PatchDir(ctx, "hidden/", api.DirPolicyPatch{NoIndex: api.Some(api.IndexOff)}, velaclient.DirWriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	r = n.get("GET", n.https+"/hidden/file.txt")
+	expectHeaders(t, "explicit crawler opt-in", r, map[string]string{"X-Robots-Tag": "", "Cache-Control": "public, max-age=300"})
+}

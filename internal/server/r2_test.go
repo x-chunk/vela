@@ -208,3 +208,41 @@ func TestR2RedirectConditionalDelivery(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectoryPoliciesR2Delivery(t *testing.T) {
+	for _, delivery := range []string{"proxy", "redirect"} {
+		t.Run(delivery, func(t *testing.T) {
+			cfg := testutil.S3Config(t)
+			cfg.R2.Delivery = delivery
+			h := newHarness(t, testutil.WithStorage(cfg))
+			obj := h.upload("hidden/file.txt", "public bytes", api.HeaderVisibility, "public")
+			h.dirPatch("hidden/", `{"hidden":true}`)
+			r := h.do("GET", "/hidden/file.txt", "", nil)
+			status := http.StatusOK
+			cache := "public, max-age=300"
+			if delivery == "redirect" {
+				status = http.StatusFound
+				cache = "private, no-store"
+			}
+			expectStatus(t, r, status)
+			if r.header.Get("X-Robots-Tag") != "noindex, nofollow" || r.header.Get("Cache-Control") != cache {
+				t.Fatalf("robots=%q cache=%q", r.header.Get("X-Robots-Tag"), r.header.Get("Cache-Control"))
+			}
+			r = h.do("HEAD", "/hidden/file.txt", "", nil)
+			expectStatus(t, r, http.StatusOK)
+			if r.header.Get("X-Robots-Tag") != "noindex, nofollow" {
+				t.Fatalf("robots=%q cache=%q", r.header.Get("X-Robots-Tag"), r.header.Get("Cache-Control"))
+			}
+			r = h.do("GET", "/hidden/file.txt", "", nil, "If-None-Match", `"sha256:`+obj.SHA256+`"`)
+			expectStatus(t, r, http.StatusNotModified)
+			if r.header.Get("X-Robots-Tag") != "noindex, nofollow" {
+				t.Fatalf("robots=%q cache=%q", r.header.Get("X-Robots-Tag"), r.header.Get("Cache-Control"))
+			}
+			h.dirPatch("hidden/", `{"noindex":"off"}`)
+			r = h.do("GET", "/hidden/file.txt", "", nil)
+			if r.header.Get("X-Robots-Tag") != "" {
+				t.Fatalf("robots=%q cache=%q", r.header.Get("X-Robots-Tag"), r.header.Get("Cache-Control"))
+			}
+		})
+	}
+}

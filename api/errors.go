@@ -21,6 +21,7 @@ const (
 	CodeForbidden           ErrorCode = "forbidden"
 	CodeNotFound            ErrorCode = "not_found"
 	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
+	CodeConflict            ErrorCode = "conflict"
 	CodeAlreadyExists       ErrorCode = "already_exists"
 	CodePathConflict        ErrorCode = "path_conflict"
 	CodePreconditionFailed  ErrorCode = "precondition_failed"
@@ -44,7 +45,7 @@ func (c ErrorCode) Status() int {
 		return http.StatusNotFound
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed
-	case CodeAlreadyExists, CodePathConflict:
+	case CodeConflict, CodeAlreadyExists, CodePathConflict:
 		return http.StatusConflict
 	case CodePreconditionFailed:
 		return http.StatusPreconditionFailed

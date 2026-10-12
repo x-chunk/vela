@@ -49,6 +49,7 @@ type Config struct {
 	LinkRetention        time.Duration
 	TrashRetention       time.Duration
 	JanitorInterval      time.Duration
+	RootIndex            api.IndexMode
 	SiteTitle            string
 	ThemeDir             string
 	LogLevel             slog.Level
@@ -94,6 +95,7 @@ func stringSetting(dst func(*Config) *string) func(*Config, string) error {
 // settings is the single table of core configuration knobs. The environment
 // variable table in docs/configuration.md must match it.
 var settings = []setting{
+	{"VELA_ROOT_INDEX", "root-index", "on", "default root HTML index: on or off (overridden by a database rule)", parseRootIndex},
 	{"VELA_LISTEN", "listen", ":8080", "HTTP listen address", stringSetting(func(c *Config) *string { return &c.Listen })},
 	{"VELA_DATA_DIR", "data-dir", "/data", "data directory (database, blobs, tmp)", stringSetting(func(c *Config) *string { return &c.DataDir })},
 	{"VELA_PUBLIC_URL", "public-url", "", "public base URL, e.g. https://store.example.com (required to serve)", parsePublicURL},
@@ -282,5 +284,13 @@ func parseRobots(c *Config, v string) error {
 		return fmt.Errorf("%q is not allow or deny", v)
 	}
 	c.Robots = v
+	return nil
+}
+
+func parseRootIndex(c *Config, v string) error {
+	c.RootIndex = api.IndexMode(strings.TrimSpace(v))
+	if c.RootIndex != api.IndexOn && c.RootIndex != api.IndexOff {
+		return fmt.Errorf("%q must be on or off", v)
+	}
 	return nil
 }

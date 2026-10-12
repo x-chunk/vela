@@ -1,13 +1,14 @@
-{{define "title"}}{{if eq .Path "/"}}{{.Site.Title}}{{else}}{{.Path}} · {{.Site.Title}}{{end}}{{end}}
+{{define "title"}}{{if .CustomTitle}}{{.Title}} · {{.Site.Title}}{{else}}{{if eq .Path "/"}}{{.Site.Title}}{{else}}{{.Path}} · {{.Site.Title}}{{end}}{{end}}{{end}}
 
 {{define "content"}}
 <nav class="crumbs" aria-label="Breadcrumbs">
   {{- range $i, $c := .Breadcrumbs}}
   {{- if $i}}<span class="sep" aria-hidden="true">/</span>{{end}}
-  <a href="{{$c.URL}}">{{$c.Name}}</a>
+  {{if $c.URL}}<a href="{{$c.URL}}">{{$c.Name}}</a>{{else}}<span>{{$c.Name}}</span>{{end}}
   {{- end}}
 </nav>
-{{if or .Dirs .Files}}
+{{if .Description}}<p class="description">{{.Description}}</p>
+{{end}}{{if or .Dirs .Files}}
 <ul class="entries">
   {{- if .Parent}}
   <li class="entry parent">
@@ -17,8 +18,11 @@
   {{- range .Dirs}}
   <li class="entry dir">
     <a href="{{.URL}}">{{icon "folder"}}<span class="name">{{.Name}}/</span></a>
+    {{- if or .Title .Description}}
+    <div class="details">{{with .Title}}<span class="title">{{.}}</span>{{end}}{{with .Description}}<span class="desc">{{.}}</span>{{end}}</div>
+    {{- end}}
     <span class="meta">
-      <span class="count">{{.Count}} {{if eq .Count 1}}file{{else}}files{{end}}</span>
+      <span class="count">{{.Count}} {{if $.PolicyCounts}}{{if eq .Count 1}}entry{{else}}entries{{end}}{{else}}{{if eq .Count 1}}file{{else}}files{{end}}{{end}}</span>
       <time datetime="{{iso .UpdatedAt}}">{{date .UpdatedAt}}</time>
     </span>
   </li>

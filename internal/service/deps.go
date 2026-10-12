@@ -4,12 +4,16 @@ import (
 	"context"
 	"time"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/content"
 	"go.xchunk.org/vela/internal/domain"
 )
 
 // Reader is the read side of the repository.
 type Reader interface {
+	DirPoliciesVersion(ctx context.Context) (int64, error)
+	DirPolicies(ctx context.Context) ([]api.DirPolicy, error)
+	DirPolicyByPrefix(ctx context.Context, prefix string) (api.DirPolicy, error)
 	ObjectByPath(ctx context.Context, path string) (domain.Object, error)
 	ObjectByID(ctx context.Context, id string) (domain.Object, error)
 	FirstExisting(ctx context.Context, paths []string) (string, error)
@@ -39,6 +43,9 @@ type Reader interface {
 // Writer is a write transaction; it can also read its own uncommitted state.
 type Writer interface {
 	Reader
+
+	PutDirPolicy(ctx context.Context, p api.DirPolicy) error
+	DeleteDirPolicy(ctx context.Context, prefix string) error
 
 	InsertObject(ctx context.Context, o domain.Object) error
 	UpdateObject(ctx context.Context, o domain.Object) error

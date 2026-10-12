@@ -59,6 +59,7 @@ func (a *App) mvCommand() *cobra.Command {
 			defer cancel()
 			res, err := c.Move(ctx, req)
 			if err != nil {
+				err = hintFor(err, api.CodeConflict, "use --force to replace destination directory policies")
 				err = hintFor(err, api.CodeAlreadyExists, "use --force to overwrite (the overwritten files go to the trash)")
 				if !req.Recursive {
 					err = a.notFoundHint(ctx, c, err, req.From)
@@ -69,6 +70,9 @@ func (a *App) mvCommand() *cobra.Command {
 				return a.printer.JSONValue(res)
 			}
 			a.printer.Printf("Moved %d object(s): %s -> %s\n", res.Moved, req.From, req.To)
+			if res.PoliciesMoved > 0 {
+				a.printer.Printf("Moved %d directory policy/policies.\n", res.PoliciesMoved)
+			}
 			return nil
 		},
 		ValidArgsFunction: a.completeRemote(),

@@ -66,6 +66,7 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 	defer func() { _ = st.Close() }()
 
 	svc, err := wire.NewService(st, clock.System{}, log, service.Options{
+		RootIndex:            cfg.RootIndex,
 		PublicURL:            cfg.PublicURL,
 		ServerVersion:        ver.Version,
 		MaxUpload:            cfg.MaxUpload,
@@ -83,6 +84,11 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 	if err := svc.EnsureSigningKey(ctx); err != nil {
 		return fmt.Errorf("signing key: %w", err)
 	}
+	rootPolicy, err := svc.RootDirPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	log.Info("root directory index", "index", rootPolicy.Index, "source", rootPolicy.IndexSource)
 	srv := server.New(svc, theme, log, server.Options{
 		PublicURL:      cfg.PublicURL,
 		SiteTitle:      cfg.SiteTitle,
