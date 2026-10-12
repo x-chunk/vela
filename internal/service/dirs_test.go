@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -163,4 +164,59 @@ func TestDirectoryPolicyConcurrentChanges(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+// R-001: overwrite may remove the admin-owned root policy even when no source
+// policy maps onto root. Authorization must cover both kinds of root mutation.
+func TestMoveCannotDeleteRootPolicyAsRW(t *testing.T) {
+	for _, descendants := range []bool{false, true} {
+		t.Run(fmt.Sprint(descendants), func(t *testing.T) {
+			e := newEnv(t)
+			original := e.put("from/file", "public", api.Public)
+			if _, err := e.svc.PatchDir(e.ctx, e.admin, "", api.DirPolicyPatch{Index: api.Some(api.IndexOff)}, service.DirWriteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if descendants {
+				if _, err := e.svc.PatchDir(e.ctx, e.admin, "from/sub/", api.DirPolicyPatch{Hidden: api.Some(true)}, service.DirWriteOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			req := api.MoveRequest{From: "from/", To: "", Recursive: true, Overwrite: true}
+			_, err := e.svc.MoveWithPolicies(e.ctx, e.principal(api.ScopeRW, ""), req)
+			wantErr(t, err, service.ErrForbidden)
+			got, err := e.svc.Stat(e.ctx, e.admin, "from/file")
+			if err != nil || got.ID != original.ID || got.Revision != original.Revision {
+				t.Fatalf("failed move changed object: %+v %v", got, err)
+			}
+			root, err := e.svc.ShowDir(e.ctx, e.admin, "")
+			if err != nil || root.Rule == nil || root.Rule.Revision != 1 || root.Effective.Index != api.IndexOff {
+				t.Fatalf("failed move changed root: %+v %v", root, err)
+			}
+			if descendants {
+				sub, err := e.svc.ShowDir(e.ctx, e.admin, "from/sub/")
+				if err != nil || sub.Rule == nil || sub.Rule.Revision != 1 {
+					t.Fatalf("failed move changed descendant: %+v %v", sub, err)
+				}
+			}
+			out, err := e.svc.MoveWithPolicies(e.ctx, e.admin, req)
+			if err != nil || out.Moved != 1 {
+				t.Fatalf("admin move: %+v %v", out, err)
+			}
+			root, err = e.svc.ShowDir(e.ctx, e.admin, "")
+			if err != nil || root.Rule != nil || root.Effective.Index != api.IndexOn {
+				t.Fatalf("admin replacement: %+v %v", root, err)
+			}
+		})
+	}
+	t.Run("no root mutation", func(t *testing.T) {
+		e := newEnv(t)
+		e.put("from/file", "public", api.Public)
+		if _, err := e.svc.PatchDir(e.ctx, e.admin, "from/sub/", api.DirPolicyPatch{}, service.DirWriteOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		out, err := e.svc.MoveWithPolicies(e.ctx, e.principal(api.ScopeRW, ""), api.MoveRequest{From: "from/", To: "", Recursive: true, Overwrite: true})
+		if err != nil || out.Moved != 1 || out.PoliciesMoved != 1 {
+			t.Fatalf("rw without root mutation: %+v %v", out, err)
+		}
+	})
 }

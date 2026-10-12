@@ -141,6 +141,17 @@ func (s *Service) moveTree(ctx context.Context, p Principal, req api.MoveRequest
 		if len(destinationPolicies) > 0 && !req.Overwrite {
 			return newErr(ErrConflict, map[string]any{"conflicting_policies": capList(destinationPolicies)}, "destination directory policies already exist; use overwrite")
 		}
+		// A move can delete the root rule without mapping a source rule onto it.
+		// Root mutations must retain the same admin boundary as directory CRUD.
+		if req.Overwrite {
+			for _, prefix := range destinationPolicies {
+				if prefix == "" {
+					if err := p.require(api.ScopeAdmin); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		moving := make(map[string]bool, len(objs))
 		for _, o := range objs {
 			moving[o.Path] = true

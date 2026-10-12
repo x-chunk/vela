@@ -287,3 +287,33 @@ func TestDirectoryRobotsAccel(t *testing.T) {
 		t.Fatal(r.header)
 	}
 }
+
+func TestRecursiveOverwriteRootPolicyAuthorization(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	original := h.upload("from/file", "public", api.HeaderVisibility, "public")
+	h.dirPatch("", `{"index":"off"}`)
+	h.dirPatch("from/sub/", `{"hidden":true}`)
+	rw := h.ts.Key(t, "all-writer", api.ScopeRW, "")
+	r := h.do("POST", api.RouteMove, rw, strings.NewReader(`{"from":"from/","to":"","recursive":true,"overwrite":true}`))
+	expectStatus(t, r, http.StatusForbidden)
+	if r.errCode(t) != api.CodeForbidden {
+		t.Fatal(string(r.body))
+	}
+	r = h.admin("GET", api.ObjectRoute("from/file"), "")
+	expectStatus(t, r, http.StatusOK)
+	var obj api.Object
+	r.json(t, &obj)
+	if obj.ID != original.ID || obj.Revision != original.Revision {
+		t.Fatal("object changed after forbidden move")
+	}
+	for _, prefix := range []string{"", "from/sub/"} {
+		r = h.admin("GET", api.DirRoute(prefix), "")
+		var dir api.EffectiveDir
+		r.json(t, &dir)
+		if dir.Rule == nil || dir.Rule.Revision != 1 {
+			t.Fatal("rule changed after forbidden move", prefix)
+		}
+	}
+	expectStatus(t, h.do("GET", "/", "", nil), http.StatusNotFound)
+}
