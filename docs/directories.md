@@ -124,6 +124,13 @@ reports the effective sources, index URL/404, parent listing, and crawler hints.
 resolves the actual index availability. `open` uses the same URL resolution.
 Use each command's help and `--json` for the supported interface.
 
+When an older API v1 server lacks `/api/v1/dirs`, existing commands retain their
+legacy behavior: `ls -l` omits policy annotations and directory `url`/`open`
+resolve through `/info`. Only a missing collection endpoint enables this
+fallback. A directory lookup 404 is checked against collection support first;
+authorization/transport failures and disabled-index results remain errors on
+supporting servers. New `dir` commands require directory-policy support.
+
 ## Theme compatibility and verification
 
 Custom themes must handle empty breadcrumb URLs as text, suppress empty parent

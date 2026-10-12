@@ -25,8 +25,10 @@
   ancestors; render those names as text. Honor `Page.NoIndex` in the layout and
   empty `Page.Parent`. Directory rows add title/description and use visible-entry
   counts once a rule exists. Without rules, legacy HTML/counts remain unchanged.
-- Directory `vela url` and `vela open` resolve public index availability and
-  explain a disabled or absent index instead of returning an unusable URL.
+- Directory `vela url` and `vela open` resolve public index availability on
+  servers with directory policies and explain disabled or absent indexes.
+  Older API v1 servers retain legacy URL/open behavior and long listings
+  without policy annotations.
 
 - **Breaking for existing deployments:** `VELA_ACCEL_PREFIX` now defaults to
   empty (Go streams file contents). Existing nginx accel deployments must set

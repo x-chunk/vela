@@ -107,6 +107,10 @@ API work and allows up to 30 seconds for active requests.
 API v1 preserves routes, existing field/value meanings, success statuses,
 public/signed URL formats, CLI exit codes, and CLI JSON shapes. Additive optional
 fields and new operations are allowed; breaking contracts require API v2.
+Existing CLI commands tolerate an older API v1 server without the additive
+`/dirs` endpoint: long listings omit annotations and directory URL/open commands
+use the legacy `/info` behavior. Policy-capable servers keep their authorization
+and disabled-index errors; absence is checked through the collection endpoint.
 CLI exit statuses are defined in [`internal/cli/errors.go`](../internal/cli/errors.go);
 `--json` changes representation, not success/failure. See [AGENTS.md](../AGENTS.md)
 for the full compatibility and security review checklist.

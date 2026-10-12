@@ -84,11 +84,15 @@ func (a *App) lsCommand() *cobra.Command {
 			policies := map[string]api.DirPolicy{}
 			if long && len(l.Dirs) > 0 {
 				rules, err := c.ListAllDirPolicies(ctx, client.DirListOptions{Prefix: prefix, Recursive: false, Limit: 1000})
-				if err != nil {
+				// The collection exists even without any rules. Its 404 means
+				// an older API v1 server has no directory-policy endpoint.
+				if err != nil && !api.IsCode(err, api.CodeNotFound) {
 					return err
 				}
-				for _, rule := range rules.Policies {
-					policies[rule.Prefix] = rule
+				if err == nil {
+					for _, rule := range rules.Policies {
+						policies[rule.Prefix] = rule
+					}
 				}
 			}
 			a.printListing(l, long, policies)
@@ -247,7 +251,23 @@ func (a *App) publicURL(cmd *cobra.Command, raw string) (string, error) {
 		}
 		dir, err := c.ShowDir(ctx, prefix)
 		if err != nil {
-			return "", err
+			if !api.IsCode(err, api.CodeNotFound) {
+				return "", err
+			}
+			// An individual 404 is not enough to infer missing support. Probe the
+			// collection, which never returns not_found on a supporting server.
+			_, probeErr := c.ListDirPolicies(ctx, client.DirListOptions{Limit: 1})
+			if probeErr == nil {
+				return "", err
+			}
+			if !api.IsCode(probeErr, api.CodeNotFound) {
+				return "", probeErr
+			}
+			info, err := c.Info(ctx)
+			if err != nil {
+				return "", err
+			}
+			return api.PublicURL(info.PublicURL, prefix), nil
 		}
 		if dir.URL == nil {
 			reason := "directory index is disabled"
