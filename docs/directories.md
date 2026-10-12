@@ -93,8 +93,10 @@ must satisfy root validation. Responses add `policies_moved` to `moved`.
 All rules load at service startup into an immutable map. A persistent SQLite
 counter, advanced by insert/update/delete triggers in the same transaction,
 invalidates local and cross-process readers. Each operation checks the counter;
-local mutations synchronously invalidate after commit. A request resolves one
-snapshot throughout, avoiding mixed generations in a page. The public index
+local mutations synchronously invalidate after commit. After the complete batched object read, the service rechecks that generation
+and retries the listing on a change. This prevents a concurrent cross-process
+move from combining new object paths with old hidden rules; theme fields and
+visible counts/dates use the validated policy snapshot. The public index
 fetches all live public objects under its prefix once, then computes visible
 entries and dates in memory; it does not query recursively per child.
 

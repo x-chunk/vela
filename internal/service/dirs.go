@@ -15,6 +15,7 @@ import (
 // DirPolicies is an immutable policy snapshot. Requests resolve every ancestor
 // against one generation, so a concurrent edit cannot mix settings on a page.
 type DirPolicies struct {
+	version     int64
 	rules       map[string]api.DirPolicy
 	rootDefault api.IndexMode
 }
@@ -83,7 +84,7 @@ func (s *Service) directoryPolicies(ctx context.Context) (*DirPolicies, error) {
 		if after != version {
 			continue
 		}
-		view := &DirPolicies{rules: make(map[string]api.DirPolicy, len(rules)), rootDefault: s.opts.RootIndex}
+		view := &DirPolicies{version: version, rules: make(map[string]api.DirPolicy, len(rules)), rootDefault: s.opts.RootIndex}
 		for _, p := range rules {
 			view.rules[p.Prefix] = p
 		}
@@ -116,23 +117,18 @@ func (s *Service) ShowDir(ctx context.Context, p Principal, rawPrefix string) (a
 	if err := p.checkPath(prefix); err != nil {
 		return api.EffectiveDir{}, err
 	}
-	view, err := s.directoryPolicies(ctx)
+	return s.describeDir(ctx, prefix)
+}
+
+func (s *Service) describeDir(ctx context.Context, prefix string) (api.EffectiveDir, error) {
+	tree, view, err := s.publicTree(ctx, prefix)
 	if err != nil {
 		return api.EffectiveDir{}, err
 	}
-	return s.describeDir(ctx, view, prefix)
-}
-
-func (s *Service) describeDir(ctx context.Context, view *DirPolicies, prefix string) (api.EffectiveDir, error) {
 	out := api.EffectiveDir{Prefix: prefix, Effective: view.Effective(prefix)}
 	if rule, ok := view.rules[prefix]; ok {
 		dto := dirPolicyDTO(rule)
 		out.Rule = &dto
-	}
-	// One public subtree query supplies existence and recursive visible entries.
-	tree, err := s.publicTree(ctx, prefix, view)
-	if err != nil {
-		return out, err
 	}
 	out.Exists = tree.exists
 	if out.Effective.Index == api.IndexOn && (prefix == "" || out.Exists) {
@@ -392,13 +388,33 @@ type publicNode struct {
 	latest   time.Time
 }
 
-func (s *Service) publicTree(ctx context.Context, prefix string, view *DirPolicies) (*publicNode, error) {
-	res, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: prefix, Recursive: true, Visibilities: []api.Visibility{api.Public}, LiveAt: s.now()})
-	if err != nil {
-		return nil, err
+// publicTree validates the persistent policy generation after the entire
+// object listing, including every SQL batch. A move through another process
+// can otherwise pair new paths with old rules and disclose a hidden entrance.
+func (s *Service) publicTree(ctx context.Context, prefix string) (*publicNode, *DirPolicies, error) {
+	for {
+		view, err := s.directoryPolicies(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		res, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: prefix, Recursive: true, Visibilities: []api.Visibility{api.Public}, LiveAt: s.now()})
+		if err != nil {
+			return nil, nil, err
+		}
+		version, err := s.store.DirPoliciesVersion(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if version != view.version {
+			continue
+		}
+		return buildPublicTree(prefix, view, res.Objects), view, nil
 	}
+}
+
+func buildPublicTree(prefix string, view *DirPolicies, objects []domain.Object) *publicNode {
 	root := &publicNode{prefix: prefix, children: map[string]*publicNode{}}
-	for _, o := range res.Objects {
+	for _, o := range objects {
 		node := root
 		parent := api.ParentPrefix(o.Path)
 		suffix := strings.TrimPrefix(parent, prefix)
@@ -417,7 +433,7 @@ func (s *Service) publicTree(ctx context.Context, prefix string, view *DirPolici
 		node.files = append(node.files, o)
 	}
 	summarizePublic(root, view)
-	return root, nil
+	return root
 }
 
 func summarizePublic(node *publicNode, view *DirPolicies) {

@@ -83,11 +83,7 @@ func (s *Service) Index(ctx context.Context, rawPrefix string) (IndexListing, er
 	if err != nil {
 		return IndexListing{}, notFoundf("not found")
 	}
-	view, err := s.directoryPolicies(ctx)
-	if err != nil {
-		return IndexListing{}, err
-	}
-	tree, err := s.publicTree(ctx, prefix, view)
+	tree, view, err := s.publicTree(ctx, prefix)
 	if err != nil {
 		return IndexListing{}, err
 	}

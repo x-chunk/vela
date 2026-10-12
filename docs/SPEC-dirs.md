@@ -433,8 +433,9 @@ Resolved compatibility and implementation details:
   replace an existing field's type and break public JSON compatibility.
 - **Cache:** a persistent `counters.dir_policies` generation is incremented by
   SQLite triggers in every policy transaction. All rules load at startup; each
-  operation checks this generation before using an immutable snapshot. Local
-  writes invalidate the cache synchronously after commit. This also detects
+  operation checks this generation before using an immutable snapshot. The generation is also validated after all object-listing batches, retrying
+  the listing when it changes. Local writes invalidate the cache synchronously
+  after commit. This also detects
   edits made through another process/pool; pooled `PRAGMA data_version` is not
   used because its value is connection-local.
 - **Move:** policy-only prefixes can move recursively. Destination conflicts
