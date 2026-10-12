@@ -28,8 +28,9 @@ Set `VELA_IMAGE='xchunk/vela:<version>'` to a published release tag (replace
 `<version>`), then run the selected script from the repository. The image is
 public and supports amd64 and arm64. The scripts bind only
 `127.0.0.1:8080:8080`; ensure a firewall and TLS proxy protect remote access.
-Override `VELA_HOST_DATA_DIR`, `VELA_ENV_FILE`, and `VELA_CONTAINER_NAME` as
-needed. The scripts set the selected backend and delivery prefix explicitly.
+Override `VELA_HOST_DATA_DIR`, `VELA_ENV_FILE`, `VELA_CONTAINER_NAME`, and
+`VELA_HOST_PORT` (default 8080) as needed; a different host port must match the
+proxy upstream address. The scripts set the selected backend and delivery prefix explicitly.
 Use `docker logs vela` and `docker exec vela velad healthcheck` after startup.
 
 By default only loopback may supply forwarding headers. With a host proxy and

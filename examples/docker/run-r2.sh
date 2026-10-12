@@ -16,8 +16,13 @@ esac
 data_dir=${VELA_HOST_DATA_DIR:-/srv/vela}
 env_file=${VELA_ENV_FILE:-/etc/vela/vela.env}
 container_name=${VELA_CONTAINER_NAME:-vela}
+# Loopback port for the reverse proxy; the container always listens on 8080.
+host_port=${VELA_HOST_PORT:-8080}
+case "$host_port" in
+    ''|*[!0-9]*) echo "VELA_HOST_PORT must be a port number" >&2; exit 1 ;;
+esac
 exec docker run -d --name "$container_name" --restart unless-stopped \
     --env-file "$env_file" \
-    -p 127.0.0.1:8080:8080 --mount "type=bind,src=$data_dir,dst=/data" \
+    -p "127.0.0.1:$host_port:8080" --mount "type=bind,src=$data_dir,dst=/data" \
     -e VELA_STORAGE=r2 -e VELA_ACCEL_PREFIX= \
     "$VELA_IMAGE"
