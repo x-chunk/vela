@@ -4,6 +4,8 @@ These configurations are starting points, not supported deployments. Vela
 supports `velad` and its `VELA_*` configuration; you are responsible for your
 reverse proxy, TLS certificates, firewall, backups, and updates. Replace all
 `CHANGE ME` values and validate the result for your own environment.
+Step-by-step deployment guides live in the
+[Vela documentation](https://docs.xchunk.org/vela).
 
 | Scenario | Environment | Docker script | nginx configuration | Choose when |
 | --- | --- | --- | --- | --- |
