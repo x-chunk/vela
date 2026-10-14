@@ -2,22 +2,19 @@
 
 ## Unreleased
 
+## v0.2.0 — 2026-10-12
+
 ### Added
 
 - Independent directory policies with inherited index/crawler settings, hidden
   entrances, titles/descriptions, `/api/v1/dirs`, and `vela dir` commands.
+  Hidden directories are not access control; see [directories](docs/directories.md).
 - `VELA_ROOT_INDEX` defaults to `on`; an explicit root database rule overrides it.
 - Recursive moves atomically carry policies and report `policies_moved`.
-
-- MIT license, contribution guide, and security reporting policy.
-- MIT license included in the server image and CLI release archives.
-- Separate deployment examples for filesystem direct delivery, explicit nginx
-  accel, and private R2/S3 storage; configurable image, paths, and container name.
-- `VELA_R2_REGION` (default `auto`) for other S3 signing regions. An explicit
-  `VELA_R2_ENDPOINT` no longer requires a Cloudflare account ID.
-- CI checks for neutral examples, secret leaks, shell scripts, and nginx syntax.
-- Docker Hub release images for both linux/amd64 and linux/arm64, with MIT and
-  documentation OCI labels.
+- `VELA_HOST_PORT` selects the loopback host port in the Docker run examples
+  (default 8080); the proxy upstream must match it.
+- Caddy example for fs-direct and r2 with automatic certificates and query-free
+  access and error logs; `make validate-examples` checks it.
 
 ### Changed
 
@@ -29,6 +26,33 @@
   servers with directory policies and explain disabled or absent indexes.
   Older API v1 servers retain legacy URL/open behavior and long listings
   without policy annotations.
+
+### Upgrading
+
+- `velad serve` applies migration `0004_dir_policies` on start. Take a backup
+  first: an older image cannot be used on the migrated database, so restoring
+  that backup is the rollback path.
+- No proxy changes are required. Update the CLI to use `vela dir`.
+
+## v0.1.0 — 2026-10-11
+
+First public release: REST API v1, `vela` CLI, public index, expiring signed
+links, recoverable trash, SQLite metadata, and filesystem or private R2/S3
+content storage.
+
+### Added
+
+- MIT license, contribution guide, and security reporting policy.
+- MIT license included in the server image and CLI release archives.
+- Separate deployment examples for filesystem direct delivery, explicit nginx
+  accel, and private R2/S3 storage; configurable image, paths, and container name.
+- `VELA_R2_REGION` (default `auto`) for other S3 signing regions. An explicit
+  `VELA_R2_ENDPOINT` no longer requires a Cloudflare account ID.
+- CI checks for neutral examples, secret leaks, shell scripts, and nginx syntax.
+- Docker Hub release images for both linux/amd64 and linux/arm64, with MIT and
+  documentation OCI labels.
+
+### Changed (from pre-release builds)
 
 - **Breaking for existing deployments:** `VELA_ACCEL_PREFIX` now defaults to
   empty (Go streams file contents). Existing nginx accel deployments must set
