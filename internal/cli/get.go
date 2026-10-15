@@ -204,7 +204,7 @@ func (a *App) downloadFile(ctx context.Context, c *client.Client, o *api.Object,
 			_ = root.Remove(tmpName)
 		}
 	}()
-	bar := !a.quiet && !a.jsonOut && a.ErrIsTerminal() && o.Size > progressThreshold
+	bar := a.progressEnabled() && o.Size > progressThreshold
 	if err := a.download(ctx, c, o, tmp, bar); err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func (a *App) download(ctx context.Context, c *client.Client, o *api.Object, w i
 	dst := io.MultiWriter(w, h)
 	var prog *output.Progress
 	if bar {
-		prog = output.NewProgress(a.Err, o.Path, o.Size)
+		prog = output.NewProgress(a.Err, o.Path, o.Size, a.colorEnabled(a.ErrIsTerminal()))
 		dst = io.MultiWriter(dst, prog.Writer())
 	}
 	_, err = io.Copy(dst, rc)

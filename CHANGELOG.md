@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.2.1 — 2026-10-15
+
+### Fixed
+
+- CLI transfer progress fits the terminal width and redraws in place instead
+  of leaving wrapped frames in scrollback. Long Unicode filenames remain valid
+  and cannot inject terminal controls; retries reset the speed calculation.
+
+### Changed
+
+- Transfer bars use a blue fill and turn green on completion, respecting
+  `--no-color` and `NO_COLOR`. Narrow windows show fewer details. Live progress
+  is suppressed with `TERM=dumb` or `--verbose` to keep diagnostics readable.
+  No new dependencies are required.
+
 ## v0.2.0 — 2026-10-12
 
 ### Added

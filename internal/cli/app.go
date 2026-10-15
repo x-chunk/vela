@@ -140,13 +140,12 @@ func (a *App) newRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			_, noColorEnv := a.LookupEnv("NO_COLOR")
 			a.printer = &output.Printer{
 				Out:   a.Out,
 				Err:   a.Err,
 				JSON:  a.jsonOut,
 				Quiet: a.quiet || a.jsonOut,
-				Color: !a.noColor && !noColorEnv && a.env("TERM") != "dumb" && a.OutIsTerminal(),
+				Color: a.colorEnabled(a.OutIsTerminal()),
 				Now:   a.Now,
 			}
 			return nil
@@ -181,6 +180,16 @@ func (a *App) newRootCommand() *cobra.Command {
 	root.SetHelpCommandGroupID("account")
 	root.SetCompletionCommandGroupID("account")
 	return root
+}
+
+func (a *App) colorEnabled(terminal bool) bool {
+	_, noColorEnv := a.LookupEnv("NO_COLOR")
+	return terminal && !a.noColor && !noColorEnv && a.env("TERM") != "dumb"
+}
+
+func (a *App) progressEnabled() bool {
+	// HTTP traces write separate lines to stderr and would break live redraws.
+	return !a.quiet && !a.jsonOut && !a.verbose && a.env("TERM") != "dumb" && a.ErrIsTerminal()
 }
 
 // ctx returns the command context with the --timeout applied.

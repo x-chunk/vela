@@ -72,7 +72,7 @@ func TestColors(t *testing.T) {
 func TestProgress(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	p := NewProgress(&buf, "file.bin", 1000)
+	p := NewProgress(&buf, "file.bin", 1000, false)
 	r := p.Reader(strings.NewReader(strings.Repeat("x", 1000)))
 	if _, err := io.Copy(io.Discard, r); err != nil {
 		t.Fatal(err)

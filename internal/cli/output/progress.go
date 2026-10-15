@@ -6,6 +6,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 // Progress draws a single-line progress bar on a terminal (stderr). It
@@ -19,13 +22,25 @@ type Progress struct {
 	done    int64
 	start   time.Time
 	last    time.Time
-	width   int
+	color   bool
+	columns func() int
 	stopped bool
 }
 
-// NewProgress starts a bar for a transfer of total bytes.
-func NewProgress(w io.Writer, label string, total int64) *Progress {
-	return &Progress{w: w, label: label, total: total, start: time.Now(), width: 24}
+// NewProgress starts a bar for a transfer of total bytes. The caller enables
+// color according to the terminal and the user's color preferences.
+func NewProgress(w io.Writer, label string, total int64, color bool) *Progress {
+	return &Progress{
+		w: w, label: Clean(label), total: total, start: time.Now(), color: color,
+		columns: func() int {
+			if f, ok := w.(interface{ Fd() uintptr }); ok {
+				if columns, _, err := term.GetSize(int(f.Fd())); err == nil && columns > 0 { // #nosec G115 -- file descriptors fit in int
+					return columns
+				}
+			}
+			return 80
+		},
+	}
 }
 
 // Reader wraps r so that reads advance the bar.
@@ -38,12 +53,17 @@ func (p *Progress) Writer() io.Writer { return progressWriter{p: p} }
 func (p *Progress) Reset() {
 	p.mu.Lock()
 	p.done = 0
+	p.start = time.Now()
+	p.last = time.Time{}
 	p.mu.Unlock()
 }
 
 func (p *Progress) add(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.stopped {
+		return
+	}
 	p.done += int64(n)
 	if now := time.Now(); now.Sub(p.last) >= 100*time.Millisecond {
 		p.last = now
@@ -59,17 +79,74 @@ func (p *Progress) draw(now time.Time) {
 	if p.total > 0 {
 		frac = min(float64(p.done)/float64(p.total), 1)
 	}
-	filled := int(frac * float64(p.width))
-	bar := strings.Repeat("=", filled) + strings.Repeat(" ", p.width-filled)
-	rate := ""
-	if el := now.Sub(p.start).Seconds(); el > 0.2 {
-		rate = Size(int64(float64(p.done)/el)) + "/s"
+	// Leave the last column unused: wrapping makes a carriage return update
+	// only the last physical row, leaving earlier frames in scrollback.
+	columns := max(0, p.columns()-1)
+	status := fmt.Sprintf("%3.0f%%", frac*100)
+	if columns < 10 {
+		_, _ = fmt.Fprintf(p.w, "\r\x1b[2K%s", status[:min(columns, len(status))])
+		return
 	}
-	label := p.label
-	if len(label) > 32 {
-		label = "..." + label[len(label)-29:]
+	if columns >= 50 {
+		status += "  " + Size(p.done) + " / " + Size(p.total)
 	}
-	_, _ = fmt.Fprintf(p.w, "\r%-32s [%s] %3.0f%% %9s / %-9s %10s\x1b[K", label, bar, frac*100, Size(p.done), Size(p.total), rate)
+	if el := now.Sub(p.start).Seconds(); columns >= 72 && el > 0.2 {
+		status += "  " + Size(int64(float64(p.done)/el)) + "/s"
+	}
+	label, labelWidth := "", 0
+	if columns >= 40 {
+		label, labelWidth = progressLabel(p.label, min(24, columns/4))
+		if label != "" {
+			label += "  "
+			labelWidth += 2
+		}
+	}
+	width := min(28, columns-labelWidth-len(status)-3)
+	filled := int(frac * float64(width))
+	bar := strings.Repeat("━", filled)
+	style := blue
+	if frac == 1 {
+		style = green
+	}
+	if p.color && bar != "" {
+		bar = style + bar + reset
+	}
+	empty := strings.Repeat("─", width-filled)
+	if p.color && empty != "" {
+		empty = dim + empty + reset
+	}
+	_, _ = fmt.Fprintf(p.w, "\r\x1b[2K%s[%s%s] %s", label, bar, empty, status)
+}
+
+// progressLabel keeps the filename end without splitting UTF-8. Budget two
+// cells for every non-ASCII rune so wide filenames cannot wrap the bar;
+// combining characters merely leave a little extra room.
+func progressLabel(s string, budget int) (string, int) {
+	cells := 0
+	for _, r := range s {
+		cells++
+		if r >= utf8.RuneSelf {
+			cells++
+		}
+	}
+	if cells <= budget {
+		return s, cells
+	}
+	cells = 3 // ellipsis
+	start := len(s)
+	for start > 0 {
+		r, n := utf8.DecodeLastRuneInString(s[:start])
+		w := 1
+		if r >= utf8.RuneSelf {
+			w = 2
+		}
+		if cells+w > budget {
+			break
+		}
+		cells += w
+		start -= n
+	}
+	return "..." + s[start:], cells
 }
 
 // Finish draws the final state and ends the line.

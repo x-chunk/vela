@@ -111,6 +111,20 @@ Existing CLI commands tolerate an older API v1 server without the additive
 `/dirs` endpoint: long listings omit annotations and directory URL/open commands
 use the legacy `/info` behavior. Policy-capable servers keep their authorization
 and disabled-index errors; absence is checked through the collection endpoint.
+
+CLI transfer progress is rendered on stderr at most every 100 ms. Each frame
+fits within the terminal width with the last column reserved to prevent line
+wrapping; narrow windows omit speed, byte counts, and then the filename. If the
+width is unavailable, the renderer assumes 80 columns. Unicode filenames are
+cleaned and shortened conservatively without splitting UTF-8. Transfers that are
+retried reset both the byte count and the rate calculation. The renderer uses
+the existing `golang.org/x/term` dependency, with no terminal UI framework.
+
+Progress color follows stderr's TTY status, `--no-color`, and `NO_COLOR`,
+independently of stdout. No live progress is emitted for redirected stderr,
+`TERM=dumb`, `--quiet`, `--json`, or `--verbose` (HTTP traces need separate lines).
+The existing size threshold and single-upload restriction still apply.
+
 CLI exit statuses are defined in [`internal/cli/errors.go`](../internal/cli/errors.go);
 `--json` changes representation, not success/failure. See [AGENTS.md](../AGENTS.md)
 for the full compatibility and security review checklist.

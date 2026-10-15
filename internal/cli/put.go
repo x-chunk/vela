@@ -216,7 +216,7 @@ func (a *App) printPlan(plan []putItem) error {
 func (a *App) runPut(ctx context.Context, c *client.Client, plan []putItem, md meta, force bool, jobs int) error {
 	results := make([]*api.Object, len(plan))
 	errs := make([]error, len(plan))
-	showBar := len(plan) == 1 && !a.quiet && !a.jsonOut && a.ErrIsTerminal()
+	showBar := len(plan) == 1 && a.progressEnabled()
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, jobs)
@@ -313,7 +313,7 @@ func (a *App) uploadOne(ctx context.Context, c *client.Client, it putItem, md me
 	}
 	var prog *output.Progress
 	if bar {
-		prog = output.NewProgress(a.Err, it.Remote, opts.Size)
+		prog = output.NewProgress(a.Err, it.Remote, opts.Size, a.colorEnabled(a.ErrIsTerminal()))
 		body = prog.Reader(body)
 	}
 	o, _, err := c.Upload(ctx, it.Remote, body, opts)
