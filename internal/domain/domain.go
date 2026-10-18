@@ -114,6 +114,19 @@ type APIKey struct {
 	RevokedAt  *time.Time
 }
 
+// WebSession is a browser session of the web sign-in. It stores the SHA-256
+// of the random session ID, never the ID itself, and refers to the API key it
+// was created with; the key decides what the session can see.
+type WebSession struct {
+	IDHash     []byte
+	KeyID      string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	// ExpiresAt is the absolute end of the session; the idle timeout is
+	// computed from LastSeenAt.
+	ExpiresAt time.Time
+}
+
 // ListQuery selects objects for listings and the HTML index.
 type ListQuery struct {
 	// Prefix is the directory being listed ("" for root, else ends in "/").

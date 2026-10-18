@@ -141,19 +141,38 @@ func (q reads) ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]
 // HasPublicObjects checks public index existence without loading metadata or
 // counting the entire subtree. Only a matching live row is needed.
 func (q reads) HasPublicObjects(ctx context.Context, prefix string, now time.Time) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM objects WHERE visibility = 'public'
-  AND (expires_at IS NULL OR expires_at >= ?)`
+	exists, err := q.hasLiveObjects(ctx, prefix, now, true)
+	if err != nil {
+		return false, fmt.Errorf("check public directory existence: %w", err)
+	}
+	return exists, nil
+}
+
+// HasLiveObjects reports whether any unexpired object, whatever its
+// visibility, lies below prefix. Signed-in web views use it to decide whether
+// a key's subtree can be entered.
+func (q reads) HasLiveObjects(ctx context.Context, prefix string, now time.Time) (bool, error) {
+	exists, err := q.hasLiveObjects(ctx, prefix, now, false)
+	if err != nil {
+		return false, fmt.Errorf("check directory existence: %w", err)
+	}
+	return exists, nil
+}
+
+func (q reads) hasLiveObjects(ctx context.Context, prefix string, now time.Time, publicOnly bool) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM objects WHERE (expires_at IS NULL OR expires_at >= ?)`
 	args := []any{ms(now)}
+	if publicOnly {
+		query += " AND visibility = 'public'"
+	}
 	if prefix != "" {
 		query += " AND path >= ? AND path < ?"
 		args = append(args, prefix, prefixUpper(prefix))
 	}
 	query += " LIMIT 1)"
 	var exists bool
-	if err := q.db.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
-		return false, fmt.Errorf("check public directory existence: %w", err)
-	}
-	return exists, nil
+	err := q.db.QueryRowContext(ctx, query, args...).Scan(&exists)
+	return exists, err
 }
 
 // DirStats counts public, unexpired objects below prefix and returns the
