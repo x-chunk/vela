@@ -110,7 +110,7 @@ signed-in responses could be served to anonymous visitors and the reverse.
 | --- | --- |
 | Anonymous index and error pages | Unchanged CSP with `form-action 'none'`; the footer offers a plain "sign in" link |
 | Sign-in page and pages for a session | Same CSP with only `form-action 'self'`; nothing else is relaxed |
-| Every HTML page | `Referrer-Policy: same-origin` (signed-link errors keep `no-referrer`) |
+| Every HTML page and sandboxed upload | `Referrer-Policy: same-origin`; private files, signed links and their errors keep `no-referrer` |
 | Uploaded content except raster images, audio, video, PDF and plain text, any delivery | `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads` |
 
 No JavaScript is needed: indicator tooltips are CSS drawn from `data-tip` on

@@ -99,6 +99,11 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 	h.Set("X-Content-Type-Options", "nosniff")
 	if s.opts.WebAuth && !passiveContent(o.ContentType) {
 		pol.csp = sandboxCSP
+		// Like every HTML page while sign-in is enabled (docs/SPEC-web.md);
+		// private and signed content keeps its stricter no-referrer.
+		if pol.referrerPolicy == "" {
+			pol.referrerPolicy = referrerSameOrigin
+		}
 	}
 
 	if s.opts.AccelPrefix != "" {

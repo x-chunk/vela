@@ -458,12 +458,18 @@ func TestActiveContentSandbox(t *testing.T) {
 		} {
 			r := h.do("GET", path, "", nil)
 			expectStatus(t, r, 200)
-			want := ""
+			want, referrer := "", ""
 			if enabled && active {
-				want = sandbox
+				want, referrer = sandbox, "same-origin"
+			}
+			if path == u.RequestURI() {
+				referrer = "no-referrer"
 			}
 			if got := r.header.Get("Content-Security-Policy"); got != want {
 				t.Errorf("web auth %t, %s: CSP = %q; want %q", enabled, path, got, want)
+			}
+			if got := r.header.Get("Referrer-Policy"); got != referrer {
+				t.Errorf("web auth %t, %s: Referrer-Policy = %q; want %q", enabled, path, got, referrer)
 			}
 		}
 	}

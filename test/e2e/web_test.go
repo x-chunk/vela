@@ -41,8 +41,10 @@ func TestWebSignInThroughNginx(t *testing.T) {
 	if r.status != 200 {
 		t.Fatal(r.status)
 	}
-	expectHeaders(t, "anonymous html", r, map[string]string{"Vary": "Cookie", "Content-Security-Policy": sandbox, "Cache-Control": "public, max-age=300"})
-	once("anonymous html", r, "Vary", "Content-Security-Policy", "Cache-Control")
+	expectHeaders(t, "anonymous html", r, map[string]string{
+		"Vary": "Cookie", "Content-Security-Policy": sandbox, "Cache-Control": "public, max-age=300", "Referrer-Policy": "same-origin",
+	})
+	once("anonymous html", r, "Vary", "Content-Security-Policy", "Cache-Control", "Referrer-Policy")
 	r = n.get("GET", n.https+"/pub.txt")
 	expectHeaders(t, "anonymous text", r, map[string]string{"Vary": "Cookie", "Content-Security-Policy": "", "Cache-Control": "public, max-age=300"})
 	r = n.get("GET", n.https+"/priv.txt")
