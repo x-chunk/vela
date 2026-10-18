@@ -120,3 +120,68 @@ Visible only in signed-in sessions. Each indicator is a small inline SVG from th
 - Whether to ship the revoke-all subcommand in the first iteration.
 - Whether idle 7d / max 30d suits the single-owner use case or should be shorter.
 - Final icon names (`unlisted`, `hidden`, `no-index`) once checked against the existing icon set.
+
+## Implementation decisions (2026-10-18)
+
+Accepted before implementation:
+
+- **Uploaded active content:** the spec missed that SPEC §19.8 (serve uploaded
+  HTML/SVG as is) relied on the origin holding no cookies. With a session
+  cookie, an uploaded page on the same origin could read and leak whatever a
+  signed-in visitor can see. While `VELA_WEB_AUTH` is on, HTML and any XML
+  (XHTML, SVG, XSL) are therefore served with
+  `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads`
+  on direct URLs, signed links and API downloads: scripts run in an opaque
+  origin without cookies or same-origin reads. With the flag off, nothing
+  changes. PDF is not sandboxed because that breaks built-in viewers.
+- **Open questions:** `velad session revoke-all` ships now; the TTL defaults
+  stay 7d idle / 30d absolute; the icon names `lock`, `unlisted`, `hidden` and
+  `no-index` are kept, as they collide with no file kind.
+
+Resolved details:
+
+- **Ancestors of the prefix:** where the anonymous index is disabled, the
+  ancestor lists only the entrance (acceptance check 3); otherwise its
+  anonymous rows plus the entrance. The entrance exists while the prefix holds
+  a live object; with an empty prefix subtree the ancestors are plain
+  anonymous pages, so the session reveals nothing new. Rows count the entries
+  of the page they lead to as the session sees it; without stored policies,
+  counts stay subtree file counts.
+- **Expired objects** remain invisible to sessions, as on the public side; the
+  authenticated API keeps reading them until the janitor runs. The session
+  principal is downgraded to `ro`, so it cannot authorize a write.
+- **Anonymous output:** tooltip and footer styles live in `style.css`, so the
+  stylesheet's content hash in the asset URL changes; the markup stays
+  byte-identical while sign-in is off (golden fixtures). With sign-in on,
+  anonymous pages add the footer link, `Vary: Cookie`, and
+  `Referrer-Policy: same-origin` on HTML, as required for all HTML responses.
+  The CSP is unchanged. The entry list no longer clips its overflow, so that
+  tooltips stay visible; rounded first and last rows keep its look.
+- **Sign-in request:** `next` travels in the query of the form action (queries
+  are never logged), so the body holds only the key and fits the proxies'
+  1 KiB limit for public routes. Only the path of `next` is kept. Sign-in, not
+  just sign-out, requires `Sec-Fetch-Site: same-origin` or a matching
+  `Origin`, which prevents login CSRF; a request with neither is refused.
+  Statuses: `401` invalid key, `400` unreadable form, `403` cross-site, `429`
+  throttled. Failed sign-ins have their own budget (5 per minute per IP), and
+  unknown key IDs are compared against a placeholder hash so that they take as
+  long as wrong secrets.
+- **Session handling:** signing in replaces the browser's previous session.
+  The cookie's `Max-Age` is the absolute lifetime. Activity is written at most
+  hourly, or every half idle timeout when that is shorter; the idle timeout
+  must be at least one minute and not exceed the absolute lifetime. Serving
+  requires an https public URL unless the development cookie is chosen. A
+  stale cookie is ignored rather than cleared, so that anonymous responses,
+  which may be cached, never carry `Set-Cookie`.
+- **Theme contract:** additive fields `Page.SignInURL`, `Session.SignOutURL`
+  (neither in JSON), `ErrorPage.Session`/`SignInURL`, the `LoginPage` data and
+  an optional `login.html` that falls back to the embedded one. Indicators
+  follow the name outside its link, because a link must not contain focusable
+  elements. Tooltips are anchored to the name on wide screens and to the
+  row's right edge on narrow ones.
+- **Accel:** nginx drops `Vary` and `Content-Security-Policy` from an
+  `X-Accel-Redirect` response, so velad sends `X-Vela-Vary` and
+  `X-Vela-Content-Security-Policy`, which the internal locations re-emit.
+- **Documentation:** the user website's introduction is maintained outside this
+  repository (AGENTS.md, Stage 4); the README and `docs/web-auth.md` describe
+  the feature here.

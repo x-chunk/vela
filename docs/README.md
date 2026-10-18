@@ -14,6 +14,7 @@ settings and assumptions needed to adapt the supplied configurations.
 | [Configuration](configuration.md) | Defaults, precedence, validation, CLI profiles | `internal/config/`, `internal/cli/config/` |
 | [Storage and recovery](storage.md) | Publication, collection, delivery, capacity, backup and migration guarantees | `internal/content/`, `internal/blob/`, `internal/r2/`, `internal/store/`, `internal/velad/` |
 | [Theme contract](theme.md) | Template files, data, helpers, and browser constraints | `internal/index/`, `internal/server/public.go` |
+| [Web sign-in](web-auth.md) | Sessions, signed-in views, caching, and browser policies | `internal/service/web.go`, `internal/service/webview.go`, `internal/server/web.go` |
 | [Contributing](../CONTRIBUTING.md) | Toolchain, verification, and change process | `Makefile`, `.github/workflows/` |
 
 ## Specifications and historical records

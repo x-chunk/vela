@@ -30,7 +30,7 @@ and credentials are environment-only; use `velad serve --help` for core flags.
 | `VELA_LOG_FORMAT` | `json` | `json` or `text` |
 | `VELA_DEFAULT_VISIBILITY` | `unlisted` | `public`, `unlisted`, or `private` |
 | `VELA_ROBOTS` | `deny` | `deny` or `allow` for robots.txt |
-| `VELA_WEB_AUTH` | `off` | Read-only browser sign-in with an API key: `on` or `off` |
+| `VELA_WEB_AUTH` | `off` | Read-only [browser sign-in](web-auth.md) with an API key: `on` or `off` |
 | `VELA_WEB_INSECURE_COOKIE` | `off` | Session cookie without `Secure` and `__Host-`; plain-HTTP development only |
 | `VELA_WEB_SESSION_IDLE` | `7d` | Sliding idle timeout of a web session; at least one minute |
 | `VELA_WEB_SESSION_MAX` | `30d` | Absolute web session lifetime; not shorter than the idle timeout |

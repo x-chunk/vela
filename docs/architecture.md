@@ -26,8 +26,9 @@ exclusion of the S3 SDK from the CLI are enforced by
 
 ## Authorization and object lifecycle
 
-API keys arrive only in `Authorization: Bearer`; scope ordering is `ro`, `rw`,
-`admin`. Every operation checks its key prefix, including move source and target,
+API keys arrive only in `Authorization: Bearer`, or once in the optional
+[web sign-in](web-auth.md) form, which exchanges them for a read-only browser
+session; scope ordering is `ro`, `rw`, `admin`. Every operation checks its key prefix, including move source and target,
 restore destination, trash, and links. Ancestor directory listings narrow to the
 key subtree. Purge requires `admin`; listing working signed URLs requires `rw`.
 Keys are administered through local `velad key` commands, never HTTP.
@@ -90,7 +91,8 @@ through `api.EncodeHeaderText`; metadata mutation preconditions use revision
 ETags (`"r<number>"`), while download validators use content SHA-256 ETags.
 
 The public transport serves directory indexes, object URLs, `/s/` links,
-`/_vela/assets/`, `robots.txt`, and the favicon. Directory `?format=json` returns
+`/_vela/assets/`, `robots.txt`, the favicon, and with `VELA_WEB_AUTH` the
+`/_vela/login` and `/_vela/logout` routes. Directory `?format=json` returns
 the same public data as the HTML [theme contract](theme.md). [Directory policies](directories.md)
 control index availability, hidden entrances, and crawler hints independently
 of file access; recursive moves carry their rules in the same transaction. Access decisions

@@ -20,7 +20,9 @@ and contributor references are maintained in [docs/](docs/README.md).
 
 **Unlisted is not access protection.** API keys have read-only, read/write, or
 admin scopes and can be restricted to a path prefix. Keys are managed locally
-with `velad key`, never through HTTP. Deletion moves files to trash for 14 days
+with `velad key`, never through HTTP. The browser sees the read-only public
+index; optional [web sign-in](docs/web-auth.md) (`VELA_WEB_AUTH`) lets a key
+holder browse everything that key can see, still read-only. Deletion moves files to trash for 14 days
 by default; renaming changes direct URLs while keeping signed links attached
 to the object.
 

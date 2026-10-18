@@ -84,6 +84,16 @@ if you changed `VELA_HOST_PORT`. The file filters queries and request headers
 out of both access and handler error logs; keep those filters if you change
 logging. Run `caddy validate` before reloading.
 
+## Web sign-in
+
+`VELA_WEB_AUTH=on` adds an optional read-only browser sign-in with an API key
+([reference](../docs/web-auth.md)). It needs the https public origin. With
+accel, keep the `Vary` and `Content-Security-Policy` lines of both internal
+locations in `nginx/accel-locations.conf`. Do not cache Vela responses in the
+proxy. If a CDN sits in front, add a cache bypass rule for requests carrying
+the `__Host-vela_session` cookie, because CDNs such as Cloudflare ignore
+`Vary: Cookie`. `velad session revoke-all` ends every browser session.
+
 ## Check after deployment
 
 1. `curl -I https://store.example.com/healthz` returns 200.
@@ -102,3 +112,6 @@ logging. Run `caddy validate` before reloading.
    direct requests to `/_blobs/` return 404.
 7. Delete the test files, confirm they are in the trash, and test restoration.
    Make and restore a backup before storing important data.
+8. With web sign-in, sign in at `/_vela/login`, open a private file, and check
+   `Cache-Control: private, no-store`; the same URL must return 404 in a
+   private window. Uploaded HTML must carry `Content-Security-Policy: sandbox`.
