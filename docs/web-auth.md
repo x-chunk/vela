@@ -111,15 +111,18 @@ signed-in responses could be served to anonymous visitors and the reverse.
 | Anonymous index and error pages | Unchanged CSP with `form-action 'none'`; the footer offers a plain "sign in" link |
 | Sign-in page and pages for a session | Same CSP with only `form-action 'self'`; nothing else is relaxed |
 | Every HTML page | `Referrer-Policy: same-origin` (signed-link errors keep `no-referrer`) |
-| Uploaded HTML or XML (including XHTML, SVG and XSL), any delivery | `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads` |
+| Uploaded content except raster images, audio, video, PDF and plain text, any delivery | `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads` |
 
 No JavaScript is needed: indicator tooltips are CSS drawn from `data-tip` on
 hover and keyboard focus. The sandbox exists because the origin now holds a
 session cookie: an uploaded page would otherwise run on Vela's origin and
 could use a signed-in visitor's cookie to read and leak private files. In the
 sandbox, scripts still run but in an opaque origin without cookies, storage or
-same-origin reads, and cross-site posts are refused by the origin check. PDF
-and other types are unaffected. In accel mode the policy travels as
+same-origin reads, and cross-site posts are refused by the origin check. The
+exemptions are a list of passive types rather than a list of dangerous ones,
+so an unusual type that a browser renders as a document (SVG, XML,
+`multipart/x-mixed-replace`) is still sandboxed; PDF is exempt because a
+sandbox breaks built-in viewers. In accel mode the policy travels as
 `X-Vela-Content-Security-Policy`. Without web sign-in, uploads keep their
 previous behavior (SPEC §19.8).
 

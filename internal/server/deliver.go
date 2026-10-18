@@ -31,7 +31,7 @@ const (
 	referrerNone            = "no-referrer"
 	// sandboxCSP runs uploaded documents in an opaque origin: their scripts
 	// work but can neither read the session cookie's responses nor post
-	// same-origin forms. See activeContent.
+	// same-origin forms. See passiveContent.
 	sandboxCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 )
 
@@ -91,13 +91,13 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // work. Without web sign-in that is acceptable because the origin holds no
 // cookies or sessions: the API authenticates by header only, so a malicious
 // page cannot act on a user's behalf. With web sign-in the origin does hold a
-// session cookie, so such documents are sandboxed (see activeContent).
+// session cookie, so such documents are sandboxed (see passiveContent).
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Content, pol deliveryPolicy) {
 	o := c.Object
 	etag := `"sha256:` + o.SHA256 + `"`
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
-	if s.opts.WebAuth && activeContent(o.ContentType) {
+	if s.opts.WebAuth && !passiveContent(o.ContentType) {
 		pol.csp = sandboxCSP
 	}
 
@@ -230,23 +230,27 @@ func setPolicyHeaders(h http.Header, pol deliveryPolicy) {
 	}
 }
 
-// activeContent reports whether a browser may run scripts in a document of
-// this type: HTML and any XML, which can embed XHTML and SVG scripts or
-// XSLT. Such a document served from this origin could otherwise use the
-// visitor's session cookie to read and leak private files, so with web
-// sign-in it gets sandboxCSP. Other types, PDF included, are left alone
-// because nosniff stops browsers from treating them as documents with
-// scripts, and sandboxing breaks built-in PDF viewers.
-func activeContent(contentType string) bool {
+// passiveContent reports whether browsers show content of this type without
+// running scripts: raster images, audio, video, PDF and plain text. Any other
+// type might open as a document with scripts (HTML, XML such as SVG,
+// multipart/x-mixed-replace, ...), and such a document served from this
+// origin could use a signed-in visitor's session cookie to read and leak
+// private files. So while web sign-in is enabled everything else gets
+// sandboxCSP: a sandbox on a harmless type costs nothing, whereas a missed
+// active type would not be caught by a list of known dangerous ones. PDF is
+// exempt because a sandbox breaks built-in PDF viewers.
+func passiveContent(contentType string) bool {
 	mt, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
+	if err != nil || strings.HasSuffix(mt, "+xml") {
+		return false
+	}
+	switch {
+	case mt == "application/pdf", mt == "text/plain":
+		return true
+	case strings.HasPrefix(mt, "image/"), strings.HasPrefix(mt, "audio/"), strings.HasPrefix(mt, "video/"):
 		return true
 	}
-	switch mt {
-	case "text/html", "text/xml", "application/xml", "text/xsl":
-		return true
-	}
-	return strings.HasSuffix(mt, "+xml")
+	return false
 }
 
 // noneMatch evaluates If-None-Match (RFC 9110, section 13.1.2) with weak

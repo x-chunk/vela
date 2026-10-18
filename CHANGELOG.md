@@ -15,8 +15,9 @@
 
 ### Changed
 
-- While web sign-in is enabled, uploaded HTML and XML (including SVG) are
-  served with a `Content-Security-Policy` sandbox, public responses carry
+- While web sign-in is enabled, uploads other than images, audio, video, PDF
+  and plain text (HTML and SVG included) are served with a
+  `Content-Security-Policy` sandbox, public responses carry
   `Vary: Cookie`, and HTML pages `Referrer-Policy: same-origin`. Without it,
   responses are unchanged; the stylesheet's cache-busting hash changes because
   of new styles.

@@ -441,6 +441,8 @@ func TestActiveContentSandbox(t *testing.T) {
 		h.upload("page.html", "<script>fetch('/')</script>", api.HeaderVisibility, "public", "Content-Type", "text/html; charset=utf-8")
 		h.upload("pic.svg", "<svg/>", api.HeaderVisibility, "unlisted", "Content-Type", "image/svg+xml")
 		h.upload("doc.pdf", "%PDF", api.HeaderVisibility, "public", "Content-Type", "application/pdf")
+		h.upload("pic.png", "\x89PNG", api.HeaderVisibility, "public", "Content-Type", "image/png")
+		h.upload("push.bin", "--x", api.HeaderVisibility, "public", "Content-Type", "multipart/x-mixed-replace; boundary=x")
 		h.upload("private/page.xhtml", "<html/>", api.HeaderVisibility, "private", "Content-Type", "application/xhtml+xml")
 		r := h.admin("POST", api.RouteLinks, `{"path":"private/page.xhtml","ttl":"1h"}`)
 		expectStatus(t, r, 201)
@@ -451,7 +453,9 @@ func TestActiveContentSandbox(t *testing.T) {
 			t.Fatal(err)
 		}
 		sandbox := "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-		for path, active := range map[string]bool{"/page.html": true, "/pic.svg": true, "/doc.pdf": false, u.RequestURI(): true} {
+		for path, active := range map[string]bool{
+			"/page.html": true, "/pic.svg": true, "/push.bin": true, u.RequestURI(): true, "/doc.pdf": false, "/pic.png": false,
+		} {
 			r := h.do("GET", path, "", nil)
 			expectStatus(t, r, 200)
 			want := ""

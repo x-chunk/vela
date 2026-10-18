@@ -118,7 +118,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
 11. API keys are managed only by `velad key ...` inside the container, never over HTTP.
 12. Paths are validated in one place (`api.CleanObjectPath`/`CleanPrefix`): NFC, no empty/dot segments, no control characters or backslashes, length limits, reserved first segments (`api`, `s`, `_vela`, `_blobs`, `healthz`, `robots.txt`, `favicon.ico`). Non-canonical API URLs are rejected rather than redirected.
 13. In accel mode, velad never sends `Cache-Control` directly (nginx would forward it *and* add the `X-Vela-Cache-Control` copy); the e2e test checks that every header arrives exactly once and nothing internal leaks.
-14. Web sessions (`docs/web-auth.md`) are read-only, re-read their key on every request (revocation is immediate) and see only the anonymous view plus their key's prefix; elsewhere they get the anonymous answer, 404 included. Every response for a session is `private, no-store`, public responses vary by `Cookie`, sign-in and sign-out accept only same-origin POSTs, and failed sign-ins are rate limited per IP. While sign-in is enabled, uploaded HTML/XML is served with a CSP sandbox, because the origin holds the session cookie.
+14. Web sessions (`docs/web-auth.md`) are read-only, re-read their key on every request (revocation is immediate) and see only the anonymous view plus their key's prefix; elsewhere they get the anonymous answer, 404 included. Every response for a session is `private, no-store`, public responses vary by `Cookie`, sign-in and sign-out accept only same-origin POSTs, and failed sign-ins are rate limited per IP. While sign-in is enabled, every upload except raster images, audio, video, PDF and plain text is served with a CSP sandbox, because the origin holds the session cookie.
 
 ## What counts as a breaking change in API v1
 
@@ -138,7 +138,7 @@ Not breaking: new endpoints, new optional request fields or headers, new respons
 - Introduce cgo (the race detector in tests is the only exception).
 - Log query strings of signed links, or any key or signature.
 - Accept API keys anywhere but the `Authorization` header and the body of the web sign-in form.
-- Let a web session write anything, or serve uploaded HTML/XML without the sandbox while sign-in is enabled.
+- Let a web session write anything, or serve uploads that browsers may run as documents without the sandbox while sign-in is enabled.
 - Let nginx make access decisions or serve `blobs/` outside the internal location.
 - Answer 403 where existence must stay hidden (public side, signed links).
 - Bypass `api` path validation or the service's prefix checks.

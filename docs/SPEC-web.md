@@ -128,12 +128,14 @@ Accepted before implementation:
 - **Uploaded active content:** the spec missed that SPEC §19.8 (serve uploaded
   HTML/SVG as is) relied on the origin holding no cookies. With a session
   cookie, an uploaded page on the same origin could read and leak whatever a
-  signed-in visitor can see. While `VELA_WEB_AUTH` is on, HTML and any XML
-  (XHTML, SVG, XSL) are therefore served with
+  signed-in visitor can see. While `VELA_WEB_AUTH` is on, every upload except
+  raster images, audio, video, PDF and plain text is therefore served with
   `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads`
   on direct URLs, signed links and API downloads: scripts run in an opaque
-  origin without cookies or same-origin reads. With the flag off, nothing
-  changes. PDF is not sandboxed because that breaks built-in viewers.
+  origin without cookies or same-origin reads. The exemptions are passive
+  types, so unusual document types (`multipart/x-mixed-replace`, any XML) are
+  covered too. With the flag off, nothing changes. PDF is not sandboxed
+  because that breaks built-in viewers.
 - **Open questions:** `velad session revoke-all` ships now; the TTL defaults
   stay 7d idle / 30d absolute; the icon names `lock`, `unlisted`, `hidden` and
   `no-index` are kept, as they collide with no file kind.

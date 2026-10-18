@@ -135,16 +135,17 @@ func TestCheckJSONText(t *testing.T) {
 	}
 }
 
-func TestActiveContent(t *testing.T) {
+func TestPassiveContent(t *testing.T) {
 	t.Parallel()
 	for ct, want := range map[string]bool{
-		"text/html; charset=utf-8": true, "TEXT/HTML": true, "image/svg+xml": true, "application/xhtml+xml": true,
-		"text/xml": true, "application/xml": true, "application/rss+xml": true, "text/xsl": true, "not a type;;": true,
-		"application/pdf": false, "text/plain; charset=utf-8": false, "image/png": false, "application/json": false,
-		"text/javascript": false, "application/octet-stream": false,
+		"application/pdf": true, "text/plain; charset=utf-8": true, "image/png": true, "IMAGE/JPEG": true,
+		"audio/mpeg": true, "video/mp4": true,
+		"text/html; charset=utf-8": false, "TEXT/HTML": false, "image/svg+xml": false, "application/xhtml+xml": false,
+		"text/xml": false, "application/xml": false, "text/xsl": false, "multipart/x-mixed-replace; boundary=x": false,
+		"application/json": false, "text/javascript": false, "application/octet-stream": false, "not a type;;": false, "": false,
 	} {
-		if got := activeContent(ct); got != want {
-			t.Errorf("activeContent(%q) = %t", ct, got)
+		if got := passiveContent(ct); got != want {
+			t.Errorf("passiveContent(%q) = %t", ct, got)
 		}
 	}
 }
