@@ -77,7 +77,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	for _, d := range listing.Dirs {
 		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt, Title: d.Title, Description: d.Description})
 	}
-	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now())
+	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now(), nil)
 	page.ApplyPolicies(listing.Policies)
 
 	h := w.Header()

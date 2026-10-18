@@ -19,6 +19,14 @@
 </main>
 <footer class="site">
   <span>Served by Vela {{.Version}}</span>
+  {{- if .Session}}
+  <div class="auth">
+    <span class="session">signed in: {{if .Session.Full}}full access{{else}}/{{.Session.Prefix}}{{end}}</span>
+    <form class="signout" method="post" action="{{.Session.SignOutURL}}"><button type="submit">sign out</button></form>
+  </div>
+  {{- else if .SignInURL}}
+  <a class="auth" href="{{.SignInURL}}">sign in</a>
+  {{- end}}
   {{- if not .GeneratedAt.IsZero}}
   <span>Generated <time datetime="{{iso .GeneratedAt}}">{{date .GeneratedAt}} UTC</time></span>
   {{- end}}

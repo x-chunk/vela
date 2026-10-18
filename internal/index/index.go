@@ -1,8 +1,9 @@
-// Package index renders the public HTML index and error pages.
+// Package index renders the public HTML index, error and sign-in pages.
 //
 // The default theme is embedded in the binary. Setting VELA_THEME_DIR
 // overrides any of its files by name (layout.html, index.html, error.html,
-// assets/...); everything not overridden falls back to the embedded file.
+// login.html, assets/...); everything not overridden falls back to the
+// embedded file.
 // Templates are parsed once at startup, so a broken custom theme stops the
 // server from starting instead of breaking pages at request time.
 //
@@ -44,6 +45,7 @@ type Asset struct {
 type Theme struct {
 	indexTmpl *template.Template
 	errorTmpl *template.Template
+	loginTmpl *template.Template
 	assets    map[string]*Asset
 }
 
@@ -109,13 +111,25 @@ func Load(dir string) (*Theme, error) {
 	if t.errorTmpl, err = parse("error.html"); err != nil {
 		return nil, err
 	}
-	// Render both pages once with sample data so that runtime errors in a
-	// custom theme (a misspelled field, for example) surface at startup.
-	if err := t.RenderIndex(io.Discard, samplePage()); err != nil {
-		return nil, fmt.Errorf("theme check: %w", err)
+	if t.loginTmpl, err = parse("login.html"); err != nil {
+		return nil, err
 	}
-	if err := t.RenderError(io.Discard, ErrorPage{Site: Site{Title: "x"}, Status: 404, Title: "Not found"}); err != nil {
-		return nil, fmt.Errorf("theme check: %w", err)
+	// Render every page once with sample data, anonymous and signed in, so
+	// that runtime errors in a custom theme (a misspelled field, for
+	// example) surface at startup.
+	session := &Session{Prefix: "a/", SignOutURL: "/_vela/logout"}
+	anonymous := samplePage()
+	anonymous.SignInURL = "/_vela/login"
+	for _, check := range []error{
+		t.RenderIndex(io.Discard, anonymous),
+		t.RenderIndex(io.Discard, sampleSessionPage()),
+		t.RenderError(io.Discard, ErrorPage{Site: Site{Title: "x"}, Status: 404, Title: "Not found"}),
+		t.RenderError(io.Discard, ErrorPage{Site: Site{Title: "x"}, Status: 404, Title: "Not found", Session: session}),
+		t.RenderLogin(io.Discard, LoginPage{Site: Site{Title: "x"}, Action: "/_vela/login", Error: "x", NoIndex: true}),
+	} {
+		if check != nil {
+			return nil, fmt.Errorf("theme check: %w", check)
+		}
 	}
 	return t, nil
 }
@@ -178,6 +192,8 @@ func (t *Theme) funcs() template.FuncMap {
 			return "/_vela/assets/" + name + "?v=" + a.Hash, nil
 		},
 		"icon": func(kind string) template.HTML { return iconSVG(kind) },
+		// flagIcon renders a visibility indicator with its tooltip markup.
+		"flagIcon": func(flag string) template.HTML { return flagSVG(flag) },
 		"date": func(ts time.Time) string {
 			if ts.IsZero() {
 				return ""
@@ -196,6 +212,11 @@ func (t *Theme) RenderIndex(w io.Writer, p Page) error {
 // RenderError renders an error page.
 func (t *Theme) RenderError(w io.Writer, p ErrorPage) error {
 	return render(w, t.errorTmpl, p)
+}
+
+// RenderLogin renders the sign-in page.
+func (t *Theme) RenderLogin(w io.Writer, p LoginPage) error {
+	return render(w, t.loginTmpl, p)
 }
 
 // render executes into a buffer first, so a template error never leaves a

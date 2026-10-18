@@ -1,0 +1,13 @@
+{{define "title"}}Sign in · {{.Site.Title}}{{end}}
+
+{{define "content"}}
+<section class="login">
+  <form method="post" action="{{.Action}}">
+    <input type="password" name="key" autocomplete="off" autocapitalize="off" spellcheck="false" required autofocus aria-label="API key" placeholder="API key">
+    <button type="submit">Sign in</button>
+  </form>
+  {{- with .Error}}
+  <p class="message" role="alert">{{.}}</p>
+  {{- end}}
+</section>
+{{end}}

@@ -17,7 +17,7 @@
   {{- end}}
   {{- range .Dirs}}
   <li class="entry dir">
-    <a href="{{.URL}}">{{icon "folder"}}<span class="name">{{.Name}}/</span></a>
+    {{if .Flags}}<span class="link">{{template "dir-link" .}}{{range .Flags}}{{flagIcon .}}{{end}}</span>{{else}}{{template "dir-link" .}}{{end}}
     {{- if or .Title .Description}}
     <div class="details">{{with .Title}}<span class="title">{{.}}</span>{{end}}{{with .Description}}<span class="desc">{{.}}</span>{{end}}</div>
     {{- end}}
@@ -29,7 +29,7 @@
   {{- end}}
   {{- range .Files}}
   <li class="entry file kind-{{.Kind}}">
-    <a href="{{.URL}}">{{icon .Kind}}<span class="name">{{.Name}}</span></a>
+    {{if .Flags}}<span class="link">{{template "file-link" .}}{{range .Flags}}{{flagIcon .}}{{end}}</span>{{else}}{{template "file-link" .}}{{end}}
     {{- if or .Title .Description .Tags}}
     <div class="details">
       {{- with .Title}}<span class="title">{{.}}</span>{{end}}
@@ -48,3 +48,6 @@
 <p class="empty">Nothing here yet.</p>
 {{end}}
 {{end}}
+
+{{define "dir-link"}}<a href="{{.URL}}">{{icon "folder"}}<span class="name">{{.Name}}/</span></a>{{end}}
+{{define "file-link"}}<a href="{{.URL}}">{{icon .Kind}}<span class="name">{{.Name}}</span></a>{{end}}
