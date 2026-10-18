@@ -11,7 +11,8 @@ Set `VELA_WEB_AUTH=on` to enable it (see [configuration](configuration.md)).
 While it is off, which is the default, no route, cookie, header or page changes.
 Serving with sign-in requires an `https` public URL, because browsers drop the
 `Secure` cookie over plain HTTP; `VELA_WEB_INSECURE_COOKIE=on` exists for local
-development only.
+development only. To try it, run `VELA_WEB_AUTH=on VELA_WEB_INSECURE_COOKIE=on
+make dev` and sign in at `/_vela/login` with the printed key.
 
 ## Model
 
@@ -60,9 +61,10 @@ change is a `POST`. Activity is written at most once per hour (every half idle
 timeout when that is shorter), so a session can end up to that interval before
 the configured idle timeout. Signing in again replaces the browser's previous
 session. Unknown, idle, expired and revoked-key sessions all make the request
-anonymous and are deleted when seen. The janitor task `web_sessions` purges
-the rest; `velad session revoke-all` ends every session at once, for example
-after a cookie may have leaked.
+anonymous; the last three are deleted when seen. A stale cookie is not cleared
+by anonymous responses, which may be cached. The janitor task `web_sessions`
+purges the rest; `velad session revoke-all` ends every session at once, for
+example after a cookie may have leaked.
 
 ## What a session sees
 
