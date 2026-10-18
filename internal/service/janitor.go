@@ -80,6 +80,7 @@ func (s *Service) RunJanitor(ctx context.Context) (JanitorReport, error) {
 		{"expired_objects", s.janitorExpiredObjects},
 		{"trash", s.janitorTrash},
 		{"signing_keys", s.janitorSigningKeys},
+		{"web_sessions", s.janitorWebSessions},
 		{"tmp_files", s.janitorTmp},
 		{"orphan_blobs", s.janitorOrphans},
 		{"blob_gc", func(ctx context.Context, _ time.Time) (int, error) { return s.CollectBlobs(ctx) }},

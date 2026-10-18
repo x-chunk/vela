@@ -107,6 +107,10 @@ func TestValidation(t *testing.T) {
 		"VELA_LOG_LEVEL":             {"VELA_LOG_LEVEL": "loud"},
 		"VELA_TRASH_RETENTION":       {"VELA_TRASH_RETENTION": "0"},
 		"VELA_LINK_RETENTION":        {"VELA_LINK_RETENTION": "-1d"},
+		"VELA_WEB_AUTH":              {"VELA_WEB_AUTH": "maybe"},
+		"VELA_WEB_INSECURE_COOKIE":   {"VELA_WEB_INSECURE_COOKIE": "2"},
+		"IDLE must be at least 1m":   {"VELA_WEB_SESSION_IDLE": "30s"},
+		"must not exceed VELA_WEB":   {"VELA_WEB_SESSION_IDLE": "8d", "VELA_WEB_SESSION_MAX": "7d"},
 	}
 	for want, e := range tests {
 		_, err := Load(nil, env(e))
@@ -132,5 +136,34 @@ func TestRootIndex(t *testing.T) {
 				t.Fatal("invalid root default accepted")
 			}
 		})
+	}
+}
+
+func TestWebAuth(t *testing.T) {
+	t.Parallel()
+	c, err := Load(nil, env(map[string]string{"VELA_PUBLIC_URL": "https://store.example.com"}))
+	if err != nil || c.WebAuth || c.WebInsecureCookie || c.WebSessionIdle != 7*api.Day || c.WebSessionMax != 30*api.Day {
+		t.Fatalf("web defaults = %+v, %v", c, err)
+	}
+	for _, tc := range []struct {
+		env   map[string]string
+		serve bool
+	}{
+		{map[string]string{"VELA_WEB_AUTH": "on", "VELA_PUBLIC_URL": "https://store.example.com"}, true},
+		{map[string]string{"VELA_WEB_AUTH": "ON", "VELA_PUBLIC_URL": "http://127.0.0.1:8080"}, false},
+		{map[string]string{"VELA_WEB_AUTH": "true", "VELA_WEB_INSECURE_COOKIE": "1", "VELA_PUBLIC_URL": "http://127.0.0.1:8080"}, true},
+		{map[string]string{"VELA_WEB_AUTH": "off", "VELA_PUBLIC_URL": "http://127.0.0.1:8080"}, true},
+	} {
+		c, err := Load(nil, env(tc.env))
+		if err != nil {
+			t.Fatalf("%v: %v", tc.env, err)
+		}
+		if err := c.RequireServe(); (err == nil) != tc.serve {
+			t.Fatalf("%v: RequireServe = %v", tc.env, err)
+		}
+	}
+	c, err = Load(nil, env(map[string]string{"VELA_WEB_AUTH": "yes", "VELA_WEB_SESSION_IDLE": "2h", "VELA_WEB_SESSION_MAX": "2h"}))
+	if err != nil || !c.WebAuth || c.WebSessionIdle != 2*time.Hour || c.WebSessionMax != 2*time.Hour {
+		t.Fatalf("web settings = %+v, %v", c, err)
 	}
 }

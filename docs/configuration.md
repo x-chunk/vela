@@ -30,10 +30,16 @@ and credentials are environment-only; use `velad serve --help` for core flags.
 | `VELA_LOG_FORMAT` | `json` | `json` or `text` |
 | `VELA_DEFAULT_VISIBILITY` | `unlisted` | `public`, `unlisted`, or `private` |
 | `VELA_ROBOTS` | `deny` | `deny` or `allow` for robots.txt |
+| `VELA_WEB_AUTH` | `off` | Read-only [browser sign-in](web-auth.md) with an API key: `on` or `off` |
+| `VELA_WEB_INSECURE_COOKIE` | `off` | Session cookie without `Secure` and `__Host-`; plain-HTTP development only |
+| `VELA_WEB_SESSION_IDLE` | `7d` | Sliding idle timeout of a web session; at least one minute |
+| `VELA_WEB_SESSION_MAX` | `30d` | Absolute web session lifetime; not shorter than the idle timeout |
 
 Size values accept byte counts and units such as MiB/GiB. Core durations use
 [`api.ParseDuration`](../api/duration.go), including day durations. Link defaults
-cannot exceed the maximum; retention settings must be positive. Configuration
+cannot exceed the maximum; retention settings must be positive. Switches accept
+`on`/`off`, `true`/`false`, `yes`/`no`, or `1`/`0`. Web sign-in needs an https
+public URL unless the insecure development cookie is enabled. Configuration
 and theme checks run before serving traffic. Startup logs identify delivery mode.
 
 ## Storage settings

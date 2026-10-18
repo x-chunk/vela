@@ -23,6 +23,18 @@ const indexCSP = "default-src 'self'; style-src 'self'; img-src 'self' data:; ba
 // and no path is ever answered with a cleaning redirect.
 func (s *Server) servePublic(w http.ResponseWriter, r *http.Request) {
 	ri := info(r)
+	if s.opts.WebAuth {
+		switch r.URL.Path {
+		case loginPath:
+			ri.route = "login"
+			s.serveLogin(w, r)
+			return
+		case logoutPath:
+			ri.route = "logout"
+			s.serveLogout(w, r)
+			return
+		}
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		ri.route = "public"
 		w.Header().Set("Allow", "GET, HEAD")
@@ -68,26 +80,33 @@ func (s *Server) siteTitle() string {
 
 func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	prefix := strings.TrimPrefix(r.URL.Path, "/")
-	listing, err := s.svc.Index(r.Context(), prefix)
+	viewer := s.session(r)
+	listing, err := s.svc.IndexFor(r.Context(), prefix, viewer)
 	if err != nil {
 		s.publicServiceError(w, r, err, false)
 		return
 	}
 	dirs := make([]index.DirEntry, 0, len(listing.Dirs))
 	for _, d := range listing.Dirs {
-		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt, Title: d.Title, Description: d.Description})
+		dirs = append(dirs, index.DirEntry{Path: d.Path, Count: d.Count, UpdatedAt: d.UpdatedAt, Title: d.Title, Description: d.Description,
+			Hidden: d.Hidden, IndexOff: d.IndexOff})
 	}
-	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now())
+	page := index.BuildPage(s.site(), s.opts.Version, listing.Prefix, dirs, listing.Files, s.opts.Clock.Now(), sessionPage(r, viewer))
 	page.ApplyPolicies(listing.Policies)
+	page.SignInURL = s.signInURL(r, viewer)
 
 	h := w.Header()
 	h.Set("Cache-Control", "public, max-age=60")
+	if viewer != nil {
+		h.Set("Cache-Control", cachePrivate)
+	}
 	if page.NoIndex {
 		h.Set("X-Robots-Tag", noIndex)
 	}
 	h.Set("X-Content-Type-Options", "nosniff")
 	if r.URL.Query().Get("format") == "json" {
-		// Same data as the HTML, so it can expose nothing non-public.
+		// Same data as the HTML, so it exposes nothing the page does not.
+		s.varyCookie(h)
 		h.Set("Content-Type", "application/json; charset=utf-8")
 		enc := json.NewEncoder(w)
 		enc.SetEscapeHTML(false)
@@ -100,18 +119,22 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 		s.publicError(w, r, http.StatusInternalServerError, "Internal error", "The page could not be rendered.")
 		return
 	}
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", indexCSP)
+	s.htmlHeaders(h, viewer != nil)
 	_, _ = buf.WriteTo(w)
 }
 
 func (s *Server) serveObject(w http.ResponseWriter, r *http.Request) {
-	res, err := s.svc.ResolvePublic(r.Context(), strings.TrimPrefix(r.URL.Path, "/"))
+	viewer := s.session(r)
+	res, err := s.svc.ResolvePublicFor(r.Context(), strings.TrimPrefix(r.URL.Path, "/"), viewer)
 	if err != nil {
 		s.publicServiceError(w, r, err, false)
 		return
 	}
 	if res.RedirectDir != "" {
+		s.varyCookie(w.Header())
+		if viewer != nil {
+			w.Header().Set("Cache-Control", cachePrivate)
+		}
 		// Not an open redirect: the target is always a local, absolute
 		// path built from a validated object path, whose segments are
 		// non-empty and escaped, so it can never start with "//" or name
@@ -126,6 +149,14 @@ func (s *Server) serveObject(w http.ResponseWriter, r *http.Request) {
 	pol := policyFor(res.Content.Object.Visibility)
 	if res.Content.NoIndex {
 		pol.robots = noIndex
+	}
+	if viewer != nil {
+		// Never stored by a shared cache: an anonymous request for the same
+		// URL may be a 404.
+		pol.cacheControl = cachePrivate
+	}
+	if s.opts.WebAuth {
+		pol.vary = "Cookie"
 	}
 	s.deliver(w, r, *res.Content, pol)
 }
@@ -226,13 +257,13 @@ func (s *Server) publicError(w http.ResponseWriter, r *http.Request, status int,
 	if h.Get("Cache-Control") == "" {
 		h.Set("Cache-Control", "no-cache")
 	}
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Content-Security-Policy", indexCSP)
-	h.Set("X-Content-Type-Options", "nosniff")
+	viewer := s.session(r)
+	s.htmlHeaders(h, viewer != nil)
 	var buf bytes.Buffer
 	err := s.theme.RenderError(&buf, index.ErrorPage{
 		Site: s.site(), Status: status, Title: title, Message: msg,
 		GeneratedAt: s.opts.Clock.Now(), Version: s.opts.Version,
+		Session: sessionPage(r, viewer), SignInURL: s.signInURL(r, viewer),
 	})
 	if err != nil {
 		s.log.Error("render error page failed", "request_id", info(r).id, "error", err)

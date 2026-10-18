@@ -242,3 +242,21 @@ func TestHasPublicObjects(t *testing.T) {
 		t.Fatal("cancellation ignored")
 	}
 }
+
+func TestHasLiveObjects(t *testing.T) {
+	t.Parallel()
+	db := openTest(t)
+	expired := newObject("old/file", api.Private)
+	past := t0.Add(-time.Millisecond)
+	expired.ExpiresAt = &past
+	insert(t, db, expired, newObject("private/file", api.Private), newObject("unlisted/file", api.Unlisted), newObject("ab/file", api.Public))
+	for _, tc := range []struct {
+		prefix string
+		want   bool
+	}{{"", true}, {"private/", true}, {"unlisted/", true}, {"ab/", true}, {"old/", false}, {"a/", false}, {"missing/", false}} {
+		got, err := db.HasLiveObjects(context.Background(), tc.prefix, t0)
+		if err != nil || got != tc.want {
+			t.Fatalf("%q: exists=%t error=%v", tc.prefix, got, err)
+		}
+	}
+}

@@ -134,3 +134,39 @@ func TestCheckJSONText(t *testing.T) {
 		}
 	}
 }
+
+func TestPassiveContent(t *testing.T) {
+	t.Parallel()
+	for ct, want := range map[string]bool{
+		"application/pdf": true, "text/plain; charset=utf-8": true, "image/png": true, "IMAGE/JPEG": true,
+		"audio/mpeg": true, "video/mp4": true,
+		"text/html; charset=utf-8": false, "TEXT/HTML": false, "image/svg+xml": false, "application/xhtml+xml": false,
+		"text/xml": false, "application/xml": false, "text/xsl": false, "multipart/x-mixed-replace; boundary=x": false,
+		"application/json": false, "text/javascript": false, "application/octet-stream": false, "not a type;;": false, "": false,
+	} {
+		if got := passiveContent(ct); got != want {
+			t.Errorf("passiveContent(%q) = %t", ct, got)
+		}
+	}
+}
+
+func TestSameOriginURL(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		origin, public string
+		want           bool
+	}{
+		{"https://store.example.com", "https://store.example.com", true},
+		{"https://STORE.example.com:443", "https://store.example.com", true},
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8080", true},
+		{"http://store.example.com", "https://store.example.com", false},
+		{"https://store.example.com:8443", "https://store.example.com", false},
+		{"https://evil.example", "https://store.example.com", false},
+		{"null", "https://store.example.com", false},
+		{"", "https://store.example.com", false},
+	} {
+		if got := sameOriginURL(tc.origin, tc.public); got != tc.want {
+			t.Errorf("sameOriginURL(%q, %q) = %t", tc.origin, tc.public, got)
+		}
+	}
+}

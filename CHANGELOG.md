@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added
+
+- Optional read-only web sign-in with an API key (`VELA_WEB_AUTH`, default
+  off): the owner can browse everything a key can see, including private,
+  unlisted and hidden content, with icons marking what anonymous visitors
+  cannot find. Sessions follow their key, expire after 7 days idle or 30 days
+  (`VELA_WEB_SESSION_IDLE`, `VELA_WEB_SESSION_MAX`), and can be ended with
+  `velad session revoke-all`. See [web sign-in](docs/web-auth.md).
+- Theme contract: `Flags`, `Session`, `SignInURL`, the `flagIcon` helper and an
+  optional `login.html`. Themes without them keep working.
+
+### Changed
+
+- While web sign-in is enabled, uploads other than images, audio, video, PDF
+  and plain text (HTML and SVG included) are served with a
+  `Content-Security-Policy` sandbox, public responses carry
+  `Vary: Cookie`, and HTML pages `Referrer-Policy: same-origin`. Without it,
+  responses are unchanged; the stylesheet's cache-busting hash changes because
+  of new styles.
+
+### Upgrading
+
+- `velad serve` applies migration `0005_web_sessions` on start; take a backup
+  first, as an older image cannot use the migrated database.
+- Before enabling web sign-in with nginx accel, add the new `Vary` and
+  `Content-Security-Policy` lines of `examples/nginx/accel-locations.conf` to
+  both internal locations. Behind a CDN, bypass its cache for requests with the
+  `__Host-vela_session` cookie.
+
 ## v0.2.1 — 2026-10-15
 
 ### Fixed

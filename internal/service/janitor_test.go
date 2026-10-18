@@ -184,7 +184,7 @@ func TestJanitorLeaseIsRenewed(t *testing.T) {
 	}
 	close(proceed)
 	first := <-done
-	if first.Skipped || first.Interrupted || len(first.Tasks) != 7 {
+	if first.Skipped || first.Interrupted || len(first.Tasks) != 8 {
 		t.Fatalf("first pass = %+v", first)
 	}
 	if r, err := other.RunJanitor(e.ctx); err != nil || r.Skipped {
@@ -221,7 +221,7 @@ func TestJanitorStopsWhenLockIsLost(t *testing.T) {
 	time.Sleep(150 * time.Millisecond) // a renewal notices the takeover
 	close(proceed)
 	r := <-done
-	if !r.Interrupted || len(r.Tasks) >= 7 {
+	if !r.Interrupted || len(r.Tasks) >= 8 {
 		t.Fatalf("pass continued without its lock: %+v", r)
 	}
 }

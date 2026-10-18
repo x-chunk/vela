@@ -14,6 +14,26 @@ import (
 	"go.xchunk.org/vela/internal/units"
 )
 
+// Visibility indicators of signed-in pages (docs/SPEC-web.md). Anonymous
+// pages never carry flags.
+const (
+	FlagPrivate  = "private"
+	FlagUnlisted = "unlisted"
+	FlagHidden   = "hidden"
+	FlagNoIndex  = "no-index"
+)
+
+// Session describes the signed-in web session a page is rendered for. Pages
+// for anonymous visitors have none.
+type Session struct {
+	// Prefix is the directory prefix of the session's key; empty with Full.
+	Prefix string `json:"prefix"`
+	// Full is set when the key has no prefix and sees the whole store.
+	Full bool `json:"full"`
+	// SignOutURL is the action of the sign-out form.
+	SignOutURL string `json:"-"`
+}
+
 // Site describes the whole store.
 type Site struct {
 	Title string `json:"title"`
@@ -35,6 +55,9 @@ type Dir struct {
 	// Count is the number of visible entries; without rules it preserves the legacy subtree file count.
 	Count     int       `json:"count"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// Flags lists the visibility indicators of a signed-in page: hidden,
+	// no-index. Always empty for anonymous visitors.
+	Flags []string `json:"flags,omitempty"`
 }
 
 // File is a file row.
@@ -52,6 +75,9 @@ type File struct {
 	// video, audio, pdf, archive, code, text, document, spreadsheet,
 	// presentation, font or file.
 	Kind string `json:"kind"`
+	// Flags lists the visibility indicators of a signed-in page: private,
+	// unlisted. Always empty for anonymous visitors.
+	Flags []string `json:"flags,omitempty"`
 }
 
 // Page is the data of an index page (and of ?format=json).
@@ -70,6 +96,12 @@ type Page struct {
 	Parent       string    `json:"parent"`
 	GeneratedAt  time.Time `json:"generated_at"`
 	Version      string    `json:"version"`
+	// Session is the signed-in session the page is rendered for; nil for
+	// anonymous visitors, whose JSON therefore stays unchanged.
+	Session *Session `json:"session,omitempty"`
+	// SignInURL links to the sign-in page when web sign-in is enabled and the
+	// visitor is anonymous; empty otherwise.
+	SignInURL string `json:"-"`
 }
 
 // ErrorPage is the data of an error page.
@@ -82,6 +114,27 @@ type ErrorPage struct {
 	Message      string    `json:"message"`
 	GeneratedAt  time.Time `json:"generated_at"`
 	Version      string    `json:"version"`
+	Session      *Session  `json:"-"`
+	SignInURL    string    `json:"-"`
+}
+
+// LoginPage is the data of the sign-in page. It offers every field that Page
+// and ErrorPage have in common, so a custom layout written for those two keeps
+// working with the sign-in page.
+type LoginPage struct {
+	NoIndex      bool
+	RootDisabled bool
+	Site         Site
+	// Title is the page's heading, "Sign in".
+	Title string
+	// Action is the target of the form; it carries the page to return to.
+	Action string
+	// Error explains a failed attempt; empty on first display.
+	Error       string
+	GeneratedAt time.Time
+	Version     string
+	Session     *Session
+	SignInURL   string
 }
 
 // DirEntry is the input for one directory row.
@@ -91,11 +144,16 @@ type DirEntry struct {
 	Path        string
 	Count       int
 	UpdatedAt   time.Time
+	// Hidden and IndexOff are the directory's policy for anonymous visitors;
+	// they become flags on signed-in pages.
+	Hidden   bool
+	IndexOff bool
 }
 
 // BuildPage assembles the template data for a directory. URLs are
-// root-relative so that pages work under any host name.
-func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domain.Object, now time.Time) Page {
+// root-relative so that pages work under any host name. A non-nil session
+// marks the page as signed in and adds visibility flags to its rows.
+func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domain.Object, now time.Time, session *Session) Page {
 	p := Page{
 		Site:        site,
 		Path:        "/" + prefix,
@@ -104,6 +162,7 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 		Files:       make([]File, 0, len(files)),
 		GeneratedAt: now.UTC(),
 		Version:     version,
+		Session:     session,
 	}
 	p.Title = site.Title
 	if prefix != "" {
@@ -111,13 +170,17 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 		p.Parent = "/" + api.EscapePath(api.ParentPrefix(prefix))
 	}
 	for _, d := range dirs {
-		p.Dirs = append(p.Dirs, Dir{
+		row := Dir{
 			Title: d.Title, Description: d.Description,
 			Name:      api.BaseName(d.Path),
 			URL:       "/" + api.EscapePath(d.Path),
 			Count:     d.Count,
 			UpdatedAt: d.UpdatedAt.UTC(),
-		})
+		}
+		if session != nil {
+			row.Flags = dirFlags(d)
+		}
+		p.Dirs = append(p.Dirs, row)
 	}
 	for _, o := range files {
 		tags := o.Tags
@@ -135,11 +198,38 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 			ContentType: o.ContentType,
 			UpdatedAt:   o.UpdatedAt.UTC(),
 			Kind:        KindOf(o.Path, o.ContentType),
+			Flags:       fileFlags(session, o.Visibility),
 		})
 	}
 	sort.SliceStable(p.Dirs, func(i, j int) bool { return NaturalLess(p.Dirs[i].Name, p.Dirs[j].Name) })
 	sort.SliceStable(p.Files, func(i, j int) bool { return NaturalLess(p.Files[i].Name, p.Files[j].Name) })
 	return p
+}
+
+func dirFlags(d DirEntry) []string {
+	var flags []string
+	if d.Hidden {
+		flags = append(flags, FlagHidden)
+	}
+	if d.IndexOff {
+		flags = append(flags, FlagNoIndex)
+	}
+	return flags
+}
+
+// fileFlags marks files that anonymous visitors cannot find in the index.
+// Public files get no indicator, which keeps the list quiet.
+func fileFlags(session *Session, v api.Visibility) []string {
+	switch {
+	case session == nil:
+		return nil
+	case v == api.Private:
+		return []string{FlagPrivate}
+	case v == api.Unlisted:
+		return []string{FlagUnlisted}
+	default:
+		return nil
+	}
 }
 
 func breadcrumbs(site Site, prefix string) []Crumb {
@@ -249,7 +339,18 @@ func samplePage() Page {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	return BuildPage(Site{Title: "sample", URL: "https://example.org"}, "test", "a/",
 		[]DirEntry{{Path: "a/b/", Count: 1, UpdatedAt: now}},
-		[]domain.Object{{Path: "a/c.pdf", ContentType: "application/pdf", Tags: []string{"t"}, UpdatedAt: now}}, now)
+		[]domain.Object{{Path: "a/c.pdf", ContentType: "application/pdf", Tags: []string{"t"}, UpdatedAt: now}}, now, nil)
+}
+
+// sampleSessionPage exercises the signed-in branches of a theme.
+func sampleSessionPage() Page {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	return BuildPage(Site{Title: "sample", URL: "https://example.org"}, "test", "a/",
+		[]DirEntry{{Path: "a/b/", Count: 1, UpdatedAt: now, Hidden: true, IndexOff: true}},
+		[]domain.Object{
+			{Path: "a/c.pdf", ContentType: "application/pdf", Visibility: api.Private, UpdatedAt: now},
+			{Path: "a/d.txt", ContentType: "text/plain", Visibility: api.Unlisted, UpdatedAt: now},
+		}, now, &Session{Prefix: "a/", SignOutURL: "/_vela/logout"})
 }
 
 // PolicyResolver keeps theme data independent of persistence and service wiring.

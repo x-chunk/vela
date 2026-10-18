@@ -2,6 +2,7 @@ package index
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/domain"
 )
 
@@ -25,7 +27,7 @@ func TestRenderIndex(t *testing.T) {
 		[]domain.Object{
 			{Path: "docs/math/test 2.pdf", Size: 482193, ContentType: "application/pdf", Title: "Контрольная <b>", Tags: []string{"q1"}, UpdatedAt: now},
 			{Path: "docs/math/a.png", Size: 10, ContentType: "image/png", UpdatedAt: now},
-		}, now)
+		}, now, nil)
 	var buf bytes.Buffer
 	if err := th.RenderIndex(&buf, page); err != nil {
 		t.Fatal(err)
@@ -170,5 +172,158 @@ func TestKindOf(t *testing.T) {
 		if got := KindOf(in[0], in[1]); got != want {
 			t.Errorf("KindOf(%q, %q) = %q; want %q", in[0], in[1], got, want)
 		}
+	}
+}
+
+func TestRenderSessionPage(t *testing.T) {
+	t.Parallel()
+	th, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := th.RenderIndex(&buf, sampleSessionPage()); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`<span class="link"><a href="/a/b/">`,
+		`<span class="flag flag-hidden" role="img" tabindex="0" aria-label="Hidden: not shown to anonymous visitors in the parent listing" data-tip="Hidden: not shown to anonymous visitors in the parent listing"><svg class="icon icon-hidden"`,
+		`data-tip="Index disabled for anonymous visitors"><svg class="icon icon-no-index"`,
+		`data-tip="Private: needs a key or signed link"><svg class="icon icon-lock"`,
+		`data-tip="Unlisted: anyone with the URL can open it"><svg class="icon icon-unlisted"`,
+		`<span class="session">signed in: /a/</span>`,
+		`<form class="signout" method="post" action="/_vela/logout"><button type="submit">sign out</button></form>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("signed-in page lacks %q", want)
+		}
+	}
+	if strings.Contains(html, "style=") || strings.Contains(html, "<script") || strings.Contains(html, `title="Private`) {
+		t.Error("indicators use inline styles, scripts or native tooltips")
+	}
+	if strings.Contains(html, "sign in<") {
+		t.Error("signed-in page offers to sign in")
+	}
+	// Indicators sit right after the name, outside the link.
+	if !strings.Contains(html, `<span class="name">b/</span></a><span class="flag flag-hidden"`) {
+		t.Error("directory flags do not follow the name")
+	}
+
+	full := sampleSessionPage()
+	full.Session = &Session{Full: true, SignOutURL: "/_vela/logout"}
+	buf.Reset()
+	if err := th.RenderIndex(&buf, full); err != nil || !strings.Contains(buf.String(), "signed in: full access") {
+		t.Fatalf("full access footer missing: %v", err)
+	}
+
+	anonymous := samplePage()
+	anonymous.SignInURL = "/_vela/login?next=%2Fa%2F"
+	buf.Reset()
+	if err := th.RenderIndex(&buf, anonymous); err != nil {
+		t.Fatal(err)
+	}
+	if html := buf.String(); !strings.Contains(html, `<a class="auth" href="/_vela/login?next=%2Fa%2F">sign in</a>`) ||
+		strings.Contains(html, "<form") || strings.Contains(html, `class="flag`) {
+		t.Fatalf("anonymous footer = %s", html)
+	}
+}
+
+func TestFlags(t *testing.T) {
+	t.Parallel()
+	page := sampleSessionPage()
+	if got := page.Dirs[0].Flags; len(got) != 2 || got[0] != FlagHidden || got[1] != FlagNoIndex {
+		t.Fatalf("dir flags = %v", got)
+	}
+	for _, f := range page.Files {
+		if len(f.Flags) != 1 {
+			t.Fatalf("file %s flags = %v", f.Name, f.Flags)
+		}
+	}
+	public := BuildPage(Site{}, "", "", nil, []domain.Object{{Path: "p", Visibility: api.Public}}, now, &Session{Full: true})
+	if public.Files[0].Flags != nil {
+		t.Fatalf("public file flagged: %v", public.Files[0].Flags)
+	}
+	// Anonymous pages never carry flags or a session, so their JSON keeps
+	// its previous shape.
+	anon := BuildPage(Site{}, "", "", []DirEntry{{Path: "d/", Hidden: true}}, []domain.Object{{Path: "p", Visibility: api.Private}}, now, nil)
+	b, err := json.Marshal(anon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); strings.Contains(s, "flags") || strings.Contains(s, "session") || strings.Contains(s, "sign") {
+		t.Fatalf("anonymous JSON = %s", s)
+	}
+	b, err = json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); !strings.Contains(s, `"session":{"prefix":"a/","full":false}`) || !strings.Contains(s, `"flags":["hidden","no-index"]`) {
+		t.Fatalf("signed-in JSON = %s", s)
+	}
+	if flagSVG("unknown") != "" {
+		t.Fatal("unknown flag rendered")
+	}
+	for name := range flags {
+		if flags[name].icon == "" || iconPaths[flags[name].icon] == "" {
+			t.Errorf("flag %s has no built-in icon", name)
+		}
+	}
+}
+
+func TestRenderLogin(t *testing.T) {
+	t.Parallel()
+	th, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	err = th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Title: "Sign in", Action: "/_vela/login?next=%2Fdocs%2F", Error: "Invalid API key.", NoIndex: true, GeneratedAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`<title>Sign in · s</title>`,
+		`<meta name="robots" content="noindex, nofollow">`,
+		`<form method="post" action="/_vela/login?next=%2Fdocs%2F">`,
+		`<input type="password" name="key" autocomplete="off"`,
+		`<p class="message" role="alert">Invalid API key.</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("login page lacks %q", want)
+		}
+	}
+	if strings.Contains(html, "style=") || strings.Contains(html, "<script") || strings.Count(html, "<input") != 1 || strings.Count(html, "<button") != 1 {
+		t.Errorf("login page is not one field and one button without inline code: %s", html)
+	}
+}
+
+func TestOldThemeWithoutSignIn(t *testing.T) {
+	t.Parallel()
+	// A custom layout written before web sign-in, using only fields that
+	// Page and ErrorPage share, still loads, and the embedded login page
+	// renders inside it.
+	dir := t.TempDir()
+	layout := `{{define "layout"}}<html{{if .NoIndex}} data-noindex{{end}}{{if .RootDisabled}} data-root-off{{end}}><title>{{.Title}} · {{.Site.Title}}</title>` +
+		`{{template "content" .}}<footer>{{.Version}} {{date .GeneratedAt}}</footer></html>{{end}}`
+	if err := os.WriteFile(filepath.Join(dir, "layout.html"), []byte(layout), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	th, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Title: "Sign in", Action: "/_vela/login"}); err != nil ||
+		!strings.Contains(buf.String(), `name="key"`) || !strings.Contains(buf.String(), "<title>Sign in · s</title>") {
+		t.Fatalf("login with old layout = %s, %v", buf.String(), err)
+	}
+	broken := t.TempDir()
+	if err := os.WriteFile(filepath.Join(broken, "login.html"), []byte(`{{define "content"}}{{.Missing}}{{end}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(broken); err == nil {
+		t.Fatal("broken login.html accepted")
 	}
 }

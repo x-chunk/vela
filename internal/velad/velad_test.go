@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/keys"
+	"go.xchunk.org/vela/internal/service"
+	"go.xchunk.org/vela/internal/wire"
 )
 
 type run struct {
@@ -107,6 +110,41 @@ func TestMaintenanceCommands(t *testing.T) {
 		!strings.Contains(r.err.Error(), "VELA_PUBLIC_URL") {
 		t.Fatalf("serve without public URL: %v", r.err)
 	}
+	web := map[string]string{"VELA_DATA_DIR": t.TempDir(), "VELA_PUBLIC_URL": "http://store.test", "VELA_WEB_AUTH": "on"}
+	if r := execute(t, ctx, web, nil, "serve"); r.err == nil || !strings.Contains(r.err.Error(), "VELA_WEB_AUTH") {
+		t.Fatalf("serve web sign-in over plain HTTP: %v", r.err)
+	}
+}
+
+func TestSessionRevokeAll(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	vars := newEnv(t)
+	r := execute(t, ctx, vars, nil, "key", "create", "--name", "owner", "--scope", "ro")
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	st, err := wire.OpenStorage(ctx, vars["VELA_DATA_DIR"], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	svc, err := wire.NewService(st, nil, nil, service.Options{
+		MaxUpload: 1, MaxCreate: 1, LinkDefaultTTL: time.Hour, LinkMaxTTL: time.Hour, DefaultVisibility: api.Private,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := svc.SignIn(ctx, strings.TrimSpace(r.stdout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := execute(t, ctx, vars, nil, "session", "revoke-all"); r.err != nil || r.stdout != "Revoked 1 web session(s).\n" {
+		t.Fatalf("revoke-all = %+v", r)
+	}
+	if _, err := svc.WebSession(ctx, in.ID); err == nil {
+		t.Fatal("session survived revoke-all")
+	}
 }
 
 func TestServeHealthcheckBackup(t *testing.T) {
@@ -184,5 +222,37 @@ func TestHealthURL(t *testing.T) {
 	}
 	if _, err := healthURL("nonsense"); err == nil {
 		t.Error("bad listen address accepted")
+	}
+}
+
+func TestServeWebSignIn(t *testing.T) {
+	t.Parallel()
+	vars := newEnv(t)
+	vars["VELA_WEB_AUTH"] = "on"
+	vars["VELA_WEB_INSECURE_COOKIE"] = "on"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	addrCh := make(chan net.Addr, 1)
+	var wg sync.WaitGroup
+	var served run
+	wg.Go(func() { served = execute(t, ctx, vars, func(a net.Addr) { addrCh <- a }) })
+	var addr net.Addr
+	select {
+	case addr = <-addrCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("server did not start")
+	}
+	res, err := http.Get("http://" + addr.String() + "/_vela/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("sign-in page status = %d", res.StatusCode)
+	}
+	cancel()
+	wg.Wait()
+	if served.err != nil || !strings.Contains(served.stderr, "web sign-in enabled") || !strings.Contains(served.stderr, "without Secure") {
+		t.Fatalf("serve = %v\n%s", served.err, served.stderr)
 	}
 }

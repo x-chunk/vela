@@ -18,9 +18,9 @@ import (
 	"go.xchunk.org/vela/internal/testutil"
 )
 
-func setup(t *testing.T) (*testutil.Server, *nginx, *velaclient.Client) {
+func setup(t *testing.T, opts ...testutil.Option) (*testutil.Server, *nginx, *velaclient.Client) {
 	t.Helper()
-	ts := testutil.NewServer(t, testutil.WithAccel("/_blobs/"))
+	ts := testutil.NewServer(t, append([]testutil.Option{testutil.WithAccel("/_blobs/")}, opts...)...)
 	n := startNginx(t, strings.TrimPrefix(ts.URL, "http://"), filepath.Join(ts.DataDir, "blobs"))
 	c, err := velaclient.New(n.https, ts.AdminKey, velaclient.WithHTTPClient(client))
 	if err != nil {
@@ -46,7 +46,8 @@ func expectHeaders(t *testing.T, what string, r response, want map[string]string
 		}
 	}
 	// Internal headers must never leak to the client.
-	for _, k := range []string{"X-Accel-Redirect", "X-Vela-Cache-Control", "X-Vela-Robots", "X-Vela-Referrer-Policy", "X-Vela-ETag"} {
+	for _, k := range []string{"X-Accel-Redirect", "X-Vela-Cache-Control", "X-Vela-Robots", "X-Vela-Referrer-Policy", "X-Vela-ETag",
+		"X-Vela-Vary", "X-Vela-Content-Security-Policy"} {
 		if v := r.header.Get(k); v != "" {
 			t.Errorf("%s: internal header %s leaked: %q", what, k, v)
 		}

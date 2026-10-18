@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -79,6 +80,9 @@ func (s *Service) CreateKey(ctx context.Context, name string, scope api.Scope, p
 
 var errKeyIDTaken = errors.New("key id taken")
 
+// unknownKeyHash stands in for the stored hash of a key ID that does not exist.
+var unknownKeyHash [sha256.Size]byte
+
 // ListKeys returns all API keys, including revoked ones.
 func (s *Service) ListKeys(ctx context.Context) ([]domain.APIKey, error) {
 	return s.store.ListAPIKeys(ctx)
@@ -104,6 +108,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	}
 	k, err := s.store.APIKeyByID(ctx, id)
 	if isNotFound(err) {
+		// Compare anyway, so an unknown key ID costs the same as a wrong
+		// secret and the response time does not reveal which IDs exist.
+		_ = keys.Verify(hash, unknownKeyHash[:])
 		return Principal{}, unauthorized
 	}
 	if err != nil {

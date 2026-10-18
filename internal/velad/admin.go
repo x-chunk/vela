@@ -31,6 +31,8 @@ func adminService(cmd *cobra.Command, env Env) (*service.Service, *wire.Storage,
 		LinkRetention:        cfg.LinkRetention,
 		TrashRetention:       cfg.TrashRetention,
 		DefaultVisibility:    cfg.DefaultVisibility,
+		WebSessionIdle:       cfg.WebSessionIdle,
+		WebSessionMax:        cfg.WebSessionMax,
 	})
 	if err != nil {
 		_ = st.Close()
@@ -159,6 +161,32 @@ func newSigningCommand(env Env) *cobra.Command {
 	}
 	rotate.Flags().BoolVar(&revokeAll, "revoke-all", false, "destroy old keys and invalidate every existing link")
 	cmd.AddCommand(rotate)
+	return cmd
+}
+
+func newSessionCommand(env Env) *cobra.Command {
+	cmd := &cobra.Command{Use: "session", Short: "Manage web sign-in sessions"}
+	revokeAll := &cobra.Command{
+		Use:   "revoke-all",
+		Short: "End every web session immediately",
+		Long: "End every browser session of the web sign-in, for example after a cookie may have leaked.\n" +
+			"API keys are unaffected; their owners can sign in again. To lock out one key, revoke the key.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			svc, st, err := adminService(cmd, env)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = st.Close() }()
+			n, err := svc.RevokeWebSessions(cmd.Context())
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(env.Stdout, "Revoked %d web session(s).\n", n)
+			return nil
+		},
+	}
+	cmd.AddCommand(revokeAll)
 	return cmd
 }
 

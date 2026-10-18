@@ -42,6 +42,10 @@ type Options struct {
 	LockLease time.Duration
 	// MaxConcurrentUploads bounds active upload buffers; excess uploads wait.
 	MaxConcurrentUploads int
+	// WebSessionIdle and WebSessionMax bound web sessions (defaults
+	// DefaultWebSessionIdle and DefaultWebSessionMax); see web.go.
+	WebSessionIdle time.Duration
+	WebSessionMax  time.Duration
 }
 
 // Deps are the collaborators of the service.
@@ -103,6 +107,12 @@ func New(d Deps, o Options) (*Service, error) {
 	}
 	if o.MaxConcurrentUploads <= 0 {
 		o.MaxConcurrentUploads = 4
+	}
+	if o.WebSessionIdle <= 0 {
+		o.WebSessionIdle = DefaultWebSessionIdle
+	}
+	if o.WebSessionMax <= 0 {
+		o.WebSessionMax = DefaultWebSessionMax
 	}
 	host, _ := os.Hostname()
 	svc := &Service{

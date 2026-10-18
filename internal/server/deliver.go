@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,10 +23,16 @@ const (
 	headerAccelRobots       = "X-Vela-Robots"
 	headerAccelReferrer     = "X-Vela-Referrer-Policy"
 	headerAccelETag         = "X-Vela-ETag"
+	headerAccelVary         = "X-Vela-Vary"
+	headerAccelCSP          = "X-Vela-Content-Security-Policy"
 	noIndex                 = "noindex, nofollow"
 	cacheShared             = "public, max-age=300"
 	cachePrivate            = "private, no-store"
 	referrerNone            = "no-referrer"
+	// sandboxCSP runs uploaded documents in an opaque origin: their scripts
+	// work but can neither read the session cookie's responses nor post
+	// same-origin forms. See passiveContent.
+	sandboxCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 )
 
 // deliveryPolicy holds the caching and privacy headers of a response.
@@ -37,6 +44,11 @@ type deliveryPolicy struct {
 	// routes signed links to their own nginx location, where error logging
 	// is off because nginx would log the signature (deploy/nginx/vela.conf).
 	accelPath string
+	// vary names the request headers the response depends on: Cookie for
+	// direct URLs while web sign-in is enabled.
+	vary string
+	// csp is the Content-Security-Policy of the content; deliver sets it.
+	csp string
 }
 
 var (
@@ -76,14 +88,23 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // If-Range) with the ETag.
 //
 // User-uploaded HTML and SVG are served with their real type so that pages
-// work. That is acceptable because the origin holds no cookies or sessions:
-// the API authenticates by header only, so a malicious page cannot act on a
-// user's behalf.
+// work. Without web sign-in that is acceptable because the origin holds no
+// cookies or sessions: the API authenticates by header only, so a malicious
+// page cannot act on a user's behalf. With web sign-in the origin does hold a
+// session cookie, so such documents are sandboxed (see passiveContent).
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Content, pol deliveryPolicy) {
 	o := c.Object
 	etag := `"sha256:` + o.SHA256 + `"`
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
+	if s.opts.WebAuth && !passiveContent(o.ContentType) {
+		pol.csp = sandboxCSP
+		// Like every HTML page while sign-in is enabled (docs/SPEC-web.md);
+		// private and signed content keeps its stricter no-referrer.
+		if pol.referrerPolicy == "" {
+			pol.referrerPolicy = referrerSameOrigin
+		}
+	}
 
 	if s.opts.AccelPrefix != "" {
 		if noneMatch(r.Header.Values("If-None-Match"), etag) {
@@ -103,6 +124,14 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		}
 		if pol.referrerPolicy != "" {
 			h.Set(headerAccelReferrer, pol.referrerPolicy)
+		}
+		// nginx drops Vary and Content-Security-Policy of an upstream
+		// response with X-Accel-Redirect; the internal location re-emits them.
+		if pol.vary != "" {
+			h.Set(headerAccelVary, pol.vary)
+		}
+		if pol.csp != "" {
+			h.Set(headerAccelCSP, pol.csp)
 		}
 		w.WriteHeader(http.StatusOK)
 		return
@@ -198,6 +227,35 @@ func setPolicyHeaders(h http.Header, pol deliveryPolicy) {
 	if pol.referrerPolicy != "" {
 		h.Set("Referrer-Policy", pol.referrerPolicy)
 	}
+	if pol.vary != "" {
+		h.Set("Vary", pol.vary)
+	}
+	if pol.csp != "" {
+		h.Set("Content-Security-Policy", pol.csp)
+	}
+}
+
+// passiveContent reports whether browsers show content of this type without
+// running scripts: raster images, audio, video, PDF and plain text. Any other
+// type might open as a document with scripts (HTML, XML such as SVG,
+// multipart/x-mixed-replace, ...), and such a document served from this
+// origin could use a signed-in visitor's session cookie to read and leak
+// private files. So while web sign-in is enabled everything else gets
+// sandboxCSP: a sandbox on a harmless type costs nothing, whereas a missed
+// active type would not be caught by a list of known dangerous ones. PDF is
+// exempt because a sandbox breaks built-in PDF viewers.
+func passiveContent(contentType string) bool {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil || strings.HasSuffix(mt, "+xml") {
+		return false
+	}
+	switch {
+	case mt == "application/pdf", mt == "text/plain":
+		return true
+	case strings.HasPrefix(mt, "image/"), strings.HasPrefix(mt, "audio/"), strings.HasPrefix(mt, "video/"):
+		return true
+	}
+	return false
 }
 
 // noneMatch evaluates If-None-Match (RFC 9110, section 13.1.2) with weak

@@ -38,18 +38,25 @@ type Options struct {
 	// MaxCreateBytes sizes the JSON body limit of POST /api/v1/objects.
 	MaxCreateBytes int64
 	Clock          clock.Clock
+	// WebAuth enables the read-only web sign-in with an API key (web.go).
+	WebAuth bool
+	// InsecureCookie names the session cookie vela_session and drops Secure,
+	// for development over plain HTTP only.
+	InsecureCookie bool
 }
 
 // Server serves HTTP.
 type Server struct {
-	svc      *service.Service
-	theme    *index.Theme
-	log      *slog.Logger
-	opts     Options
-	limiter  *authLimiter
-	ids      ids.Generator
-	api      http.Handler
-	draining atomic.Bool
+	svc     *service.Service
+	theme   *index.Theme
+	log     *slog.Logger
+	opts    Options
+	limiter *authLimiter
+	// loginLimiter throttles failed web sign-ins separately from the API.
+	loginLimiter *authLimiter
+	ids          ids.Generator
+	api          http.Handler
+	draining     atomic.Bool
 }
 
 // New creates a server.
@@ -65,12 +72,13 @@ func New(svc *service.Service, theme *index.Theme, log *slog.Logger, opts Option
 	}
 	opts.PublicURL = strings.TrimSuffix(opts.PublicURL, "/")
 	s := &Server{
-		svc:     svc,
-		theme:   theme,
-		log:     log,
-		opts:    opts,
-		limiter: newAuthLimiter(opts.Clock.Now),
-		ids:     ids.NewULID(nil),
+		svc:          svc,
+		theme:        theme,
+		log:          log,
+		opts:         opts,
+		limiter:      newAuthLimiter(opts.Clock.Now),
+		loginLimiter: newLoginLimiter(opts.Clock.Now),
+		ids:          ids.NewULID(nil),
 	}
 	s.api = s.apiRoutes()
 	return s

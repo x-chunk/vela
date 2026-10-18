@@ -4,7 +4,7 @@ Instructions for agents that review or change this repository: the review agent 
 
 ## What Vela is
 
-Vela is a self-hosted file store with a Go server (`velad`) and CLI (`vela`). The server serves a REST API (`/api/v1`), a public HTML index, direct URLs, expiring HMAC-signed links, and a recoverable trash. Metadata lives in SQLite; contents live in the local filesystem or a private R2/S3 bucket. Go owns all path, access, visibility, and caching decisions. Files stream directly by default; nginx accel is an explicit filesystem optimization.
+Vela is a self-hosted file store with a Go server (`velad`) and CLI (`vela`). The server serves a REST API (`/api/v1`), a public HTML index with optional read-only web sign-in, direct URLs, expiring HMAC-signed links, and a recoverable trash. Metadata lives in SQLite; contents live in the local filesystem or a private R2/S3 bucket. Go owns all path, access, visibility, and caching decisions. Files stream directly by default; nginx accel is an explicit filesystem optimization.
 
 The specification is [`docs/SPEC.md`](docs/SPEC.md). Its section 21 records every deliberate deviation from the original text. If code and spec disagree, either the code is wrong or section 21 is missing an entry.
 
@@ -30,8 +30,8 @@ internal/ids        lower-case ULID generator
 internal/index      HTML index rendering, embedded theme, VELA_THEME_DIR overrides
 internal/keys       API key format: generate, parse, hash, constant-time verify
 internal/mimetype   content type detection and normalization
-internal/server     HTTP transport: routing, middleware, handlers, error mapping, delivery
-internal/service    business rules: visibility, scopes/prefixes, uploads, moves, trash, links, janitor
+internal/server     HTTP transport: routing, middleware, handlers, error mapping, delivery, web sign-in
+internal/service    business rules: visibility, scopes/prefixes, uploads, moves, trash, links, web sessions, janitor
 internal/sign       HMAC-SHA256 signatures of signed links
 internal/store      SQLite repositories (modernc.org/sqlite, no cgo), embedded migrations
 internal/testutil   in-process velad for tests (test-only)
@@ -86,7 +86,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
 - **Language**: identifiers, log messages, API and CLI messages are English.
 - **Errors**: wrap with context (`fmt.Errorf("open blob: %w", err)`), compare with `errors.Is`/`errors.As`. Client-facing errors from the service are `*service.Error` with a kind, a safe message and optional details. Internal errors become `500 internal` with a generic message; details go to the log only.
 - **Context**: pass `context.Context` to everything that does I/O.
-- **Logging**: `log/slog`, one structured line per request (method, route, path, status, bytes, duration, request_id, ip, key_id). Never log API keys, the `Authorization` header, signatures or any query string. The access log deliberately has no query.
+- **Logging**: `log/slog`, one structured line per request (method, route, path, status, bytes, duration, request_id, ip, key_id). Never log API keys, the `Authorization` header, signatures, cookies, session IDs, request bodies or any query string. The access log deliberately has no query.
 - **Time**: UTC everywhere; the database stores Unix milliseconds; the API shows RFC 3339 with seconds.
 - **Tests**: the service is tested on real SQLite and a real filesystem in a temporary directory, using a fake clock. HTTP tests use `internal/testutil`. Prefer table tests for rules such as paths, durations and tags.
 - **Dependencies** are kept minimal. Current ones and why:
@@ -107,7 +107,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
 
 1. Secrets are compared in constant time: API key hashes (`keys.Verify`), link signatures (`sign.Verify` via `hmac.Equal`), upload checksums.
 2. Private, expired, trashed and missing objects all answer **404** on the public side, never 403: existence is not disclosed. Signed-link failures are 404 too, except an expired `exp`, which is 410.
-3. API keys are accepted **only** from `Authorization: Bearer`. There is no query parameter or cookie, so keys never reach URLs, logs or browser history.
+3. API keys are accepted **only** from `Authorization: Bearer`, plus once in the body of the same-origin web sign-in form (`POST /_vela/login`, only with `VELA_WEB_AUTH`). There is no query parameter and no key cookie, so keys never reach URLs, logs or browser history: the session cookie carries a random ID whose SHA-256 is stored, never the key or anything derived from it.
 4. Keys, the `Authorization` header, signatures and query strings are never logged. In nginx every server block (the HTTP redirect server too) uses the query-free `vela_noquery` format, and signed links (`/s/`, `/_blobs/s/`) have the error log disabled, because nginx's error log always records the full request line. `test/e2e` checks the actual logs.
 5. Writes are atomic: content goes to `tmp/`, is size-limited and hashed while streaming, verified against `X-Vela-SHA256`, chmodded, fsynced and renamed into `blobs/`; every new directory and the shard are fsynced. Only then is the database row written. A failed transaction deletes the new blob. Content that loses its last reference (overwrite, purge, orphan) is never unlinked directly: the same transaction queues it in `blob_gc`, and `CollectBlobs` deletes it only after the grace period and a FULL WAL checkpoint (the durability barrier for `synchronous=NORMAL`), re-checking that nothing references it.
 6. **Key prefixes are checked on every operation**: list (narrowed for ancestors, 403 for unrelated paths), stat, download, create, upload, patch, delete, the move source **and target**, the restore target, trash listing (trash entries outside the prefix are 404), links create/list/revoke. Scopes: `ro` < `rw` < `admin`; purge needs `admin`; link listing needs `rw` because it returns working URLs.
@@ -118,6 +118,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
 11. API keys are managed only by `velad key ...` inside the container, never over HTTP.
 12. Paths are validated in one place (`api.CleanObjectPath`/`CleanPrefix`): NFC, no empty/dot segments, no control characters or backslashes, length limits, reserved first segments (`api`, `s`, `_vela`, `_blobs`, `healthz`, `robots.txt`, `favicon.ico`). Non-canonical API URLs are rejected rather than redirected.
 13. In accel mode, velad never sends `Cache-Control` directly (nginx would forward it *and* add the `X-Vela-Cache-Control` copy); the e2e test checks that every header arrives exactly once and nothing internal leaks.
+14. Web sessions (`docs/web-auth.md`) are read-only, re-read their key on every request (revocation is immediate) and see only the anonymous view plus their key's prefix; elsewhere they get the anonymous answer, 404 included. Every response for a session is `private, no-store`, public responses vary by `Cookie`, sign-in and sign-out accept only same-origin POSTs, and failed sign-ins are rate limited per IP. While sign-in is enabled, every upload except raster images, audio, video, PDF and plain text is served with a CSP sandbox, because the origin holds the session cookie.
 
 ## What counts as a breaking change in API v1
 
@@ -136,7 +137,8 @@ Not breaking: new endpoints, new optional request fields or headers, new respons
 - Add docker compose, Kubernetes manifests or an external database.
 - Introduce cgo (the race detector in tests is the only exception).
 - Log query strings of signed links, or any key or signature.
-- Accept API keys anywhere but the `Authorization` header.
+- Accept API keys anywhere but the `Authorization` header and the body of the web sign-in form.
+- Let a web session write anything, or serve uploads that browsers may run as documents without the sandbox while sign-in is enabled.
 - Let nginx make access decisions or serve `blobs/` outside the internal location.
 - Answer 403 where existence must stay hidden (public side, signed links).
 - Bypass `api` path validation or the service's prefix checks.

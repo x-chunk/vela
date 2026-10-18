@@ -56,6 +56,13 @@ type Config struct {
 	LogFormat            string
 	DefaultVisibility    api.Visibility
 	Robots               string
+	// WebAuth enables the read-only browser sign-in with an API key.
+	WebAuth bool
+	// WebInsecureCookie drops Secure and the __Host- prefix from the session
+	// cookie, for plain-HTTP development only.
+	WebInsecureCookie bool
+	WebSessionIdle    time.Duration
+	WebSessionMax     time.Duration
 }
 
 type setting struct {
@@ -81,6 +88,22 @@ func sizeSetting(dst func(*Config) *int64) func(*Config, string) error {
 			return err
 		}
 		*dst(c) = n
+		return nil
+	}
+}
+
+// switchSetting accepts on/off and the usual boolean spellings, so that both
+// VELA_WEB_AUTH=on and VELA_WEB_INSECURE_COOKIE=1 read naturally.
+func switchSetting(dst func(*Config) *bool) func(*Config, string) error {
+	return func(c *Config, v string) error {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "on", "true", "yes", "1":
+			*dst(c) = true
+		case "off", "false", "no", "0":
+			*dst(c) = false
+		default:
+			return fmt.Errorf("%q must be on or off", v)
+		}
 		return nil
 	}
 }
@@ -114,6 +137,10 @@ var settings = []setting{
 	{"VELA_LOG_FORMAT", "log-format", "json", "log format: json or text", parseLogFormat},
 	{"VELA_DEFAULT_VISIBILITY", "default-visibility", "unlisted", "visibility of new objects when the client sets none", parseVisibility},
 	{"VELA_ROBOTS", "robots", RobotsDeny, "robots.txt policy: deny (Disallow: /) or allow", parseRobots},
+	{"VELA_WEB_AUTH", "web-auth", "off", "read-only web sign-in with an API key: on or off", switchSetting(func(c *Config) *bool { return &c.WebAuth })},
+	{"VELA_WEB_INSECURE_COOKIE", "web-insecure-cookie", "off", "send the web session cookie without Secure (plain-HTTP development only)", switchSetting(func(c *Config) *bool { return &c.WebInsecureCookie })},
+	{"VELA_WEB_SESSION_IDLE", "web-session-idle", "7d", "web session idle timeout", durationSetting(func(c *Config) *time.Duration { return &c.WebSessionIdle })},
+	{"VELA_WEB_SESSION_MAX", "web-session-max", "30d", "absolute web session lifetime", durationSetting(func(c *Config) *time.Duration { return &c.WebSessionMax })},
 }
 
 // Common flags are registered on every velad command; the rest only on
@@ -180,6 +207,9 @@ func (c *Config) validate() error {
 	check(c.TrashRetention > 0, "VELA_TRASH_RETENTION must be positive")
 	check(c.JanitorInterval >= time.Minute, "VELA_JANITOR_INTERVAL must be at least 1m")
 	check(c.SiteTitle != "", "VELA_SITE_TITLE must not be empty")
+	check(c.WebSessionIdle >= time.Minute, "VELA_WEB_SESSION_IDLE must be at least 1m")
+	check(c.WebSessionIdle <= c.WebSessionMax, "VELA_WEB_SESSION_IDLE (%s) must not exceed VELA_WEB_SESSION_MAX (%s)",
+		api.FormatDuration(c.WebSessionIdle), api.FormatDuration(c.WebSessionMax))
 	return errors.Join(errs...)
 }
 
@@ -190,6 +220,11 @@ func (c *Config) RequireServe() error {
 	}
 	if c.PublicURL == "" {
 		return errors.New("VELA_PUBLIC_URL is required (for example https://store.example.com)")
+	}
+	// Browsers drop a Secure cookie set over plain HTTP, so sign-in would
+	// appear to succeed and then silently stay anonymous.
+	if c.WebAuth && !c.WebInsecureCookie && !strings.HasPrefix(c.PublicURL, "https://") {
+		return errors.New("VELA_WEB_AUTH needs an https VELA_PUBLIC_URL; set VELA_WEB_INSECURE_COOKIE=on only for plain-HTTP development")
 	}
 	return nil
 }
