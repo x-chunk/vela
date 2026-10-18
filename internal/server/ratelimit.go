@@ -11,11 +11,14 @@ import (
 // bucket of authBurst tokens refilled at authPerMinute per minute. Only
 // failures consume tokens, so a correctly configured client never hits the
 // limit, while guessing keys is slowed to a crawl. Keys have 256-bit
-// secrets, so the limit mostly protects logs and CPU, not the keys.
+// secrets, so the limit mostly protects logs and CPU, not the keys. The web
+// sign-in form has its own, smaller budget (docs/SPEC-web.md).
 const (
-	authBurst     = 10
-	authPerMinute = 10
-	sweepEvery    = time.Minute
+	authBurst      = 10
+	authPerMinute  = 10
+	loginBurst     = 5
+	loginPerMinute = 5
+	sweepEvery     = time.Minute
 )
 
 type bucket struct {
@@ -26,18 +29,28 @@ type bucket struct {
 type authLimiter struct {
 	mu        sync.Mutex
 	now       func() time.Time
+	burst     float64
+	perMinute float64
 	buckets   map[netip.Addr]*bucket
 	lastSweep time.Time
 }
 
 func newAuthLimiter(now func() time.Time) *authLimiter {
-	return &authLimiter{now: now, buckets: map[netip.Addr]*bucket{}}
+	return newLimiter(now, authBurst, authPerMinute)
+}
+
+func newLoginLimiter(now func() time.Time) *authLimiter {
+	return newLimiter(now, loginBurst, loginPerMinute)
+}
+
+func newLimiter(now func() time.Time, burst, perMinute float64) *authLimiter {
+	return &authLimiter{now: now, burst: burst, perMinute: perMinute, buckets: map[netip.Addr]*bucket{}}
 }
 
 func (l *authLimiter) refill(b *bucket, now time.Time) {
 	elapsed := now.Sub(b.last).Minutes()
 	if elapsed > 0 {
-		b.tokens = math.Min(authBurst, b.tokens+elapsed*authPerMinute)
+		b.tokens = math.Min(l.burst, b.tokens+elapsed*l.perMinute)
 		b.last = now
 	}
 }
@@ -56,7 +69,7 @@ func (l *authLimiter) blocked(ip netip.Addr) (bool, time.Duration) {
 	if b.tokens >= 1 {
 		return false, 0
 	}
-	wait := time.Duration((1 - b.tokens) / authPerMinute * float64(time.Minute))
+	wait := time.Duration((1 - b.tokens) / l.perMinute * float64(time.Minute))
 	return true, wait
 }
 
@@ -68,7 +81,7 @@ func (l *authLimiter) fail(ip netip.Addr) {
 	l.sweep(now)
 	b, ok := l.buckets[ip]
 	if !ok {
-		b = &bucket{tokens: authBurst, last: now}
+		b = &bucket{tokens: l.burst, last: now}
 		l.buckets[ip] = b
 	}
 	l.refill(b, now)
@@ -84,7 +97,7 @@ func (l *authLimiter) sweep(now time.Time) {
 	l.lastSweep = now
 	for ip, b := range l.buckets {
 		l.refill(b, now)
-		if b.tokens >= authBurst {
+		if b.tokens >= l.burst {
 			delete(l.buckets, ip)
 		}
 	}

@@ -192,7 +192,7 @@ var client = &http.Client{
 
 func (n *nginx) try(method, rawURL string, headers ...string) (response, error) {
 	var body io.Reader
-	if method == "PUT" {
+	if method == "PUT" || method == "POST" {
 		body = strings.NewReader(headers[len(headers)-1])
 		headers = headers[:len(headers)-1]
 	}
@@ -222,7 +222,7 @@ func (n *nginx) get(method, rawURL string, headers ...string) response {
 	return r
 }
 
-// put uploads through the API; the body is the last argument.
+// put uploads through the API; the body is the last argument, as for POST.
 func (n *nginx) put(key, path, content string, headers ...string) response {
 	n.t.Helper()
 	return n.get("PUT", n.https+"/api/v1/content/"+path, append(append([]string{"Authorization", "Bearer " + key}, headers...), content)...)

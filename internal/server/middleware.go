@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.xchunk.org/vela/api"
+	"go.xchunk.org/vela/internal/service"
 )
 
 // reqInfo is per-request state shared between middleware and handlers.
@@ -23,6 +24,9 @@ type reqInfo struct {
 	ip    netip.Addr
 	route string
 	keyID string
+	// session caches the web session of a public request; see session.
+	session        *service.Principal
+	sessionChecked bool
 }
 
 type ctxKey struct{}

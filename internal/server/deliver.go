@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,10 +23,16 @@ const (
 	headerAccelRobots       = "X-Vela-Robots"
 	headerAccelReferrer     = "X-Vela-Referrer-Policy"
 	headerAccelETag         = "X-Vela-ETag"
+	headerAccelVary         = "X-Vela-Vary"
+	headerAccelCSP          = "X-Vela-Content-Security-Policy"
 	noIndex                 = "noindex, nofollow"
 	cacheShared             = "public, max-age=300"
 	cachePrivate            = "private, no-store"
 	referrerNone            = "no-referrer"
+	// sandboxCSP runs uploaded documents in an opaque origin: their scripts
+	// work but can neither read the session cookie's responses nor post
+	// same-origin forms. See activeContent.
+	sandboxCSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 )
 
 // deliveryPolicy holds the caching and privacy headers of a response.
@@ -37,6 +44,11 @@ type deliveryPolicy struct {
 	// routes signed links to their own nginx location, where error logging
 	// is off because nginx would log the signature (deploy/nginx/vela.conf).
 	accelPath string
+	// vary names the request headers the response depends on: Cookie for
+	// direct URLs while web sign-in is enabled.
+	vary string
+	// csp is the Content-Security-Policy of the content; deliver sets it.
+	csp string
 }
 
 var (
@@ -76,14 +88,18 @@ func policyFor(v api.Visibility) deliveryPolicy {
 // If-Range) with the ETag.
 //
 // User-uploaded HTML and SVG are served with their real type so that pages
-// work. That is acceptable because the origin holds no cookies or sessions:
-// the API authenticates by header only, so a malicious page cannot act on a
-// user's behalf.
+// work. Without web sign-in that is acceptable because the origin holds no
+// cookies or sessions: the API authenticates by header only, so a malicious
+// page cannot act on a user's behalf. With web sign-in the origin does hold a
+// session cookie, so such documents are sandboxed (see activeContent).
 func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Content, pol deliveryPolicy) {
 	o := c.Object
 	etag := `"sha256:` + o.SHA256 + `"`
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
+	if s.opts.WebAuth && activeContent(o.ContentType) {
+		pol.csp = sandboxCSP
+	}
 
 	if s.opts.AccelPrefix != "" {
 		if noneMatch(r.Header.Values("If-None-Match"), etag) {
@@ -103,6 +119,14 @@ func (s *Server) deliver(w http.ResponseWriter, r *http.Request, c service.Conte
 		}
 		if pol.referrerPolicy != "" {
 			h.Set(headerAccelReferrer, pol.referrerPolicy)
+		}
+		// nginx drops Vary and Content-Security-Policy of an upstream
+		// response with X-Accel-Redirect; the internal location re-emits them.
+		if pol.vary != "" {
+			h.Set(headerAccelVary, pol.vary)
+		}
+		if pol.csp != "" {
+			h.Set(headerAccelCSP, pol.csp)
 		}
 		w.WriteHeader(http.StatusOK)
 		return
@@ -198,6 +222,31 @@ func setPolicyHeaders(h http.Header, pol deliveryPolicy) {
 	if pol.referrerPolicy != "" {
 		h.Set("Referrer-Policy", pol.referrerPolicy)
 	}
+	if pol.vary != "" {
+		h.Set("Vary", pol.vary)
+	}
+	if pol.csp != "" {
+		h.Set("Content-Security-Policy", pol.csp)
+	}
+}
+
+// activeContent reports whether a browser may run scripts in a document of
+// this type: HTML and any XML, which can embed XHTML and SVG scripts or
+// XSLT. Such a document served from this origin could otherwise use the
+// visitor's session cookie to read and leak private files, so with web
+// sign-in it gets sandboxCSP. Other types, PDF included, are left alone
+// because nosniff stops browsers from treating them as documents with
+// scripts, and sandboxing breaks built-in PDF viewers.
+func activeContent(contentType string) bool {
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return true
+	}
+	switch mt {
+	case "text/html", "text/xml", "application/xml", "text/xsl":
+		return true
+	}
+	return strings.HasSuffix(mt, "+xml")
 }
 
 // noneMatch evaluates If-None-Match (RFC 9110, section 13.1.2) with weak
