@@ -82,9 +82,10 @@ Error pages receive `ErrorPage`: `Site`, `Status` (int), `Title`, `Message`
 (strings), `GeneratedAt` (UTC `time.Time`), `Version` (string), `Session`, and
 `SignInURL`. `NoIndex` and `RootDisabled` are also available to the shared
 layout and default false on error pages. The sign-in page receives
-`LoginPage`: `Site`, `Action` (form target), `Error` (message of a failed
-attempt), `NoIndex` (true), `RootDisabled`, `GeneratedAt`, `Version`,
-`Session`, and `SignInURL`. Its form must post a single `key` field to
+`LoginPage`: `Site`, `Title` ("Sign in"), `Action` (form target), `Error`
+(message of a failed attempt), `NoIndex` (true), `RootDisabled`,
+`GeneratedAt`, `Version`, `Session`, and `SignInURL`: every field Page and
+ErrorPage share, so an existing layout also renders the sign-in page. Its form must post a single `key` field to
 `Action`. The shared layout must work with Page, ErrorPage, and LoginPage;
 page-specific fields belong in their individual content/title templates.
 

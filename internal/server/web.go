@@ -295,7 +295,7 @@ func (s *Server) renderLogin(w http.ResponseWriter, r *http.Request, status int,
 	viewer := s.session(r)
 	var buf bytes.Buffer
 	err := s.theme.RenderLogin(&buf, index.LoginPage{
-		Site: s.site(), Action: loginPath + "?next=" + url.QueryEscape(returnPath(r)), Error: msg, NoIndex: true,
+		Site: s.site(), Title: "Sign in", Action: loginPath + "?next=" + url.QueryEscape(returnPath(r)), Error: msg, NoIndex: true,
 		GeneratedAt: s.opts.Clock.Now(), Version: s.opts.Version, Session: sessionPage(r, viewer),
 	})
 	if err != nil {

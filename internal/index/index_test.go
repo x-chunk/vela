@@ -278,7 +278,7 @@ func TestRenderLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	err = th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Action: "/_vela/login?next=%2Fdocs%2F", Error: "Invalid API key.", NoIndex: true, GeneratedAt: now})
+	err = th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Title: "Sign in", Action: "/_vela/login?next=%2Fdocs%2F", Error: "Invalid API key.", NoIndex: true, GeneratedAt: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,10 +301,12 @@ func TestRenderLogin(t *testing.T) {
 
 func TestOldThemeWithoutSignIn(t *testing.T) {
 	t.Parallel()
-	// A custom layout written before web sign-in still loads, and the
-	// embedded login page renders inside it.
+	// A custom layout written before web sign-in, using only fields that
+	// Page and ErrorPage share, still loads, and the embedded login page
+	// renders inside it.
 	dir := t.TempDir()
-	layout := `{{define "layout"}}<html><title>{{block "title" .}}{{.Site.Title}}{{end}}</title>{{template "content" .}}</html>{{end}}`
+	layout := `{{define "layout"}}<html{{if .NoIndex}} data-noindex{{end}}{{if .RootDisabled}} data-root-off{{end}}><title>{{.Title}} · {{.Site.Title}}</title>` +
+		`{{template "content" .}}<footer>{{.Version}} {{date .GeneratedAt}}</footer></html>{{end}}`
 	if err := os.WriteFile(filepath.Join(dir, "layout.html"), []byte(layout), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +315,8 @@ func TestOldThemeWithoutSignIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Action: "/_vela/login"}); err != nil || !strings.Contains(buf.String(), `name="key"`) {
+	if err := th.RenderLogin(&buf, LoginPage{Site: Site{Title: "s"}, Title: "Sign in", Action: "/_vela/login"}); err != nil ||
+		!strings.Contains(buf.String(), `name="key"`) || !strings.Contains(buf.String(), "<title>Sign in · s</title>") {
 		t.Fatalf("login with old layout = %s, %v", buf.String(), err)
 	}
 	broken := t.TempDir()

@@ -118,12 +118,15 @@ type ErrorPage struct {
 	SignInURL    string    `json:"-"`
 }
 
-// LoginPage is the data of the sign-in page. It offers the fields the shared
-// layout uses, like Page and ErrorPage.
+// LoginPage is the data of the sign-in page. It offers every field that Page
+// and ErrorPage have in common, so a custom layout written for those two keeps
+// working with the sign-in page.
 type LoginPage struct {
 	NoIndex      bool
 	RootDisabled bool
 	Site         Site
+	// Title is the page's heading, "Sign in".
+	Title string
 	// Action is the target of the form; it carries the page to return to.
 	Action string
 	// Error explains a failed attempt; empty on first display.

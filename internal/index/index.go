@@ -125,7 +125,7 @@ func Load(dir string) (*Theme, error) {
 		t.RenderIndex(io.Discard, sampleSessionPage()),
 		t.RenderError(io.Discard, ErrorPage{Site: Site{Title: "x"}, Status: 404, Title: "Not found"}),
 		t.RenderError(io.Discard, ErrorPage{Site: Site{Title: "x"}, Status: 404, Title: "Not found", Session: session}),
-		t.RenderLogin(io.Discard, LoginPage{Site: Site{Title: "x"}, Action: "/_vela/login", Error: "x", NoIndex: true}),
+		t.RenderLogin(io.Discard, LoginPage{Site: Site{Title: "x"}, Title: "Sign in", Action: "/_vela/login", Error: "x", NoIndex: true}),
 	} {
 		if check != nil {
 			return nil, fmt.Errorf("theme check: %w", check)
