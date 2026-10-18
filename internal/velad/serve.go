@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/clock"
 	"go.xchunk.org/vela/internal/config"
 	"go.xchunk.org/vela/internal/index"
@@ -77,6 +78,8 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 		LinkRetention:        cfg.LinkRetention,
 		TrashRetention:       cfg.TrashRetention,
 		DefaultVisibility:    cfg.DefaultVisibility,
+		WebSessionIdle:       cfg.WebSessionIdle,
+		WebSessionMax:        cfg.WebSessionMax,
 	})
 	if err != nil {
 		return err
@@ -89,6 +92,12 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 		return err
 	}
 	log.Info("root directory index", "index", rootPolicy.Index, "source", rootPolicy.IndexSource)
+	if cfg.WebAuth {
+		log.Info("web sign-in enabled", "session_idle", api.FormatDuration(cfg.WebSessionIdle), "session_max", api.FormatDuration(cfg.WebSessionMax))
+		if cfg.WebInsecureCookie {
+			log.Warn("web session cookie is sent without Secure; use VELA_WEB_INSECURE_COOKIE only for plain-HTTP development")
+		}
+	}
 	srv := server.New(svc, theme, log, server.Options{
 		PublicURL:      cfg.PublicURL,
 		SiteTitle:      cfg.SiteTitle,
@@ -97,6 +106,8 @@ func serve(ctx context.Context, cfg *config.Config, env Env) error {
 		RobotsAllow:    cfg.Robots == config.RobotsAllow,
 		Version:        ver.Version,
 		MaxCreateBytes: cfg.MaxCreate,
+		WebAuth:        cfg.WebAuth,
+		InsecureCookie: cfg.WebInsecureCookie,
 	})
 	httpSrv := srv.HTTPServer(cfg.Listen)
 

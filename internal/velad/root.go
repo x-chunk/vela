@@ -64,6 +64,7 @@ func NewCommand(env Env) *cobra.Command {
 		serve,
 		newKeyCommand(env),
 		newSigningCommand(env),
+		newSessionCommand(env),
 		newJanitorCommand(env),
 		newBackupCommand(env),
 		newHealthcheckCommand(env),
