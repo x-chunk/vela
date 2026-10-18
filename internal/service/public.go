@@ -31,39 +31,56 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 	switch {
 	case err == nil:
 		if o.Visibility != api.Private && !o.ExpiredAt(now) {
-			c := s.content(o)
-			view, err := s.directoryPolicies(ctx)
-			if err != nil {
-				return PublicResult{}, err
-			}
-			c.NoIndex = view.Effective(api.ParentPrefix(path)).NoIndex == api.IndexOn
-			return PublicResult{Content: &c}, nil
+			return s.publicContent(ctx, o)
 		}
 		// A file cannot also be a directory, so there is nothing else here.
 		return PublicResult{}, notFoundf("not found")
 	case !isNotFound(err):
 		return PublicResult{}, err
 	}
+	exists, err := s.publicDirExists(ctx, path+"/", now)
+	if err != nil {
+		return PublicResult{}, err
+	}
+	if exists {
+		return PublicResult{RedirectDir: path + "/"}, nil
+	}
+	return PublicResult{}, notFoundf("not found")
+}
+
+// publicContent prepares an object that may be served for delivery, with the
+// crawler policy of its directory.
+func (s *Service) publicContent(ctx context.Context, o domain.Object) (PublicResult, error) {
+	c := s.content(o)
+	view, err := s.directoryPolicies(ctx)
+	if err != nil {
+		return PublicResult{}, err
+	}
+	c.NoIndex = view.Effective(api.ParentPrefix(o.Path)).NoIndex == api.IndexOn
+	return PublicResult{Content: &c}, nil
+}
+
+// publicDirExists reports whether a non-root directory has an index page for
+// anonymous visitors: an enabled index above at least one live public object.
+// The lookup is bounded and validated against the policy generation, so a
+// concurrent move cannot pair new paths with old rules.
+func (s *Service) publicDirExists(ctx context.Context, dir string, now time.Time) (bool, error) {
 	for {
 		view, err := s.directoryPolicies(ctx)
 		if err != nil {
-			return PublicResult{}, err
+			return false, err
 		}
-		exists, err := s.store.HasPublicObjects(ctx, path+"/", now)
+		exists, err := s.store.HasPublicObjects(ctx, dir, now)
 		if err != nil {
-			return PublicResult{}, err
+			return false, err
 		}
 		version, err := s.store.DirPoliciesVersion(ctx)
 		if err != nil {
-			return PublicResult{}, err
+			return false, err
 		}
-		if version != view.version {
-			continue
+		if version == view.version {
+			return exists && view.Effective(dir).Index == api.IndexOn, nil
 		}
-		if exists && view.Effective(path+"/").Index == api.IndexOn {
-			return PublicResult{RedirectDir: path + "/"}, nil
-		}
-		return PublicResult{}, notFoundf("not found")
 	}
 }
 

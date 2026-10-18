@@ -66,20 +66,13 @@ func (s *Service) ResolvePublicFor(ctx context.Context, rawPath string, viewer *
 	now := s.now()
 	o, err := s.store.ObjectByPath(ctx, path)
 	switch {
-	case err == nil && !inside:
-		// A file beside the way to the prefix: anonymous rules.
-		return s.ResolvePublic(ctx, path)
 	case err == nil:
-		if o.ExpiredAt(now) {
+		// Inside the prefix every live object is served; a file beside the
+		// way to it follows the anonymous rules.
+		if o.ExpiredAt(now) || (!inside && o.Visibility == api.Private) {
 			return PublicResult{}, notFoundf("not found")
 		}
-		c := s.content(o)
-		view, err := s.directoryPolicies(ctx)
-		if err != nil {
-			return PublicResult{}, err
-		}
-		c.NoIndex = view.Effective(api.ParentPrefix(path)).NoIndex == api.IndexOn
-		return PublicResult{Content: &c}, nil
+		return s.publicContent(ctx, o)
 	case !isNotFound(err):
 		return PublicResult{}, err
 	}
@@ -104,23 +97,7 @@ func (s *Service) sessionPageExists(ctx context.Context, dir, k string, now time
 	if err != nil || live {
 		return live, err
 	}
-	for {
-		view, err := s.directoryPolicies(ctx)
-		if err != nil {
-			return false, err
-		}
-		exists, err := s.store.HasPublicObjects(ctx, dir, now)
-		if err != nil {
-			return false, err
-		}
-		version, err := s.store.DirPoliciesVersion(ctx)
-		if err != nil {
-			return false, err
-		}
-		if version == view.version {
-			return exists && view.Effective(dir).Index == api.IndexOn, nil
-		}
-	}
+	return s.publicDirExists(ctx, dir, now)
 }
 
 // sessionPolicies makes the pages a session can open linkable in breadcrumbs
