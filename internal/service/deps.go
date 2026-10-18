@@ -21,6 +21,7 @@ type Reader interface {
 	ObjectsUnder(ctx context.Context, prefix string) ([]domain.Object, error)
 	ListObjects(ctx context.Context, q domain.ListQuery) (domain.ListResult, error)
 	HasPublicObjects(ctx context.Context, prefix string, now time.Time) (bool, error)
+	HasLiveObjects(ctx context.Context, prefix string, now time.Time) (bool, error)
 	DirStats(ctx context.Context, prefix string, now time.Time) (int, time.Time, error)
 	ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]domain.Object, error)
 	BlobReferenced(ctx context.Context, blobID string) (bool, error)
@@ -36,6 +37,8 @@ type Reader interface {
 
 	APIKeyByID(ctx context.Context, id string) (domain.APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]domain.APIKey, error)
+
+	WebSessionByHash(ctx context.Context, idHash []byte) (domain.WebSession, error)
 
 	DueBlobDeletions(ctx context.Context, now time.Time, limit int) ([]string, error)
 	LockHeld(ctx context.Context, name string, now time.Time) (bool, error)
@@ -69,6 +72,12 @@ type Writer interface {
 	InsertAPIKey(ctx context.Context, k domain.APIKey) error
 	RevokeAPIKey(ctx context.Context, id string, at time.Time) error
 	TouchAPIKey(ctx context.Context, id string, at time.Time) error
+
+	InsertWebSession(ctx context.Context, s domain.WebSession) error
+	TouchWebSession(ctx context.Context, idHash []byte, at time.Time) error
+	DeleteWebSession(ctx context.Context, idHash []byte) error
+	DeleteWebSessions(ctx context.Context) (int, error)
+	DeleteStaleWebSessions(ctx context.Context, now, idleCutoff time.Time) (int, error)
 
 	EnqueueBlobDeletion(ctx context.Context, blobID string, notBefore time.Time) (bool, error)
 	DeleteBlobDeletion(ctx context.Context, blobID string) error
