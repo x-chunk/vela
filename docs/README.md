@@ -23,7 +23,7 @@ accepted changes. [SPEC-storage.md](SPEC-storage.md) describes the storage
 extension and its implementation decisions. Read those decisions alongside the
 original text: some initial proposals were deliberately superseded.
 [SPEC-dirs.md](SPEC-dirs.md) describes directory policies and accepted compatibility
-decisions.
+decisions. [SPEC-web.md](SPEC-web.md) describes the optional read-only web sign-in.
 [OSS-AUDIT.md](OSS-AUDIT.md) is a dated preparation report, not a current release
 or deployment status page. Release changes belong in [CHANGELOG.md](../CHANGELOG.md).
 
