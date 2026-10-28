@@ -72,6 +72,12 @@ make test-e2e   # nginx end-to-end test (needs Docker, Linux host networking)
 make dev        # velad on 127.0.0.1:8080 in direct mode with ./.dev-data; prints an admin key
 make docker     # local image build
 make dist       # CLI release archives for 6 platforms + checksums.txt (needs zip)
+make test-s3    # R2/S3 contracts, delivery and migration against MinIO (needs Docker)
+make check-neutrality   # scan for private deployment values (needs Python 3)
+make validate-examples  # validate nginx and Caddy examples (needs Docker and OpenSSL)
+make tidy       # go mod tidy
+
+go test -race -run TestName ./internal/service/   # a single test
 ```
 
 Before declaring work done: `make test` and `make lint` are green, and `make test-e2e` too if delivery, headers or the nginx config changed.
