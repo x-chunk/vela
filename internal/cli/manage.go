@@ -225,11 +225,37 @@ func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []st
 // being moved, a directory, or below a file, and (without force) an
 // existing destination.
 func checkTaggedMoves(ctx context.Context, c *client.Client, moves []taggedMove, force bool) error {
+	conflicts, err := taggedConflicts(ctx, c, moves, force, "move", "moved")
+	if err != nil || len(conflicts) == 0 {
+		return err
+	}
+	hint := ""
+	if !force {
+		hint = "use --force to overwrite existing destinations (they go to the trash)"
+	}
+	return conflictError("nothing moved", conflicts, hint)
+}
+
+// planConflict is one problem with a planned move or link: the index of the
+// entry in the plan and why it cannot be carried out.
+type planConflict struct {
+	index int
+	msg   string
+}
+
+// taggedConflicts finds the conflicts of checkTaggedMoves without failing,
+// so that callers can either refuse the whole plan or drop the conflicting
+// entries. Of two entries with one destination, the later one conflicts.
+// verb and participle word the messages ("move", "moved").
+func taggedConflicts(ctx context.Context, c *client.Client, moves []taggedMove, force bool, verb, participle string) ([]planConflict, error) {
 	sources := make(map[string]bool, len(moves))
 	for _, m := range moves {
 		sources[m.From] = true
 	}
-	var problems []string
+	var problems []planConflict
+	add := func(i int, format string, args ...any) {
+		problems = append(problems, planConflict{index: i, msg: fmt.Sprintf(format, args...)})
+	}
 	claimed := map[string]string{}
 	isFile := map[string]bool{}
 	fileAt := func(p string) (bool, error) {
@@ -247,49 +273,52 @@ func checkTaggedMoves(ctx context.Context, c *client.Client, moves []taggedMove,
 		}
 		return isFile[p], nil
 	}
-	for _, m := range moves {
+	for i, m := range moves {
 		if other, ok := claimed[m.To]; ok {
-			problems = append(problems, fmt.Sprintf("%s and %s would both move to %s", other, m.From, m.To))
+			add(i, "%s and %s would both %s to %s", other, m.From, verb, m.To)
 			continue
 		}
 		claimed[m.To] = m.From
 		if sources[m.To] {
-			problems = append(problems, fmt.Sprintf("%s -> %s: the destination is also being moved", m.From, m.To))
+			add(i, "%s -> %s: the destination is also being %s", m.From, m.To, participle)
 			continue
 		}
 		exists, err := fileAt(m.To)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if exists && !force {
-			problems = append(problems, fmt.Sprintf("%s -> %s: the destination exists", m.From, m.To))
+			add(i, "%s -> %s: the destination exists", m.From, m.To)
 		}
 		for _, anc := range api.Ancestors(m.To) {
 			file, err := fileAt(anc)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if file {
-				problems = append(problems, fmt.Sprintf("%s -> %s: %s is a file", m.From, m.To, anc))
+				add(i, "%s -> %s: %s is a file", m.From, m.To, anc)
 			}
 		}
 		l, err := c.List(ctx, client.ListOptions{Prefix: m.To + "/", Recursive: true, Limit: 1})
 		if err != nil {
-			return fmt.Errorf("check %s: %w", m.To, err)
+			return nil, fmt.Errorf("check %s: %w", m.To, err)
 		}
 		if len(l.Objects) > 0 {
-			problems = append(problems, fmt.Sprintf("%s -> %s: the destination is a directory", m.From, m.To))
+			add(i, "%s -> %s: the destination is a directory", m.From, m.To)
 		}
 	}
-	if len(problems) == 0 {
-		return nil
-	}
-	hint := ""
-	if !force {
-		hint = "use --force to overwrite existing destinations (they go to the trash)"
+	return problems, nil
+}
+
+// conflictError is the exit-4 error that lists every conflict of a refused
+// plan.
+func conflictError(prefix string, conflicts []planConflict, hint string) error {
+	msgs := make([]string, len(conflicts))
+	for i, p := range conflicts {
+		msgs[i] = p.msg
 	}
 	return &cliError{code: exitConflict, slug: string(api.CodeConflict),
-		msg:  fmt.Sprintf("nothing moved: %d conflict(s):\n  %s", len(problems), strings.Join(problems, "\n  ")),
+		msg:  fmt.Sprintf("%s: %d conflict(s):\n  %s", prefix, len(msgs), strings.Join(msgs, "\n  ")),
 		hint: hint}
 }
 
