@@ -21,7 +21,9 @@ const (
 	RouteMove   = APIPrefix + "/move"
 	RouteTrash  = APIPrefix + "/trash"
 	RouteLinks  = APIPrefix + "/links"
-	RouteHealth = "/healthz"
+	// RouteSymlinks creates symlinks (docs/SPEC-symlinks.md).
+	RouteSymlinks = APIPrefix + "/symlinks"
+	RouteHealth   = "/healthz"
 )
 
 // Request and response headers. Header names are case-insensitive on the wire;

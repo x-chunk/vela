@@ -2,29 +2,39 @@ package api
 
 import "time"
 
-// Object is the API representation of a stored file (spec section 10.2).
-// Timestamps are UTC with second precision.
+// Object is the API representation of a stored file (spec section 10.2) or
+// symlink (docs/SPEC-symlinks.md). Timestamps are UTC with second precision.
+//
+// Size, SHA256 and ContentType of a symlink are those of its live target, and
+// zero values while it is broken.
 type Object struct {
 	ID          string      `json:"id"`
 	Path        string      `json:"path"`
 	Name        string      `json:"name"`
+	Kind        ObjectKind  `json:"kind"`
 	Size        int64       `json:"size"`
 	SHA256      string      `json:"sha256"`
 	ContentType string      `json:"content_type"`
 	Disposition Disposition `json:"disposition"`
 	Visibility  Visibility  `json:"visibility"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	Tags        []string    `json:"tags"`
-	CreatedAt   time.Time   `json:"created_at"`
-	UpdatedAt   time.Time   `json:"updated_at"`
-	ExpiresAt   *time.Time  `json:"expires_at"`
+	// EffectiveVisibility governs anonymous access. It equals Visibility for
+	// a file; for a symlink it is the stricter of its own and its target's,
+	// and private while the symlink is broken.
+	EffectiveVisibility Visibility `json:"effective_visibility"`
+	// Target describes the file a symlink refers to; nil for files.
+	Target      *SymlinkTarget `json:"target"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Tags        []string       `json:"tags"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	ExpiresAt   *time.Time     `json:"expires_at"`
 	// Expired is true when ExpiresAt has passed but the janitor has not moved
 	// the object to the trash yet. Expired objects are hidden from the public
 	// side and from signed links but stay downloadable through the API.
 	Expired  bool  `json:"expired"`
 	Revision int64 `json:"revision"`
-	// URL is the public URL, or nil for private objects, which have none.
+	// URL is the public URL, or nil when the object is effectively private.
 	URL *string `json:"url"`
 }
 
@@ -79,6 +89,9 @@ type MoveResponse struct {
 type DeleteResponse struct {
 	Deleted  int      `json:"deleted"`
 	TrashIDs []string `json:"trash_ids"`
+	// SymlinksAffected counts the symlinks within the key's prefix that the
+	// deletion left broken.
+	SymlinksAffected int `json:"symlinks_affected"`
 }
 
 // TrashEntry is an object in the trash. Object.Path equals OriginalPath and
@@ -107,6 +120,9 @@ type RestoreRequest struct {
 // PurgeResponse reports how many trash entries were permanently deleted.
 type PurgeResponse struct {
 	Purged int `json:"purged"`
+	// SymlinksAffected counts the symlinks within the key's prefix whose
+	// target is now gone for good.
+	SymlinksAffected int `json:"symlinks_affected"`
 }
 
 // CreateLinkRequest is the body of POST /api/v1/links. Set at most one of TTL
@@ -158,11 +174,19 @@ type Limits struct {
 
 // Info is the response of GET /api/v1/info.
 type Info struct {
-	ServerVersion string  `json:"server_version"`
-	APIVersion    int     `json:"api_version"`
-	PublicURL     string  `json:"public_url"`
-	Key           KeyInfo `json:"key"`
-	Limits        Limits  `json:"limits"`
+	ServerVersion string   `json:"server_version"`
+	APIVersion    int      `json:"api_version"`
+	PublicURL     string   `json:"public_url"`
+	Key           KeyInfo  `json:"key"`
+	Limits        Limits   `json:"limits"`
+	Features      Features `json:"features"`
+}
+
+// Features lists optional capabilities of the server, so that a newer client
+// can explain a missing feature instead of failing with a bare 404. Older
+// servers omit the object, which decodes as every feature off.
+type Features struct {
+	Symlinks bool `json:"symlinks"`
 }
 
 // Health is the response of GET /healthz.

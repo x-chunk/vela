@@ -160,21 +160,23 @@ func (s *Service) ObjectDTO(o domain.Object) api.Object {
 
 func (s *Service) objectDTO(o domain.Object, now time.Time) api.Object {
 	dto := api.Object{
-		ID:          o.ID,
-		Path:        o.Path,
-		Name:        api.BaseName(o.Path),
-		Size:        o.Size,
-		SHA256:      o.SHA256,
-		ContentType: o.ContentType,
-		Disposition: o.Disposition,
-		Visibility:  o.Visibility,
-		Title:       o.Title,
-		Description: o.Description,
-		Tags:        o.Tags,
-		CreatedAt:   o.CreatedAt.UTC().Truncate(time.Second),
-		UpdatedAt:   o.UpdatedAt.UTC().Truncate(time.Second),
-		Expired:     o.ExpiredAt(now),
-		Revision:    o.Revision,
+		ID:                  o.ID,
+		Path:                o.Path,
+		Name:                api.BaseName(o.Path),
+		Kind:                api.KindFile,
+		Size:                o.Size,
+		SHA256:              o.SHA256,
+		ContentType:         o.ContentType,
+		Disposition:         o.Disposition,
+		Visibility:          o.Visibility,
+		EffectiveVisibility: o.Visibility,
+		Title:               o.Title,
+		Description:         o.Description,
+		Tags:                o.Tags,
+		CreatedAt:           o.CreatedAt.UTC().Truncate(time.Second),
+		UpdatedAt:           o.UpdatedAt.UTC().Truncate(time.Second),
+		Expired:             o.ExpiredAt(now),
+		Revision:            o.Revision,
 	}
 	if dto.Tags == nil {
 		dto.Tags = []string{}

@@ -14,16 +14,19 @@ type ErrorCode string
 // Error codes. Adding a code is backwards compatible; renaming or removing one
 // is a breaking change.
 const (
-	CodeInvalidRequest      ErrorCode = "invalid_request"
-	CodeInvalidPath         ErrorCode = "invalid_path"
-	CodeChecksumMismatch    ErrorCode = "checksum_mismatch"
-	CodeUnauthorized        ErrorCode = "unauthorized"
-	CodeForbidden           ErrorCode = "forbidden"
-	CodeNotFound            ErrorCode = "not_found"
-	CodeMethodNotAllowed    ErrorCode = "method_not_allowed"
-	CodeConflict            ErrorCode = "conflict"
-	CodeAlreadyExists       ErrorCode = "already_exists"
-	CodePathConflict        ErrorCode = "path_conflict"
+	CodeInvalidRequest   ErrorCode = "invalid_request"
+	CodeInvalidPath      ErrorCode = "invalid_path"
+	CodeChecksumMismatch ErrorCode = "checksum_mismatch"
+	CodeUnauthorized     ErrorCode = "unauthorized"
+	CodeForbidden        ErrorCode = "forbidden"
+	CodeNotFound         ErrorCode = "not_found"
+	CodeMethodNotAllowed ErrorCode = "method_not_allowed"
+	CodeConflict         ErrorCode = "conflict"
+	CodeAlreadyExists    ErrorCode = "already_exists"
+	CodePathConflict     ErrorCode = "path_conflict"
+	// CodeIsSymlink rejects writing content to a path that holds a symlink;
+	// content is never written through a symlink into its target.
+	CodeIsSymlink           ErrorCode = "is_symlink"
 	CodePreconditionFailed  ErrorCode = "precondition_failed"
 	CodePayloadTooLarge     ErrorCode = "payload_too_large"
 	CodeUnsupportedEncoding ErrorCode = "unsupported_encoding"
@@ -45,7 +48,7 @@ func (c ErrorCode) Status() int {
 		return http.StatusNotFound
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed
-	case CodeConflict, CodeAlreadyExists, CodePathConflict:
+	case CodeConflict, CodeAlreadyExists, CodePathConflict, CodeIsSymlink:
 		return http.StatusConflict
 	case CodePreconditionFailed:
 		return http.StatusPreconditionFailed
