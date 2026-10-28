@@ -19,6 +19,9 @@
   `--skip-explicitly` reports each one. `--skip-symlinks` leaves symlinks,
   which copy their file's tags, out of the selection. Like `mv`, it shows
   the plan and asks first (`-y`, `--dry-run`).
+- `vela ln --by-tag … --sync` links only what is missing in DEST, so it can
+  be rerun to keep a tag view current; `--prune` also moves to the trash
+  the symlinks whose file in scope lost its tags or is in the trash.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
