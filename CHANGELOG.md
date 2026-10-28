@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.0 — 2026-10-28
+
 ### Added
 
 - `vela meta -r` changes tags, description, disposition and expiry of several
