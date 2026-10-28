@@ -130,6 +130,12 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 	if len(l.Objects) == 0 {
 		return &cliError{code: exitNotFound, slug: "not_found", msg: "no files under " + prefix}
 	}
+	return a.downloadTree(ctx, c, l.Objects, prefix, local, force)
+}
+
+// downloadTree downloads objs, which all lie below prefix, into local,
+// keeping their paths relative to prefix.
+func (a *App) downloadTree(ctx context.Context, c *client.Client, objs []api.Object, prefix, local string, force bool) error {
 	// Every write goes through an os.Root opened on LOCAL: symlinks inside
 	// it, existing or swapped in during the download, cannot lead outside.
 	if err := os.MkdirAll(local, 0o755); err != nil {
@@ -140,10 +146,10 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	errs := make([]error, len(l.Objects))
-	paths := make([]string, len(l.Objects))
-	for i := range l.Objects {
-		o := &l.Objects[i]
+	errs := make([]error, len(objs))
+	paths := make([]string, len(objs))
+	for i := range objs {
+		o := &objs[i]
 		paths[i] = o.Path
 		if isBroken(o) {
 			// Skipped, not fatal: the other files still download, and the
@@ -167,7 +173,7 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 			a.printer.Infof("%s -> %s", o.Path, filepath.Join(local, rel))
 		}
 	}
-	if err := batchResult("download", len(l.Objects), errs, paths); err != nil {
+	if err := batchResult("download", len(objs), errs, paths); err != nil {
 		for i, e := range errs {
 			if e != nil && !a.jsonOut {
 				a.printer.Errorf("failed:", "%s: %v", paths[i], e)
@@ -176,7 +182,7 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 		return err
 	}
 	if a.jsonOut {
-		return a.printer.JSONValue(l.Objects)
+		return a.printer.JSONValue(objs)
 	}
 	return nil
 }
