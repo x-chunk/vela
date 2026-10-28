@@ -406,8 +406,13 @@ func TestLnByTag(t *testing.T) {
 	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
 
 	r := h.ok("ln", "--by-tag", "math", "docs/", "links/", "--save-structure", "--dry-run")
-	if !strings.Contains(r.stdout, "would link links/sub/math2.pdf -> docs/sub/math2.pdf") || exists("links/math.pdf") {
+	if !strings.Contains(r.stdout, "links/sub/math2.pdf -> docs/sub/math2.pdf") || exists("links/math.pdf") {
 		t.Fatalf("dry run = %+v", r)
+	}
+
+	// Without a terminal, -y is required.
+	if r := h.exec("", "ln", "--by-tag", "math", "links/"); r.code != exitUsage || exists("links/math.pdf") {
+		t.Fatalf("no terminal: exit %d", r.code)
 	}
 
 	// a.txt and other/q1.txt are fine, x/q1.txt collides with other/q1.txt
@@ -422,11 +427,11 @@ func TestLnByTag(t *testing.T) {
 
 	// --skip links the rest without a word; --skip-explicitly reports. The new
 	// symlinks copy the tag q1, so the second run selects them too.
-	r = h.ok("ln", "--by-tag", "q1", "dest/", "--skip")
+	r = h.ok("ln", "--by-tag", "q1", "dest/", "--skip", "-y")
 	if strings.Contains(r.stderr, "skipped") || !strings.Contains(r.stdout, "dest/q1.txt -> other/q1.txt") {
 		t.Fatalf("--skip = %+v", r)
 	}
-	r = h.ok("ln", "--by-tag", "q1", "dest2/", "--skip-explicitly", "--json")
+	r = h.ok("ln", "--by-tag", "q1", "dest2/", "--skip-explicitly", "--json", "-y")
 	var objs []api.Object
 	r.json(t, &objs)
 	if len(objs) != 2 || !strings.Contains(r.stderr, "and x/q1.txt would both link to dest2/q1.txt") {
@@ -434,7 +439,7 @@ func TestLnByTag(t *testing.T) {
 	}
 
 	// --skip-symlinks ignores the symlinks created above: no conflicts left.
-	r = h.ok("ln", "--by-tag", "q1", "dest3/", "--save-structure", "--skip-symlinks")
+	r = h.ok("ln", "--by-tag", "q1", "dest3/", "--save-structure", "--skip-symlinks", "-y")
 	if !strings.Contains(r.stdout, "dest3/x/q1.txt -> x/q1.txt") || exists("dest3/dest/q1.txt") {
 		t.Fatalf("--skip-symlinks = %+v", r)
 	}
@@ -442,6 +447,7 @@ func TestLnByTag(t *testing.T) {
 	for _, args := range [][]string{
 		{"ln", "--skip", "a.txt", "b.txt"},
 		{"ln", "--skip-symlinks", "a.txt", "b.txt"},
+		{"ln", "-y", "a.txt", "b.txt"},
 		{"ln", "--by-tag", "q1", "-r", "x/"},
 		{"ln", "--by-tag", "q1", "--skip", "--skip-explicitly", "y/"},
 	} {
