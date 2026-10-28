@@ -24,6 +24,9 @@
   the symlinks whose file in scope lost its tags or is in the trash. A new
   symlink may take a pruned one's place (with a warning); `--strict` makes
   that a conflict.
+  Symlinks to trashed files are kept unless `--prune-trashed` is given,
+  since restoring the file repairs them; symlinks to tagged files moved out
+  of scope are pruned.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
