@@ -456,3 +456,33 @@ func TestLnByTag(t *testing.T) {
 		}
 	}
 }
+
+func TestLnByTagSync(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "--save-structure", "-y")
+	h.seedTagged("docs/new.pdf", "math")
+	r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--save-structure", "--sync", "-y")
+	if got := strings.TrimSpace(r.stdout); !strings.HasPrefix(got, "L/new.pdf -> docs/new.pdf") || strings.Contains(got, "math2") ||
+		!strings.Contains(r.stderr, "2 symlink(s) up to date") {
+		t.Fatalf("sync = %+v", r)
+	}
+
+	// A moved file keeps its symlink instead of getting a second one.
+	h.ok("mv", "docs/sub/math2.pdf", "docs/moved.pdf")
+	r = h.ok("ln", "--by-tag", "math", "docs/", "L/", "--save-structure", "--sync", "-y")
+	if !strings.Contains(r.stderr, "docs/moved.pdf is already linked at L/sub/math2.pdf") || exists("L/moved.pdf") {
+		t.Fatalf("moved = %+v", r)
+	}
+
+	// A foreign file in the way is still a conflict.
+	h.seedTagged("L/x.pdf")
+	h.seedTagged("docs/x.pdf", "math")
+	if r := h.exec("", "ln", "--by-tag", "math", "docs/", "L/", "--save-structure", "--sync", "-y"); r.code != exitConflict ||
+		!strings.Contains(r.stderr, "docs/x.pdf -> L/x.pdf: the destination exists") {
+		t.Fatalf("conflict: exit %d, stderr %q", r.code, r.stderr)
+	}
+}

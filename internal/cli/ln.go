@@ -26,6 +26,7 @@ type lnFlags struct {
 	skip, skipExplicitly      bool
 	skipSymlinks              bool
 	yes                       bool
+	sync                      bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
@@ -55,12 +56,16 @@ func (a *App) lnCommand() *cobra.Command {
 			"leaves the conflicting objects out; --skip-explicitly also reports each one.\n" +
 			"--skip-symlinks leaves symlinks out of the selection: new symlinks copy their file's\n" +
 			"tags, so a repeated run would otherwise select them too. The symlinks are shown and\n" +
-			"need a confirmation unless -y is given.",
+			"need a confirmation unless -y is given.\n\n" +
+			"--sync makes a repeated run link only what is missing: symlinks already in DEST that\n" +
+			"point at a selected file count as done, wherever they are, and symlinks are never\n" +
+			"selected (--skip-symlinks is implied).",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
 			"  vela ln -f originals/new.pdf latest.pdf\n" +
-			"  vela ln --by-tag travel originals/ sorted/travel/ --skip-explicitly",
+			"  vela ln --by-tag travel originals/ sorted/travel/ --skip-explicitly\n" +
+			"  vela ln --by-tag travel originals/ sorted/travel/ --save-structure --sync -y",
 		Args: byTag.args(minArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req, err := f.request(cmd, a)
@@ -76,8 +81,8 @@ func (a *App) lnCommand() *cobra.Command {
 				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes {
-				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks and -y need --by-tag or --by-tags")
+			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync {
+				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync and -y need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -135,6 +140,7 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag, leave conflicting objects out, report each, and link the rest")
 	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
+	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
@@ -264,10 +270,14 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	}
 	ctx, cancel := a.ctx(cmd)
 	var keep func(api.Object) bool
-	if f.skipSymlinks {
+	if f.skipSymlinks || f.sync {
 		keep = func(o api.Object) bool { return o.Kind != api.KindSymlink }
 	}
 	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree, keep)
+	upToDate := 0
+	if err == nil && f.sync {
+		plan, upToDate, err = a.syncLinkPlan(ctx, c, plan, dest)
+	}
 	if err == nil {
 		var conflicts []planConflict
 		if conflicts, err = taggedConflicts(ctx, c, plan, f.force, "link", "linked"); err == nil {
@@ -277,6 +287,9 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	cancel()
 	if err != nil {
 		return err
+	}
+	if f.sync && upToDate > 0 {
+		a.printer.Infof("%d symlink(s) up to date.", upToDate)
 	}
 	if len(plan) == 0 {
 		a.printer.Infof("Nothing to link.")
@@ -298,6 +311,51 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 		return err
 	}
 	return a.lnFiles(cmd, f, req, pairs)
+}
+
+// syncLinkPlan drops the planned symlinks whose file already has a symlink
+// in dest and returns how many were dropped. A symlink at another path
+// than planned (the file was moved or renamed since) is kept and reported
+// instead of getting a duplicate.
+func (a *App) syncLinkPlan(ctx context.Context, c *client.Client, plan []taggedMove, dest string) ([]taggedMove, int, error) {
+	l, err := c.ListAll(ctx, client.ListOptions{Prefix: dest, Recursive: true, Limit: 1000})
+	if err != nil {
+		return nil, 0, fmt.Errorf("list %s: %w", dest, err)
+	}
+	linked := map[string]string{}
+	for _, o := range l.Objects {
+		if o.Kind != api.KindSymlink || o.Target == nil {
+			continue
+		}
+		// Prefer the planned path when one file has several symlinks.
+		if _, ok := linked[o.Target.ID]; !ok {
+			linked[o.Target.ID] = o.Path
+		}
+	}
+	planned := make(map[string]string, len(plan))
+	for _, m := range plan {
+		planned[m.id] = m.To
+	}
+	for _, o := range l.Objects {
+		if o.Kind == api.KindSymlink && o.Target != nil && planned[o.Target.ID] == o.Path {
+			linked[o.Target.ID] = o.Path
+		}
+	}
+	kept := plan[:0:0]
+	upToDate := 0
+	for _, m := range plan {
+		at, ok := linked[m.id]
+		switch {
+		case !ok:
+			kept = append(kept, m)
+		case at == m.To:
+			upToDate++
+		default:
+			upToDate++
+			a.printer.Warnf("%s is already linked at %s, not at %s", m.From, at, m.To)
+		}
+	}
+	return kept, upToDate, nil
 }
 
 // resolveLinkConflicts refuses a plan with conflicts, or with --skip and
