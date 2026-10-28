@@ -107,7 +107,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
   - `github.com/aws/aws-sdk-go-v2` (`service/s3`, `feature/s3/manager`, `credentials`) and `github.com/aws/smithy-go`: R2/S3 streaming multipart, static credentials, presigning, and typed/redacted backend errors. Server-only; architecture tests exclude the SDK from the CLI.
 
   Justify any new dependency here.
-- **Commits** are atomic: one logical change per commit, each building with green tests. Mainline branch is `master`.
+- **Commits** are atomic, always, for every agent and every task: one logical change per commit, each building with green `make test` and `make lint`. Commit as you go, as soon as a logical step is complete; never batch unrelated changes or a whole feature into one commit, and never mix refactoring, behavior changes and documentation in the same commit. Use Conventional Commits (`feat(scope): ...`, `fix(R-001): ...`, `docs: ...`). Mainline branch is `master`.
 
 ## Security invariants (review checklist)
 
