@@ -149,3 +149,48 @@ func TestGetByTag(t *testing.T) {
 		t.Errorf("nothing tagged: exit %d", r.code)
 	}
 }
+
+func TestMetaAndVisByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	stat := func(p string) api.Object {
+		t.Helper()
+		var o api.Object
+		h.ok("stat", p, "--json").json(t, &o)
+		return o
+	}
+
+	h.ok("meta", "--by-tag", "math", "--tag", "sorted", "--untag", "draft")
+	if got := stat("docs/math.pdf").Tags; strings.Join(got, ",") != "math,sorted" {
+		t.Errorf("docs/math.pdf tags = %v", got)
+	}
+	if got := stat("docs/plain.txt").Tags; len(got) != 0 {
+		t.Errorf("untagged file changed: %v", got)
+	}
+	h.ok("meta", "--by-tag", "q1", "other/", "--description", "only other")
+	if stat("a.txt").Description != "" || stat("other/q1.txt").Description != "only other" {
+		t.Error("meta --by-tag ignored its scope")
+	}
+	for _, bad := range [][]string{
+		{"meta", "--by-tag", "math", "--title", "x"},
+		{"meta", "--by-tag", "math"},
+	} {
+		if r := h.exec("", bad...); r.code != exitUsage {
+			t.Errorf("vela %s: exit %d", strings.Join(bad, " "), r.code)
+		}
+	}
+	if r := h.exec("", "meta", "--by-tag", "nope", "--tag", "x"); r.code != exitNotFound {
+		t.Errorf("meta of nothing: exit %d", r.code)
+	}
+
+	h.ok("vis", "--by-tags", "math sorted", "public")
+	if stat("docs/math.pdf").Visibility != api.Public || stat("docs/sub/math2.pdf").Visibility != api.Public ||
+		stat("a.txt").Visibility != api.Private {
+		t.Error("vis --by-tags changed the wrong objects")
+	}
+	h.ok("vis", "--by-tag", "q1", "other/", "unlisted")
+	if stat("a.txt").Visibility != api.Private || stat("other/q1.txt").Visibility != api.Unlisted {
+		t.Error("vis --by-tag ignored its scope")
+	}
+}

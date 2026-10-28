@@ -251,6 +251,7 @@ func (a *App) metaCommand() *cobra.Command {
 		title, description, contentType, disposition, expires string
 		tags, untags                                          []string
 		recursive                                             bool
+		byTag                                                 tagFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "meta PATH... [flags]",
@@ -259,21 +260,25 @@ func (a *App) metaCommand() *cobra.Command {
 			"only if nobody modified the file in between (optimistic locking on the revision).\n\n" +
 			"With -r, change files and everything below directories (they may be mixed, as with vis).\n" +
 			"Tags are added and removed per object; --title and --content-type are refused, because one\n" +
-			"value is almost never right for many files. Objects that already match are left alone.",
+			"value is almost never right for many files. Objects that already match are left alone.\n\n" +
+			"--by-tag and --by-tags change every object with these tags below the given paths\n" +
+			"(everything by default), with the same rules as -r.",
 		Example: "  vela meta report.pdf\n  vela meta report.pdf --title 'Q1 report' --tag q1 --untag draft\n" +
 			"  vela meta report.pdf --expires 7d\n  vela meta report.pdf --expires none --disposition attachment\n" +
-			"  vela meta -r photos/2026/ --tag trip --untag inbox",
-		Args:              minArgs(1),
+			"  vela meta -r photos/2026/ --tag trip --untag inbox\n  vela meta --by-tag inbox --tag sorted --untag inbox",
+		Args:              byTag.args(minArgs(1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			changed := cmd.Flags().Changed
-			if !recursive && len(args) != 1 {
+			tagged := byTag.used()
+			many := recursive || tagged
+			if !many && len(args) != 1 {
 				return usagef("meta takes one path (use -r for several)")
 			}
-			if recursive {
+			if many {
 				for _, name := range []string{"title", "content-type"} {
 					if changed(name) {
-						return usagef("--%s cannot be used with -r", name)
+						return usagef("--%s cannot be used with -r or --by-tag", name)
 					}
 				}
 			}
@@ -322,8 +327,8 @@ func (a *App) metaCommand() *cobra.Command {
 				return usageError(err)
 			}
 			editTags := len(tags) > 0 || len(untags) > 0
-			if recursive && base.IsEmpty() && !editTags {
-				return usagef("meta -r needs at least one change (use ls -l -r to show metadata)")
+			if many && base.IsEmpty() && !editTags {
+				return usagef("meta -r and --by-tag need at least one change (use ls -l -r or stat --by-tag to show metadata)")
 			}
 			patchFor := func(cur api.Object) api.ObjectPatch {
 				patch := base
@@ -339,8 +344,8 @@ func (a *App) metaCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
-			if recursive {
-				targets, err := a.batchTargets(ctx, c, args, true)
+			if many {
+				targets, err := a.batchTargets(ctx, c, args, true, &byTag)
 				if err != nil {
 					return err
 				}
@@ -393,6 +398,7 @@ func (a *App) metaCommand() *cobra.Command {
 	f.StringVar(&disposition, "disposition", "", "inline or attachment")
 	f.StringVar(&expires, "expires", "", "expire after a duration (7d), at an RFC 3339 time, or none")
 	f.BoolVarP(&recursive, "recursive", "r", false, "apply to several paths and everything below directories")
+	byTag.register(cmd)
 	return cmd
 }
 
@@ -429,14 +435,23 @@ func dropUnchanged(patch api.ObjectPatch, o api.Object) api.ObjectPatch {
 
 func (a *App) visCommand() *cobra.Command {
 	var recursive bool
+	var byTag tagFlags
 	cmd := &cobra.Command{
 		Use:   "vis PATH... public|unlisted|private",
 		Short: "Change visibility",
 		Long: "Change the visibility of files, or with -r of everything below directories (files and\n" +
 			"directories may be mixed). A path that matches nothing is an error. The change takes effect\n" +
-			"immediately. Unlisted is not access control: anyone with the URL can read it.",
-		Example: "  vela vis report.pdf private\n  vela vis -r docs/math/ public",
-		Args:    minArgs(2),
+			"immediately. Unlisted is not access control: anyone with the URL can read it.\n\n" +
+			"--by-tag and --by-tags change every object with these tags below the given paths\n" +
+			"(everything by default).",
+		Example: "  vela vis report.pdf private\n  vela vis -r docs/math/ public\n  vela vis --by-tag handout public",
+		Args: func(cmd *cobra.Command, args []string) error {
+			// A tag selection replaces the paths, leaving only the visibility.
+			if byTag.used() {
+				return minArgs(1)(cmd, args)
+			}
+			return minArgs(2)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vis, err := api.ParseVisibility(args[len(args)-1])
 			if err != nil {
@@ -448,7 +463,7 @@ func (a *App) visCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
-			targets, err := a.batchTargets(ctx, c, args[:len(args)-1], recursive)
+			targets, err := a.batchTargets(ctx, c, args[:len(args)-1], recursive, &byTag)
 			if err != nil {
 				return err
 			}
@@ -457,13 +472,28 @@ func (a *App) visCommand() *cobra.Command {
 		ValidArgsFunction: a.completeRemote(),
 	}
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "apply to everything below directories")
+	byTag.register(cmd)
 	return cmd
 }
 
 // batchTargets resolves every argument of a batch command before anything
 // changes, so that a typo cannot leave the command half done or report a
-// hollow success.
-func (a *App) batchTargets(ctx context.Context, c *client.Client, args []string, recursive bool) ([]api.Object, error) {
+// hollow success. With a tag selection, the arguments are its scopes.
+func (a *App) batchTargets(ctx context.Context, c *client.Client, args []string, recursive bool, byTag *tagFlags) ([]api.Object, error) {
+	if byTag.used() {
+		f, err := byTag.filter()
+		if err != nil {
+			return nil, err
+		}
+		objs, err := a.selectTagged(ctx, c, args, f)
+		if err != nil {
+			return nil, err
+		}
+		if len(objs) == 0 {
+			return nil, errNothingTagged(f)
+		}
+		return objs, nil
+	}
 	var targets []api.Object
 	for _, raw := range args {
 		objs, err := a.resolveTargets(ctx, c, raw, recursive)
