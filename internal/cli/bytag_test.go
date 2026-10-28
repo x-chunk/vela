@@ -322,3 +322,19 @@ func TestMvByTag(t *testing.T) {
 		t.Errorf("--save-structure without --by-tag: exit %d", r.code)
 	}
 }
+
+func TestTrashLsByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	h.ok("rm", "--by-tag", "math", "--by-tag", "q1", "-y")
+	var list api.TrashList
+	h.ok("trash", "ls", "--by-tags", "draft math", "--json").json(t, &list)
+	if len(list.Entries) != 1 || list.Entries[0].OriginalPath != "docs/math.pdf" {
+		t.Fatalf("trash ls --by-tags = %+v", list.Entries)
+	}
+	h.ok("trash", "ls", "other/", "--by-tag", "q1", "--json").json(t, &list)
+	if len(list.Entries) != 1 || list.Entries[0].OriginalPath != "other/q1.txt" {
+		t.Fatalf("trash ls other/ --by-tag = %+v", list.Entries)
+	}
+}

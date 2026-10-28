@@ -19,14 +19,20 @@ func (a *App) trashCommand() *cobra.Command {
 }
 
 func (a *App) trashLsCommand() *cobra.Command {
-	return &cobra.Command{
+	var byTag tagFlags
+	cmd := &cobra.Command{
 		Use:   "ls [DIR/]",
 		Short: "List the trash, newest first",
-		Args:  rangeArgs(0, 1),
+		Long: "List the trash, newest first. --by-tag and --by-tags list only entries whose file had\n" +
+			"these tags when it was deleted.",
+		Args: rangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			tags, err := byTag.filter()
+			if err != nil {
+				return err
+			}
 			prefix := ""
 			if len(args) == 1 {
-				var err error
 				if prefix, err = remotePrefix(args[0]); err != nil {
 					return err
 				}
@@ -37,7 +43,7 @@ func (a *App) trashLsCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
-			entries, err := c.ListAllTrash(ctx, client.TrashOptions{Prefix: prefix, Limit: 1000})
+			entries, err := c.ListAllTrash(ctx, client.TrashOptions{Prefix: prefix, Tags: tags, Limit: 1000})
 			if err != nil {
 				return err
 			}
@@ -63,6 +69,8 @@ func (a *App) trashLsCommand() *cobra.Command {
 			return nil
 		},
 	}
+	byTag.register(cmd)
+	return cmd
 }
 
 func (a *App) trashRestoreCommand() *cobra.Command {
