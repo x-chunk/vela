@@ -574,3 +574,36 @@ func TestInvalidJSONTextIsRejected(t *testing.T) {
 		t.Fatalf("stored %q", r.body)
 	}
 }
+
+func TestListByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.upload("docs/a.pdf", "a", api.HeaderTags, "math,draft")
+	h.upload("docs/b.pdf", "b", api.HeaderTags, "math")
+	h.upload("home/c.pdf", "c", api.HeaderTags, "q1")
+	h.upload("top.txt", "t")
+
+	list := func(key, query string) string {
+		t.Helper()
+		r := h.do("GET", api.RouteObject+"?recursive=true&"+query, key, nil)
+		expectStatus(t, r, 200)
+		var l api.Listing
+		r.json(t, &l)
+		var got []string
+		for _, o := range l.Objects {
+			got = append(got, o.Path)
+		}
+		return strings.Join(got, " ")
+	}
+	admin := h.ts.AdminKey
+	if got := list(admin, "tag=MATH,draft&tag=q1"); got != "docs/a.pdf home/c.pdf" {
+		t.Errorf("tag filter = %q", got)
+	}
+	// The filter narrows a key's view; it never widens it.
+	home := h.ts.Key(t, "home", api.ScopeRO, "home/")
+	if got := list(home, "tag=math&tag=q1"); got != "home/c.pdf" {
+		t.Errorf("prefixed key = %q", got)
+	}
+	expectStatus(t, h.admin("GET", api.RouteObject+"?tag=a/b", ""), 400)
+	expectStatus(t, h.admin("GET", api.RouteObject+"?tag=", ""), 400)
+}

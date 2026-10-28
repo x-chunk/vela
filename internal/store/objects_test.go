@@ -152,6 +152,45 @@ func TestListObjects(t *testing.T) {
 	}
 }
 
+func TestListObjectsByTag(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openTest(t)
+	tagged := func(path string, tags ...string) domain.Object {
+		o := newObject(path, api.Public)
+		o.Tags = tags
+		return o
+	}
+	insert(t, s,
+		tagged("a.txt", "q1"),
+		tagged("b/math.pdf", "math", "draft"),
+		tagged("b/math2.pdf", "math"),
+		tagged("c/none.txt"),
+		tagged("c/q1-ish.txt", "q10"),
+	)
+	tests := []struct {
+		name string
+		q    domain.ListQuery
+		want string
+	}{
+		{name: "one tag", q: domain.ListQuery{Recursive: true, Tags: api.TagFilter{{"math"}}}, want: "b/math.pdf b/math2.pdf"},
+		{name: "and", q: domain.ListQuery{Recursive: true, Tags: api.TagFilter{{"draft", "math"}}}, want: "b/math.pdf"},
+		{name: "or", q: domain.ListQuery{Recursive: true, Tags: api.TagFilter{{"q1"}, {"draft", "math"}}}, want: "a.txt b/math.pdf"},
+		{name: "exact tag only", q: domain.ListQuery{Recursive: true, Tags: api.TagFilter{{"q"}}}, want: ""},
+		{name: "dirs only with matches", q: domain.ListQuery{Tags: api.TagFilter{{"math"}, {"q1"}}}, want: "b/ a.txt"},
+		{name: "prefix", q: domain.ListQuery{Prefix: "c/", Recursive: true, Tags: api.TagFilter{{"q10"}}}, want: "c/q1-ish.txt"},
+	}
+	for _, tt := range tests {
+		res, err := s.ListObjects(ctx, tt.q)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got := paths(res); got != tt.want {
+			t.Errorf("%s: got %q; want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestListObjectsPaginationIsComplete(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

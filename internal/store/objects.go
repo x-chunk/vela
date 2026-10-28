@@ -326,6 +326,11 @@ func (q reads) ListObjects(ctx context.Context, lq domain.ListQuery) (domain.Lis
 		where = append(where, "o.target_id = ?")
 		filterArgs = append(filterArgs, lq.TargetID)
 	}
+	if len(lq.Tags) > 0 {
+		cond, args := tagFilterSQL("o", lq.Tags)
+		where = append(where, cond)
+		filterArgs = append(filterArgs, args...)
+	}
 	if lq.TargetWithin != "" {
 		where = append(where, "(o.kind = 'file' OR "+effectiveVisibilitySQL+" <> 'private' OR (t.path >= ? AND t.path < ?))")
 		filterArgs = append(filterArgs, lq.TargetWithin, prefixUpper(lq.TargetWithin))

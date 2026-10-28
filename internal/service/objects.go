@@ -44,6 +44,8 @@ type ListParams struct {
 	// Target selects only symlinks that refer to the object at this path,
 	// which must lie inside the key's prefix.
 	Target string
+	// Tags selects objects by their own tags.
+	Tags   api.TagFilter
 	Limit  int
 	Cursor string
 }
@@ -85,6 +87,7 @@ func (s *Service) List(ctx context.Context, p Principal, lp ListParams) (api.Lis
 		Visibilities: lp.Visibilities,
 		Kind:         domain.Kind(lp.Kind),
 		Broken:       lp.Broken,
+		Tags:         lp.Tags,
 		After:        after,
 		Limit:        limit,
 	}

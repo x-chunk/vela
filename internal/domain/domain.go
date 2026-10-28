@@ -230,6 +230,8 @@ type ListQuery struct {
 	Broken bool
 	// TargetID selects only symlinks that refer to this object.
 	TargetID string
+	// Tags, when non-empty, selects objects whose own tags match it.
+	Tags api.TagFilter
 	// TargetWithin, when non-empty, hides symlinks that are effectively
 	// private and whose target lies outside this prefix. Signed-in web views
 	// use it so that a symlink inside the key's prefix cannot reveal a

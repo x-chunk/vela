@@ -26,6 +26,7 @@ import (
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
+	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/internal/domain"
 )
 
@@ -315,4 +316,22 @@ func prefixUpper(prefix string) string {
 	b := []byte(prefix)
 	b[len(b)-1]++
 	return string(b)
+}
+
+// tagFilterSQL returns a condition on the JSON tag array of the table alias
+// that holds when the tags match f (see api.TagFilter), with its arguments.
+// f must not be empty. Tags are stored normalized, so plain equality is
+// enough.
+func tagFilterSQL(alias string, f api.TagFilter) (string, []any) {
+	var args []any
+	groups := make([]string, len(f))
+	for i, g := range f {
+		conds := make([]string, len(g))
+		for j, tag := range g {
+			conds[j] = `EXISTS (SELECT 1 FROM json_each(` + alias + `.tags) WHERE json_each.value = ?)`
+			args = append(args, tag)
+		}
+		groups[i] = "(" + strings.Join(conds, " AND ") + ")"
+	}
+	return "(" + strings.Join(groups, " OR ") + ")", args
 }

@@ -166,9 +166,13 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, p service.Pr
 			return requestError(service.ErrInvalidRequest, err.Error())
 		}
 	}
+	tags, err := api.ParseTagFilter(q["tag"])
+	if err != nil {
+		return requestError(service.ErrInvalidRequest, err.Error())
+	}
 	listing, err := s.svc.List(r.Context(), p, service.ListParams{
 		Prefix: q.Get("prefix"), Recursive: recursive, Visibilities: vis, Kind: kind, Broken: broken,
-		Target: q.Get("target"), Limit: limit, Cursor: q.Get("cursor"),
+		Target: q.Get("target"), Tags: tags, Limit: limit, Cursor: q.Get("cursor"),
 	})
 	if err != nil {
 		return err
