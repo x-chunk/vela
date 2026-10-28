@@ -447,6 +447,27 @@ func uniqueObjects(objs []api.Object) []api.Object {
 }
 
 func (a *App) applyVisibility(ctx context.Context, c *client.Client, targets []api.Object, vis api.Visibility) error {
+	updated, changed, err := applyPatches(ctx, c, "visibility change", targets, func(o api.Object) api.ObjectPatch {
+		if o.Visibility == vis {
+			return api.ObjectPatch{}
+		}
+		return api.ObjectPatch{Visibility: api.Some(vis)}
+	})
+	if err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(updated)
+	}
+	a.printer.Printf("%d object(s) now %s (%d changed)\n", len(targets), vis, changed)
+	return nil
+}
+
+// applyPatches patches targets concurrently, each against the revision it
+// was resolved at. patchFor returns an empty patch for objects that already
+// match, which are then left alone and returned as they are.
+func applyPatches(ctx context.Context, c *client.Client, op string, targets []api.Object,
+	patchFor func(api.Object) api.ObjectPatch) ([]api.Object, int, error) {
 	errs := make([]error, len(targets))
 	paths := make([]string, len(targets))
 	updated := make([]*api.Object, len(targets))
@@ -455,7 +476,8 @@ func (a *App) applyVisibility(ctx context.Context, c *client.Client, targets []a
 	changed := 0
 	for i := range targets {
 		paths[i] = targets[i].Path
-		if targets[i].Visibility == vis {
+		patch := patchFor(targets[i])
+		if patch.IsEmpty() {
 			o := targets[i]
 			updated[i] = &o
 			continue
@@ -466,20 +488,16 @@ func (a *App) applyVisibility(ctx context.Context, c *client.Client, targets []a
 		go func(i int) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			updated[i], errs[i] = c.Patch(ctx, targets[i].Path, api.ObjectPatch{Visibility: api.Some(vis)}, targets[i].Revision)
+			updated[i], errs[i] = c.Patch(ctx, targets[i].Path, patch, targets[i].Revision)
 		}(i)
 	}
 	wg.Wait()
-	if err := batchResult("visibility change", len(targets), errs, paths); err != nil {
-		return err
+	if err := batchResult(op, len(targets), errs, paths); err != nil {
+		return nil, 0, err
 	}
-	if a.jsonOut {
-		out := make([]api.Object, 0, len(updated))
-		for _, o := range updated {
-			out = append(out, *o)
-		}
-		return a.printer.JSONValue(out)
+	out := make([]api.Object, 0, len(updated))
+	for _, o := range updated {
+		out = append(out, *o)
 	}
-	a.printer.Printf("%d object(s) now %s (%d changed)\n", len(targets), vis, changed)
-	return nil
+	return out, changed, nil
 }
