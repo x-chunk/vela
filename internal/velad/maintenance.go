@@ -238,10 +238,17 @@ func referencedBlobs(ctx context.Context, s *store.Store) (map[string]blobRef, i
 		return nil, 0, err
 	}
 	refs := make(map[string]blobRef, len(objs)+len(trash))
+	// Symlinks own no blob; the file they refer to is listed on its own.
 	for _, o := range objs {
+		if o.IsSymlink() {
+			continue
+		}
 		refs[o.BlobID] = blobRef{path: o.Path, size: o.Size, sha256: o.SHA256}
 	}
 	for _, e := range trash {
+		if e.Object.IsSymlink() {
+			continue
+		}
 		refs[e.Object.BlobID] = blobRef{path: e.Object.Path + " (in the trash)", size: e.Object.Size, sha256: e.Object.SHA256}
 	}
 	return refs, len(objs) + len(trash), nil

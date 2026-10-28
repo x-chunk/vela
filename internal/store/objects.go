@@ -12,13 +12,50 @@ import (
 	"go.xchunk.org/vela/internal/domain"
 )
 
+// objectCols are the columns of an objects row, in the order of objectArgs.
 const objectCols = `id, path, kind, target_id, blob_id, size, sha256, content_type, disposition, visibility,
 	title, description, tags, created_at, updated_at, expires_at, revision`
+
+// Every read of an object also resolves its symlink target in the same
+// statement: the live target (t) and, failing that, the target's trash entry
+// (tt). One statement gives one consistent snapshot, so a concurrent rename,
+// trash or overwrite of the target cannot be observed half-way.
+const (
+	targetCols = `t.id, t.path, t.blob_id, t.size, t.sha256, t.content_type, t.visibility, t.expires_at, tt.original_path`
+	targetJoin = ` LEFT JOIN objects t ON t.id = %[1]s.target_id LEFT JOIN trash tt ON tt.object_id = %[1]s.target_id`
+)
+
+// objectSelect selects objects as "o" together with their targets.
+var objectSelect = `SELECT ` + qualify(objectCols, "o") + `, ` + targetCols + ` FROM objects o` + fmt.Sprintf(targetJoin, "o")
+
+// SQL expressions over "o" and its target "t". A symlink takes the stricter
+// of its own and its target's visibility, and is private while broken (see
+// domain.Object.EffectiveVisibility).
+const (
+	effectiveVisibilitySQL = `(CASE WHEN o.kind = 'file' THEN o.visibility
+		WHEN t.id IS NULL OR o.visibility = 'private' OR t.visibility = 'private' THEN 'private'
+		WHEN o.visibility = 'unlisted' OR t.visibility = 'unlisted' THEN 'unlisted'
+		ELSE 'public' END)`
+	// liveSQL takes now twice: an object is live when it has not expired
+	// and, for a symlink, its target is live and has not expired either.
+	liveSQL   = `(o.expires_at IS NULL OR o.expires_at >= ?) AND (o.kind = 'file' OR (t.id IS NOT NULL AND (t.expires_at IS NULL OR t.expires_at >= ?)))`
+	brokenSQL = `o.kind = 'symlink' AND t.id IS NULL`
+)
+
+// qualify prefixes every column of a comma-separated list with alias.
+func qualify(cols, alias string) string {
+	parts := strings.Split(cols, ",")
+	for i, c := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(c)
+	}
+	return strings.Join(parts, ", ")
+}
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
+// scanObject reads the columns of objectCols followed by targetCols.
 func scanObject(sc scanner) (domain.Object, error) {
 	var (
 		o                domain.Object
@@ -27,9 +64,13 @@ func scanObject(sc scanner) (domain.Object, error) {
 		disp, vis, tags  string
 		created, updated int64
 		expires          sql.NullInt64
+
+		tID, tPath, tBlob, tSHA, tType, tVis, ttPath sql.NullString
+		tSize, tExpires                              sql.NullInt64
 	)
 	err := sc.Scan(&o.ID, &o.Path, &kind, &target, &blobID, &o.Size, &o.SHA256, &o.ContentType, &disp, &vis,
-		&o.Title, &o.Description, &tags, &created, &updated, &expires, &o.Revision)
+		&o.Title, &o.Description, &tags, &created, &updated, &expires, &o.Revision,
+		&tID, &tPath, &tBlob, &tSize, &tSHA, &tType, &tVis, &tExpires, &ttPath)
 	if err != nil {
 		return domain.Object{}, mapErr(err)
 	}
@@ -45,6 +86,18 @@ func scanObject(sc scanner) (domain.Object, error) {
 	o.CreatedAt = fromMS(created)
 	o.UpdatedAt = fromMS(updated)
 	o.ExpiresAt = fromNullMS(expires)
+	if o.IsSymlink() {
+		t := &domain.Target{ID: o.TargetID, State: domain.ObjectGone}
+		switch {
+		case tID.Valid:
+			t.State, t.Path, t.BlobID = domain.ObjectLive, tPath.String, tBlob.String
+			t.Visibility, t.ExpiresAt = api.Visibility(tVis.String), fromNullMS(tExpires)
+			o.Size, o.SHA256, o.ContentType = tSize.Int64, tSHA.String, tType.String
+		case ttPath.Valid:
+			t.State, t.Path = domain.ObjectTrashed, ttPath.String
+		}
+		o.Target = t
+	}
 	return o, nil
 }
 
@@ -95,12 +148,12 @@ func (q reads) queryObjects(ctx context.Context, query string, args ...any) ([]d
 
 // ObjectByPath returns the object at path or domain.ErrNotFound.
 func (q reads) ObjectByPath(ctx context.Context, path string) (domain.Object, error) {
-	return scanObject(q.db.QueryRowContext(ctx, `SELECT `+objectCols+` FROM objects WHERE path = ?`, path))
+	return scanObject(q.db.QueryRowContext(ctx, objectSelect+` WHERE o.path = ?`, path))
 }
 
 // ObjectByID returns the object with id or domain.ErrNotFound.
 func (q reads) ObjectByID(ctx context.Context, id string) (domain.Object, error) {
-	return scanObject(q.db.QueryRowContext(ctx, `SELECT `+objectCols+` FROM objects WHERE id = ?`, id))
+	return scanObject(q.db.QueryRowContext(ctx, objectSelect+` WHERE o.id = ?`, id))
 }
 
 // FirstExisting returns the first of paths that holds an object (in byte
@@ -143,20 +196,21 @@ func (q reads) FirstUnder(ctx context.Context, prefix string) (string, error) {
 // ObjectsUnder returns every object below prefix in path order.
 func (q reads) ObjectsUnder(ctx context.Context, prefix string) ([]domain.Object, error) {
 	if prefix == "" {
-		return q.queryObjects(ctx, `SELECT `+objectCols+` FROM objects ORDER BY path`)
+		return q.queryObjects(ctx, objectSelect+` ORDER BY o.path`)
 	}
-	return q.queryObjects(ctx, `SELECT `+objectCols+` FROM objects WHERE path >= ? AND path < ? ORDER BY path`,
+	return q.queryObjects(ctx, objectSelect+` WHERE o.path >= ? AND o.path < ? ORDER BY o.path`,
 		prefix, prefixUpper(prefix))
 }
 
 // ExpiredObjects returns up to limit objects whose expires_at is before now.
 func (q reads) ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]domain.Object, error) {
-	return q.queryObjects(ctx, `SELECT `+objectCols+` FROM objects
-		WHERE expires_at IS NOT NULL AND expires_at < ? ORDER BY expires_at LIMIT ?`, ms(now), limit)
+	return q.queryObjects(ctx, objectSelect+`
+		WHERE o.expires_at IS NOT NULL AND o.expires_at < ? ORDER BY o.expires_at LIMIT ?`, ms(now), limit)
 }
 
 // HasPublicObjects checks public index existence without loading metadata or
-// counting the entire subtree. Only a matching live row is needed.
+// counting the entire subtree. Only a matching live row is needed; symlinks
+// count by their effective visibility and their target.
 func (q reads) HasPublicObjects(ctx context.Context, prefix string, now time.Time) (bool, error) {
 	exists, err := q.hasLiveObjects(ctx, prefix, now, true)
 	if err != nil {
@@ -177,13 +231,13 @@ func (q reads) HasLiveObjects(ctx context.Context, prefix string, now time.Time)
 }
 
 func (q reads) hasLiveObjects(ctx context.Context, prefix string, now time.Time, publicOnly bool) (bool, error) {
-	query := `SELECT EXISTS(SELECT 1 FROM objects WHERE (expires_at IS NULL OR expires_at >= ?)`
-	args := []any{ms(now)}
+	query := `SELECT EXISTS(SELECT 1 FROM objects o` + fmt.Sprintf(targetJoin, "o") + ` WHERE ` + liveSQL
+	args := []any{ms(now), ms(now)}
 	if publicOnly {
-		query += " AND visibility = 'public'"
+		query += " AND " + effectiveVisibilitySQL + " = 'public'"
 	}
 	if prefix != "" {
-		query += " AND path >= ? AND path < ?"
+		query += " AND o.path >= ? AND o.path < ?"
 		args = append(args, prefix, prefixUpper(prefix))
 	}
 	query += " LIMIT 1)"
@@ -192,18 +246,18 @@ func (q reads) hasLiveObjects(ctx context.Context, prefix string, now time.Time,
 	return exists, err
 }
 
-// DirStats counts public, unexpired objects below prefix and returns the
+// DirStats counts public, live objects below prefix and returns the
 // latest update time among them. Policy listings use it to find orphaned rules.
 func (q reads) DirStats(ctx context.Context, prefix string, now time.Time) (int, time.Time, error) {
 	var (
 		n      int
 		latest sql.NullInt64
 	)
-	query := `SELECT COUNT(*), MAX(updated_at) FROM objects
-  WHERE visibility = 'public' AND (expires_at IS NULL OR expires_at >= ?)`
-	args := []any{ms(now)}
+	query := `SELECT COUNT(*), MAX(o.updated_at) FROM objects o` + fmt.Sprintf(targetJoin, "o") +
+		` WHERE ` + effectiveVisibilitySQL + ` = 'public' AND ` + liveSQL
+	args := []any{ms(now), ms(now)}
 	if prefix != "" {
-		query += " AND path >= ? AND path < ?"
+		query += " AND o.path >= ? AND o.path < ?"
 		args = append(args, prefix, prefixUpper(prefix))
 	}
 	err := q.db.QueryRowContext(ctx, query, args...).Scan(&n, &latest)
@@ -217,6 +271,7 @@ func (q reads) DirStats(ctx context.Context, prefix string, now time.Time) (int,
 }
 
 // BlobReferenced reports whether a live or trashed object uses blobID.
+// Symlinks have a NULL blob_id, which never equals anything.
 func (q reads) BlobReferenced(ctx context.Context, blobID string) (bool, error) {
 	var one int
 	err := q.db.QueryRowContext(ctx, `SELECT 1 FROM objects WHERE blob_id = ?
@@ -246,19 +301,34 @@ func (q reads) ListObjects(ctx context.Context, lq domain.ListQuery) (domain.Lis
 	var where []string
 	var filterArgs []any
 	if upper := prefixUpper(scope); upper != "" {
-		where = append(where, "path < ?")
+		where = append(where, "o.path < ?")
 		filterArgs = append(filterArgs, upper)
 	}
 	if len(lq.Visibilities) > 0 {
 		marks := strings.TrimSuffix(strings.Repeat("?,", len(lq.Visibilities)), ",")
-		where = append(where, "visibility IN ("+marks+")")
+		where = append(where, effectiveVisibilitySQL+" IN ("+marks+")")
 		for _, v := range lq.Visibilities {
 			filterArgs = append(filterArgs, string(v))
 		}
 	}
 	if !lq.LiveAt.IsZero() {
-		where = append(where, "(expires_at IS NULL OR expires_at >= ?)")
-		filterArgs = append(filterArgs, ms(lq.LiveAt))
+		where = append(where, liveSQL)
+		filterArgs = append(filterArgs, ms(lq.LiveAt), ms(lq.LiveAt))
+	}
+	if lq.Kind != "" {
+		where = append(where, "o.kind = ?")
+		filterArgs = append(filterArgs, string(lq.Kind))
+	}
+	if lq.Broken {
+		where = append(where, brokenSQL)
+	}
+	if lq.TargetID != "" {
+		where = append(where, "o.target_id = ?")
+		filterArgs = append(filterArgs, lq.TargetID)
+	}
+	if lq.TargetWithin != "" {
+		where = append(where, "(o.kind = 'file' OR "+effectiveVisibilitySQL+" <> 'private' OR (t.path >= ? AND t.path < ?))")
+		filterArgs = append(filterArgs, lq.TargetWithin, prefixUpper(lq.TargetWithin))
 	}
 
 	// start is the lower bound for the next query; inclusive tells whether
@@ -286,13 +356,13 @@ func (q reads) ListObjects(ctx context.Context, lq domain.ListQuery) (domain.Lis
 		if inclusive {
 			op = ">="
 		}
-		conds := append([]string{"path " + op + " ?"}, where...)
+		conds := append([]string{"o.path " + op + " ?"}, where...)
 		args := append([]any{start}, filterArgs...)
 		batch := 256
 		if want > 0 && want-count < batch {
 			batch = want - count
 		}
-		query := `SELECT ` + objectCols + ` FROM objects WHERE ` + strings.Join(conds, " AND ") + ` ORDER BY path LIMIT ?`
+		query := objectSelect + ` WHERE ` + strings.Join(conds, " AND ") + ` ORDER BY o.path LIMIT ?`
 		objs, err := q.queryObjects(ctx, query, append(args, batch)...)
 		if err != nil {
 			return domain.ListResult{}, err
@@ -342,6 +412,32 @@ func (q reads) ListObjects(ctx context.Context, lq domain.ListQuery) (domain.Lis
 		res.Last = lastKeys[len(lastKeys)-1]
 	}
 	return res, nil
+}
+
+// CountSymlinksTo counts the symlinks below within ("" for all) that refer
+// to any of targetIDs.
+func (q reads) CountSymlinksTo(ctx context.Context, targetIDs []string, within string) (int, error) {
+	const chunk = 500 // stay well below SQLite's limit on bound parameters
+	total := 0
+	for len(targetIDs) > 0 {
+		n := min(chunk, len(targetIDs))
+		args := make([]any, 0, n+2)
+		for _, id := range targetIDs[:n] {
+			args = append(args, id)
+		}
+		targetIDs = targetIDs[n:]
+		query := `SELECT COUNT(*) FROM objects WHERE target_id IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + `)`
+		if within != "" {
+			query += ` AND path >= ? AND path < ?`
+			args = append(args, within, prefixUpper(within))
+		}
+		var c int
+		if err := q.db.QueryRowContext(ctx, query, args...).Scan(&c); err != nil {
+			return 0, fmt.Errorf("count symlinks: %w", err)
+		}
+		total += c
+	}
+	return total, nil
 }
 
 // InsertObject adds a new object row.

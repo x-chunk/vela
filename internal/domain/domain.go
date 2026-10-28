@@ -38,7 +38,11 @@ type Object struct {
 	// Kind is KindFile or KindSymlink; the empty value means a file.
 	Kind Kind
 	// TargetID is the ID of the file a symlink refers to, "" for files.
-	TargetID    string
+	TargetID string
+	// Target is what the read that loaded a symlink found behind TargetID;
+	// nil for files. For a live target the store also fills Size, SHA256
+	// and ContentType from it, so readers see the content they would get.
+	Target      *Target
 	BlobID      string
 	Size        int64
 	SHA256      string
@@ -56,6 +60,62 @@ type Object struct {
 
 // IsSymlink reports whether o is a symlink.
 func (o *Object) IsSymlink() bool { return o.Kind == KindSymlink }
+
+// Target describes the file behind a symlink as of the read that loaded it.
+type Target struct {
+	ID string
+	// State is ObjectLive, ObjectTrashed or ObjectGone.
+	State ObjectState
+	// Path is the current path, or the original path while the target is in
+	// the trash; "" when it is gone.
+	Path string
+	// The fields below are set only for a live target.
+	BlobID     string
+	Visibility api.Visibility
+	ExpiresAt  *time.Time
+}
+
+// Live reports whether the target is in the objects table.
+func (t *Target) Live() bool { return t != nil && t.State == ObjectLive }
+
+// Broken reports whether o is a symlink whose target is not live.
+func (o *Object) Broken() bool { return o.IsSymlink() && !o.Target.Live() }
+
+// EffectiveVisibility is the visibility that governs anonymous access: the
+// object's own for a file, and for a symlink the stricter of its own and its
+// target's. A broken symlink is private. Using the stricter of the two keeps a
+// public symlink from publishing a private file.
+func (o *Object) EffectiveVisibility() api.Visibility {
+	if !o.IsSymlink() {
+		return o.Visibility
+	}
+	if !o.Target.Live() {
+		return api.Private
+	}
+	return stricter(o.Visibility, o.Target.Visibility)
+}
+
+// visibilityRank orders visibilities from the most to the least open.
+var visibilityRank = map[api.Visibility]int{api.Public: 0, api.Unlisted: 1, api.Private: 2}
+
+func stricter(a, b api.Visibility) api.Visibility {
+	if visibilityRank[b] > visibilityRank[a] {
+		return b
+	}
+	return a
+}
+
+// LiveAt reports whether o can deliver content at now: it has not expired
+// and, for a symlink, its target is live and has not expired either.
+func (o *Object) LiveAt(now time.Time) bool {
+	if o.ExpiredAt(now) {
+		return false
+	}
+	if !o.IsSymlink() {
+		return true
+	}
+	return o.Target.Live() && (o.Target.ExpiresAt == nil || !now.After(*o.Target.ExpiresAt))
+}
 
 // ExpiredAt reports whether the object's own TTL has passed at now. An object
 // whose expires_at equals now is still alive; it expires strictly after.
@@ -159,8 +219,22 @@ type ListQuery struct {
 	Recursive bool
 	// Visibilities filters by visibility; empty means all.
 	Visibilities []api.Visibility
+	// Visibilities and LiveAt apply to symlinks through their effective
+	// visibility and their target (see Object.EffectiveVisibility, LiveAt).
+	//
 	// LiveAt, when non-zero, hides objects that are expired at that time.
 	LiveAt time.Time
+	// Kind, when set, selects only objects of that kind.
+	Kind Kind
+	// Broken selects only symlinks whose target is not live.
+	Broken bool
+	// TargetID selects only symlinks that refer to this object.
+	TargetID string
+	// TargetWithin, when non-empty, hides symlinks that are effectively
+	// private and whose target lies outside this prefix. Signed-in web views
+	// use it so that a symlink inside the key's prefix cannot reveal a
+	// private file outside it.
+	TargetWithin string
 	// After is the exclusive cursor: the key of the last entry already seen
 	// (an object path, or a directory ending in "/").
 	After string

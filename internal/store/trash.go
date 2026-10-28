@@ -10,10 +10,19 @@ import (
 	"go.xchunk.org/vela/internal/domain"
 )
 
-// trashCols mirrors objectCols with the object ID and path renamed, followed
-// by the trash-specific columns.
-const trashCols = `object_id, original_path, kind, target_id, blob_id, size, sha256, content_type, disposition, visibility,
-	title, description, tags, created_at, updated_at, expires_at, revision, id, deleted_at, deleted_by_key, seq`
+// trashObjectCols mirrors objectCols with the object ID and path renamed;
+// trashExtraCols are the trash-specific columns.
+const (
+	trashObjectCols = `object_id, original_path, kind, target_id, blob_id, size, sha256, content_type, disposition, visibility,
+	title, description, tags, created_at, updated_at, expires_at, revision`
+	trashExtraCols = `id, deleted_at, deleted_by_key, seq`
+	trashCols      = trashObjectCols + `, ` + trashExtraCols
+)
+
+// trashSelect selects trash entries as "x", resolving symlink targets like
+// objectSelect.
+var trashSelect = `SELECT ` + qualify(trashObjectCols, "x") + `, ` + targetCols + `, ` + qualify(trashExtraCols, "x") +
+	` FROM trash x` + fmt.Sprintf(targetJoin, "x")
 
 func scanTrash(sc scanner) (domain.TrashEntry, error) {
 	var (
@@ -56,7 +65,7 @@ func (q reads) queryTrash(ctx context.Context, query string, args ...any) ([]dom
 
 // TrashByID returns a trash entry or domain.ErrNotFound.
 func (q reads) TrashByID(ctx context.Context, id string) (domain.TrashEntry, error) {
-	return scanTrash(q.db.QueryRowContext(ctx, `SELECT `+trashCols+` FROM trash WHERE id = ?`, id))
+	return scanTrash(q.db.QueryRowContext(ctx, trashSelect+` WHERE x.id = ?`, id))
 }
 
 // ListTrash returns trash entries newest first. Entry IDs are ULIDs, so
@@ -66,23 +75,23 @@ func (q reads) ListTrash(ctx context.Context, tq domain.TrashQuery) ([]domain.Tr
 	var args []any
 	for _, p := range []string{tq.Prefix, tq.Within} {
 		if p != "" {
-			conds = append(conds, "original_path >= ? AND original_path < ?")
+			conds = append(conds, "x.original_path >= ? AND x.original_path < ?")
 			args = append(args, p, prefixUpper(p))
 		}
 	}
 	if tq.Path != "" {
-		conds = append(conds, "original_path = ?")
+		conds = append(conds, "x.original_path = ?")
 		args = append(args, tq.Path)
 	}
 	if tq.BeforeSeq > 0 {
-		conds = append(conds, "seq < ?")
+		conds = append(conds, "x.seq < ?")
 		args = append(args, tq.BeforeSeq)
 	}
-	query := `SELECT ` + trashCols + ` FROM trash`
+	query := trashSelect
 	if len(conds) > 0 {
 		query += ` WHERE ` + strings.Join(conds, " AND ")
 	}
-	query += ` ORDER BY seq DESC`
+	query += ` ORDER BY x.seq DESC`
 	if tq.Limit > 0 {
 		query += ` LIMIT ?`
 		args = append(args, tq.Limit)
@@ -94,11 +103,11 @@ func (q reads) ListTrash(ctx context.Context, tq domain.TrashQuery) ([]domain.Tr
 // oldest first.
 func (q reads) TrashDeletedBefore(ctx context.Context, cutoff time.Time, within string, limit int) ([]domain.TrashEntry, error) {
 	if within == "" {
-		return q.queryTrash(ctx, `SELECT `+trashCols+` FROM trash WHERE deleted_at < ? ORDER BY seq LIMIT ?`,
+		return q.queryTrash(ctx, trashSelect+` WHERE x.deleted_at < ? ORDER BY x.seq LIMIT ?`,
 			ms(cutoff), limit)
 	}
-	return q.queryTrash(ctx, `SELECT `+trashCols+` FROM trash
-		WHERE deleted_at < ? AND original_path >= ? AND original_path < ? ORDER BY seq LIMIT ?`,
+	return q.queryTrash(ctx, trashSelect+`
+		WHERE x.deleted_at < ? AND x.original_path >= ? AND x.original_path < ? ORDER BY x.seq LIMIT ?`,
 		ms(cutoff), within, prefixUpper(within), limit)
 }
 
