@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -109,5 +111,41 @@ func TestOpenByTag(t *testing.T) {
 	h.ok("open", "--by-tags", "math draft", "-y")
 	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/docs/math.pdf") {
 		t.Fatalf("-y opened %v", opened)
+	}
+}
+
+func TestGetByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	read := func(p string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(h.dir, filepath.FromSlash(p)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	out := filepath.Join(h.dir, "math")
+	h.ok("get", "--by-tag", "math", "docs/", out)
+	if read("math/math.pdf") != "docs/math.pdf" || read("math/sub/math2.pdf") != "docs/sub/math2.pdf" {
+		t.Error("structure below docs/ not kept")
+	}
+	if _, err := os.Stat(filepath.Join(out, "plain.txt")); err == nil {
+		t.Error("untagged file downloaded")
+	}
+	h.ok("get", "--by-tag", "q1", "/", filepath.Join(h.dir, "q1"))
+	if read("q1/a.txt") != "a.txt" || read("q1/other/q1.txt") != "other/q1.txt" {
+		t.Error("structure from the root not kept")
+	}
+	if r := h.exec("", "get", "--by-tag", "math", "docs/", out); r.code == 0 {
+		t.Error("existing files replaced without --force")
+	}
+	h.ok("get", "--by-tag", "math", "docs", out, "--force")
+	if r := h.exec("", "get", "--by-tag", "math", "docs/", "-"); r.code != exitUsage {
+		t.Errorf("stdout download: exit %d", r.code)
+	}
+	if r := h.exec("", "get", "--by-tag", "nope", "/", out); r.code != exitNotFound {
+		t.Errorf("nothing tagged: exit %d", r.code)
 	}
 }

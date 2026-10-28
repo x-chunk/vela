@@ -33,6 +33,7 @@ const progressThreshold = 1 << 20
 
 func (a *App) getCommand() *cobra.Command {
 	var recursive, force bool
+	var byTag tagFlags
 	cmd := &cobra.Command{
 		Use:   "get REMOTE [LOCAL]",
 		Short: "Download files",
@@ -40,10 +41,17 @@ func (a *App) getCommand() *cobra.Command {
 			"whole directory. Existing local files are never overwritten without --force, not even\n" +
 			"one that appears while the download runs. Downloads are written to a temporary file,\n" +
 			"verified against the SHA-256 and then moved into place. With -r nothing is written\n" +
-			"outside LOCAL, even through symlinks inside it.",
-		Example: "  vela get docs/math/q1.pdf\n  vela get docs/math/q1.pdf - | less\n  vela get -r docs/math/ ./math",
-		Args:    rangeArgs(1, 2),
+			"outside LOCAL, even through symlinks inside it.\n\n" +
+			"With --by-tag or --by-tags, REMOTE is the directory to search (/ for everything, the\n" +
+			"default) and every object with these tags below it is downloaded into LOCAL, keeping\n" +
+			"its path relative to REMOTE.",
+		Example: "  vela get docs/math/q1.pdf\n  vela get docs/math/q1.pdf - | less\n  vela get -r docs/math/ ./math\n" +
+			"  vela get --by-tag q1 docs/ ./q1",
+		Args: byTag.args(rangeArgs(1, 2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() && len(args) > 2 {
+				return usagef("%s --by-tag takes at most REMOTE_DIR and LOCAL", cmd.CommandPath())
+			}
 			local := ""
 			if len(args) == 2 {
 				local = args[1]
@@ -57,6 +65,12 @@ func (a *App) getCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
+			if byTag.used() {
+				if local == "-" {
+					return usagef("--by-tag downloads several files and cannot write to stdout")
+				}
+				return a.getTagged(ctx, c, args, &byTag, local, force)
+			}
 			if recursive || strings.HasSuffix(args[0], "/") {
 				if !recursive {
 					return usagef("%s is a directory (use -r)", args[0])
@@ -109,7 +123,42 @@ func (a *App) getCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "download a directory recursively")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing local files")
+	byTag.register(cmd)
 	return cmd
+}
+
+// getTagged downloads the objects of a tag selection below the directory in
+// args[0] (everything without it) into local.
+func (a *App) getTagged(ctx context.Context, c *client.Client, args []string, byTag *tagFlags, local string, force bool) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	raw := ""
+	if len(args) > 0 {
+		raw = strings.TrimLeft(args[0], "/")
+	}
+	if raw != "" && !strings.HasSuffix(raw, "/") {
+		raw += "/"
+	}
+	prefix, err := remotePrefix(raw)
+	if err != nil {
+		return err
+	}
+	if local == "" {
+		local = "."
+		if prefix != "" {
+			local = api.BaseName(prefix)
+		}
+	}
+	objs, err := a.selectTagged(ctx, c, []string{prefix}, f)
+	if err != nil {
+		return err
+	}
+	if len(objs) == 0 {
+		return errNothingTagged(f)
+	}
+	return a.downloadTree(ctx, c, objs, prefix, local, force)
 }
 
 func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, force bool) error {
