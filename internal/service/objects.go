@@ -372,8 +372,10 @@ func (s *Service) Create(ctx context.Context, p Principal, req api.CreateObjectR
 
 // checkFree fails if path is taken by an object or conflicts with one.
 func (s *Service) checkFree(ctx context.Context, r Reader, path string) error {
-	_, err := r.ObjectByPath(ctx, path)
+	o, err := r.ObjectByPath(ctx, path)
 	switch {
+	case err == nil && o.IsSymlink():
+		return isSymlinkError(path)
 	case err == nil:
 		return newErr(ErrAlreadyExists, map[string]any{"path": path}, "object already exists: %s", path)
 	case !isNotFound(err):
@@ -496,6 +498,9 @@ func (s *Service) uploadTarget(ctx context.Context, r Reader, path string, in Up
 	if err != nil {
 		return nil, err
 	}
+	if o.IsSymlink() {
+		return nil, isSymlinkError(path)
+	}
 	if in.IfNoneMatch {
 		return nil, newErr(ErrAlreadyExists, map[string]any{"path": path}, "object already exists: %s", path)
 	}
@@ -564,6 +569,9 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		if ifMatch != 0 && ifMatch != o.Revision {
 			return domain.Object{}, newErr(ErrPreconditionFailed, map[string]any{"current_revision": o.Revision},
 				"revision mismatch: object is at revision %d", o.Revision)
+		}
+		if o.IsSymlink() && patch.ContentType.Set {
+			return domain.Object{}, invalidf("the content type of a symlink follows its target: %s", path)
 		}
 		return o, nil
 	}

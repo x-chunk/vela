@@ -28,6 +28,7 @@ var errorCodes = []struct {
 	{service.ErrConflict, api.CodeConflict},
 	{service.ErrAlreadyExists, api.CodeAlreadyExists},
 	{service.ErrPathConflict, api.CodePathConflict},
+	{service.ErrIsSymlink, api.CodeIsSymlink},
 	{service.ErrPreconditionFailed, api.CodePreconditionFailed},
 	{service.ErrTooLarge, api.CodePayloadTooLarge},
 	{service.ErrUnsupportedEncoding, api.CodeUnsupportedEncoding},

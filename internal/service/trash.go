@@ -97,6 +97,9 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 				if _, err := w.DeleteLinksByObject(ctx, o.ID); err != nil {
 					return err
 				}
+				if o.IsSymlink() {
+					continue // no blob of its own
+				}
 				if err := s.queueBlob(ctx, w, o.BlobID, now); err != nil {
 					return err
 				}
@@ -109,7 +112,8 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 			resp.TrashIDs = append(resp.TrashIDs, id)
 		}
 		resp.Deleted = len(objs)
-		return nil
+		resp.SymlinksAffected, err = symlinksAffected(ctx, w, objs, p.Prefix)
+		return err
 	})
 	if err != nil {
 		return api.DeleteResponse{}, err
@@ -277,40 +281,45 @@ func (s *Service) purgeEntry(ctx context.Context, w Writer, e domain.TrashEntry,
 	if _, err := w.DeleteLinksByObject(ctx, e.Object.ID); err != nil {
 		return err
 	}
+	if e.Object.IsSymlink() {
+		return nil // no blob of its own
+	}
 	return s.queueBlob(ctx, w, e.Object.BlobID, now)
 }
 
 // PurgeTrash permanently deletes trash entries older than olderThan, or all
 // entries when olderThan is nil (admin only). Entries outside the key's prefix
 // are left alone.
-func (s *Service) PurgeTrash(ctx context.Context, p Principal, olderThan *time.Duration) (int, error) {
+func (s *Service) PurgeTrash(ctx context.Context, p Principal, olderThan *time.Duration) (api.PurgeResponse, error) {
 	if err := p.require(api.ScopeAdmin); err != nil {
-		return 0, err
+		return api.PurgeResponse{}, err
 	}
 	cutoff := time.UnixMilli(math.MaxInt64)
 	if olderThan != nil {
 		if *olderThan < 0 {
-			return 0, invalidf("older_than must not be negative")
+			return api.PurgeResponse{}, invalidf("older_than must not be negative")
 		}
 		cutoff = s.now().Add(-*olderThan)
 	}
 	return s.purgeTrashBefore(ctx, cutoff, p.Prefix)
 }
 
-// purgeTrashBefore deletes, in batches, trash entries deleted before cutoff.
-// Each batch is its own transaction so that a large purge does not hold the
-// write lock for long.
-func (s *Service) purgeTrashBefore(ctx context.Context, cutoff time.Time, within string) (int, error) {
+// purgeTrashBefore deletes, in batches, trash entries deleted before cutoff,
+// and counts the symlinks within the prefix whose target it purged. Each
+// batch is its own transaction so that a large purge does not hold the write
+// lock for long.
+func (s *Service) purgeTrashBefore(ctx context.Context, cutoff time.Time, within string) (api.PurgeResponse, error) {
 	const batch = 500
-	total := 0
+	var out api.PurgeResponse
 	for {
 		entries, err := s.store.TrashDeletedBefore(ctx, cutoff, within, batch)
 		if err != nil || len(entries) == 0 {
-			return total, err
+			return out, err
 		}
-		purged := 0
+		purged, affected := 0, 0
 		now := s.now()
 		err = s.store.Update(ctx, func(w Writer) error {
+			var gone []domain.Object
 			for _, e := range entries {
 				if err := s.purgeEntry(ctx, w, e, now); err != nil {
 					if isNotFound(err) {
@@ -319,15 +328,19 @@ func (s *Service) purgeTrashBefore(ctx context.Context, cutoff time.Time, within
 					return err
 				}
 				purged++
+				gone = append(gone, e.Object)
 			}
-			return nil
+			var err error
+			affected, err = symlinksAffected(ctx, w, gone, within)
+			return err
 		})
 		if err != nil {
-			return total, err
+			return out, err
 		}
-		total += purged
+		out.Purged += purged
+		out.SymlinksAffected += affected
 		if len(entries) < batch || purged == 0 {
-			return total, nil // done, or no progress: avoid spinning
+			return out, nil // done, or no progress: avoid spinning
 		}
 	}
 }

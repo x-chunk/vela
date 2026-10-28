@@ -363,11 +363,11 @@ func (s *Server) handleTrashPurge(w http.ResponseWriter, r *http.Request, p serv
 		}
 		olderThan = &d
 	}
-	n, err := s.svc.PurgeTrash(r.Context(), p, olderThan)
+	res, err := s.svc.PurgeTrash(r.Context(), p, olderThan)
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, api.PurgeResponse{Purged: n})
+	writeJSON(w, http.StatusOK, res)
 	return nil
 }
 

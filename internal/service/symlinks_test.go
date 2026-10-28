@@ -439,3 +439,140 @@ func TestSymlinkWebSession(t *testing.T) {
 		t.Errorf("session index = %v", names)
 	}
 }
+
+func TestSymlinkWriteGuards(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("orig/a.txt", "a", api.Public)
+	e.ln(e.admin, "orig/a.txt", "ln/a")
+	_, _, err := e.svc.Upload(e.ctx, e.admin, service.UploadInput{Path: "ln/a", Body: stringsReader("x"), ContentLength: 1})
+	wantErr(t, err, service.ErrIsSymlink)
+	_, err = e.svc.Create(e.ctx, e.admin, api.CreateObjectRequest{Path: "ln/a", Content: "x"})
+	wantErr(t, err, service.ErrIsSymlink)
+	_, err = e.svc.Patch(e.ctx, e.admin, "ln/a", api.ObjectPatch{ContentType: api.Some("text/html")}, 0)
+	wantErr(t, err, service.ErrInvalidRequest)
+	_, err = e.svc.Patch(e.ctx, e.admin, "ln/a", api.ObjectPatch{ContentType: api.Null[string]()}, 0)
+	wantErr(t, err, service.ErrInvalidRequest)
+	if o, err := e.svc.Patch(e.ctx, e.admin, "ln/a", api.ObjectPatch{Title: api.Some("T")}, 0); err != nil || o.Title != "T" {
+		t.Errorf("patch title = %+v, %v", o, err)
+	}
+	// The target was not touched.
+	if c, err := e.svc.Download(e.ctx, e.admin, "orig/a.txt"); err != nil || e.read(c) != "a" {
+		t.Errorf("target = %v", err)
+	}
+}
+
+func TestSymlinkTargetLifecycle(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("orig/a.txt", "one", api.Public)
+	e.ln(e.admin, "orig/a.txt", "ln/a")
+	e.ln(e.admin, "orig/a.txt", "ln/b")
+	e.ln(e.admin, "orig/a.txt", "other/c")
+	content := func(path string) string {
+		t.Helper()
+		res, err := e.svc.ResolvePublic(e.ctx, path)
+		if err != nil {
+			return ""
+		}
+		return e.read(*res.Content)
+	}
+
+	// Overwrite: same ID, new content and ETag source.
+	e.put("orig/a.txt", "two", api.Public)
+	if got := content("ln/a"); got != "two" {
+		t.Errorf("after overwrite = %q", got)
+	}
+	// Move, also recursively.
+	if _, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "orig/a.txt", To: "moved/a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "moved/", To: "again/", Recursive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := e.svc.Stat(e.ctx, e.admin, "ln/a"); *o.Target.Path != "again/a.txt" || content("ln/a") != "two" {
+		t.Errorf("after move = %+v", o.Target)
+	}
+	// Moving the symlinks leaves the target alone.
+	if _, err := e.svc.Move(e.ctx, e.admin, api.MoveRequest{From: "ln/", To: "sorted/", Recursive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if content("sorted/a") != "two" {
+		t.Error("moved symlink lost its target")
+	}
+
+	// Trash: the delete reports the symlinks in the key's prefix only.
+	k := e.principal(api.ScopeRW, "again/")
+	resp, err := e.svc.Delete(e.ctx, k, service.DeleteParams{Path: "again/a.txt"})
+	if err != nil || resp.SymlinksAffected != 0 {
+		t.Errorf("delete by prefixed key = %+v, %v", resp, err)
+	}
+	if content("sorted/a") != "" {
+		t.Error("symlink to a trashed file still served")
+	}
+	// Restore to another path: same ID, working again.
+	if _, err := e.svc.Restore(e.ctx, e.admin, resp.TrashIDs[0], api.RestoreRequest{Path: "back/a.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if content("sorted/a") != "two" {
+		t.Error("restore did not repair the symlink")
+	}
+	resp, err = e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "back/a.txt"})
+	if err != nil || resp.SymlinksAffected != 3 {
+		t.Errorf("delete by admin = %+v, %v", resp, err)
+	}
+	// Purge: gone for good, the symlinks stay broken.
+	purge, err := e.svc.PurgeTrash(e.ctx, e.admin, nil)
+	if err != nil || purge.Purged != 1 || purge.SymlinksAffected != 3 {
+		t.Errorf("purge = %+v, %v", purge, err)
+	}
+	if o, err := e.svc.Stat(e.ctx, e.admin, "sorted/a"); err != nil || o.Target.State != api.TargetGone {
+		t.Errorf("after purge = %+v, %v", o, err)
+	}
+
+	// Deleting a directory with a file and its symlinks counts only the
+	// symlinks that stay behind.
+	e.put("dir/f.txt", "f", api.Public)
+	e.ln(e.admin, "dir/f.txt", "dir/l")
+	e.ln(e.admin, "dir/f.txt", "keep/l")
+	resp, err = e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "dir/", Recursive: true, Purge: true})
+	if err != nil || resp.SymlinksAffected != 1 || resp.Deleted != 2 {
+		t.Errorf("recursive purge = %+v, %v", resp, err)
+	}
+}
+
+func TestSymlinkPurgeAndExpiry(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("orig/a.txt", "a", api.Public)
+	l := e.ln(e.admin, "orig/a.txt", "ln/a")
+	soon := t0.Add(time.Minute)
+	if _, err := e.svc.Patch(e.ctx, e.admin, "ln/a", api.ObjectPatch{ExpiresAt: api.Some(soon)}, 0); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(time.Hour)
+	if _, err := e.svc.RunJanitor(e.ctx); err != nil {
+		t.Fatal(err)
+	}
+	trash, err := e.svc.ListTrash(e.ctx, e.admin, service.TrashParams{Path: "ln/a"})
+	if err != nil || len(trash.Entries) != 1 || trash.Entries[0].Object.ID != l.ID || trash.Entries[0].Object.Kind != api.KindSymlink {
+		t.Fatalf("janitor did not trash the expired symlink: %+v, %v", trash, err)
+	}
+	// Purging a symlink must never queue (or delete) its target's blob.
+	if err := e.svc.PurgeTrashEntry(e.ctx, e.admin, trash.Entries[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	e.collectAfterGrace()
+	if c, err := e.svc.Download(e.ctx, e.admin, "orig/a.txt"); err != nil || e.read(c) != "a" {
+		t.Errorf("target content after purging its symlink: %v", err)
+	}
+	// A purged symlink via DELETE ?purge as well.
+	e.ln(e.admin, "orig/a.txt", "ln/b")
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "ln/b", Purge: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.collectAfterGrace()
+	if c, err := e.svc.Download(e.ctx, e.admin, "orig/a.txt"); err != nil || e.read(c) != "a" {
+		t.Errorf("target content after purging a symlink directly: %v", err)
+	}
+}

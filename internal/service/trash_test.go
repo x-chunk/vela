@@ -94,12 +94,12 @@ func TestPurge(t *testing.T) {
 
 	older := 2 * api.Day
 	n, err := e.svc.PurgeTrash(e.ctx, e.admin, &older)
-	if err != nil || n != 1 {
-		t.Fatalf("purge older than 2d = %d, %v", n, err)
+	if err != nil || n.Purged != 1 {
+		t.Fatalf("purge older than 2d = %+v, %v", n, err)
 	}
 	n, err = e.svc.PurgeTrash(e.ctx, e.admin, nil)
-	if err != nil || n != 1 {
-		t.Fatalf("purge all = %d, %v", n, err)
+	if err != nil || n.Purged != 1 {
+		t.Fatalf("purge all = %+v, %v", n, err)
 	}
 	if blobs := e.countFiles("blobs"); blobs != 3 {
 		t.Fatalf("purged content deleted before the grace period: %d blobs", blobs)

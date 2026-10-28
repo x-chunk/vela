@@ -102,6 +102,32 @@ func symlinkSource(ctx context.Context, r Reader, p Principal, path string) (src
 	return src, target, err
 }
 
+// isSymlinkError refuses to write content to the path of a symlink. Content
+// is never written through a symlink into its target: the target may lie
+// outside the writer's key prefix, and an overwrite of someone else's file
+// would surprise everyone who links to it.
+func isSymlinkError(path string) error {
+	return newErr(ErrIsSymlink, map[string]any{"path": path},
+		"%s is a symlink; remove it or retarget it to write content there", path)
+}
+
+// symlinksAffected counts the symlinks within prefix that refer to any of
+// objs, after the caller removed objs from the live objects. Counting only
+// within the key's prefix keeps the number from disclosing symlinks the key
+// cannot see.
+func symlinksAffected(ctx context.Context, r Reader, objs []domain.Object, prefix string) (int, error) {
+	var ids []string
+	for _, o := range objs {
+		if !o.IsSymlink() {
+			ids = append(ids, o.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return r.CountSymlinksTo(ctx, ids, prefix)
+}
+
 // targetVisibleTo reports whether a symlink's target is live and inside the
 // key prefix, i.e. whether a key with that prefix may follow it. Files are
 // their own target.

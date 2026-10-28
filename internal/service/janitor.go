@@ -171,8 +171,10 @@ func (s *Service) janitorExpiredObjects(ctx context.Context, now time.Time) (int
 }
 
 // janitorTrash purges trash entries older than the retention period.
+// Symlinks to purged files stay, broken, until someone removes them.
 func (s *Service) janitorTrash(ctx context.Context, now time.Time) (int, error) {
-	return s.purgeTrashBefore(ctx, now.Add(-s.opts.TrashRetention), "")
+	res, err := s.purgeTrashBefore(ctx, now.Add(-s.opts.TrashRetention), "")
+	return res.Purged, err
 }
 
 // janitorSigningKeys deletes retired signing keys no live link depends on.

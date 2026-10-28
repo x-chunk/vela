@@ -10,15 +10,17 @@ import (
 // Error kinds. The transport maps each to an HTTP status and an API error
 // code in exactly one place (internal/server); match with errors.Is.
 var (
-	ErrInvalidRequest      = errors.New("invalid request")
-	ErrInvalidPath         = errors.New("invalid path")
-	ErrChecksumMismatch    = errors.New("checksum mismatch")
-	ErrUnauthorized        = errors.New("unauthorized")
-	ErrForbidden           = errors.New("forbidden")
-	ErrNotFound            = errors.New("not found")
-	ErrConflict            = errors.New("conflict")
-	ErrAlreadyExists       = errors.New("already exists")
-	ErrPathConflict        = errors.New("path conflict")
+	ErrInvalidRequest   = errors.New("invalid request")
+	ErrInvalidPath      = errors.New("invalid path")
+	ErrChecksumMismatch = errors.New("checksum mismatch")
+	ErrUnauthorized     = errors.New("unauthorized")
+	ErrForbidden        = errors.New("forbidden")
+	ErrNotFound         = errors.New("not found")
+	ErrConflict         = errors.New("conflict")
+	ErrAlreadyExists    = errors.New("already exists")
+	ErrPathConflict     = errors.New("path conflict")
+	// ErrIsSymlink rejects writing content to the path of a symlink.
+	ErrIsSymlink           = errors.New("is a symlink")
 	ErrPreconditionFailed  = errors.New("precondition failed")
 	ErrTooLarge            = errors.New("payload too large")
 	ErrUnsupportedEncoding = errors.New("unsupported encoding")

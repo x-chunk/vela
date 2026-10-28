@@ -24,6 +24,7 @@ type Reader interface {
 	DirStats(ctx context.Context, prefix string, now time.Time) (int, time.Time, error)
 	ExpiredObjects(ctx context.Context, now time.Time, limit int) ([]domain.Object, error)
 	BlobReferenced(ctx context.Context, blobID string) (bool, error)
+	CountSymlinksTo(ctx context.Context, targetIDs []string, within string) (int, error)
 
 	TrashByID(ctx context.Context, id string) (domain.TrashEntry, error)
 	ListTrash(ctx context.Context, q domain.TrashQuery) ([]domain.TrashEntry, error)
