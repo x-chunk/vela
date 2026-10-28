@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,7 +16,10 @@ type TrashOptions struct {
 	// Prefix restricts entries to a directory of original paths.
 	Prefix string
 	// Path selects entries whose original path is exactly this.
-	Path   string
+	Path string
+	// Tags selects entries by the tags of their object. Like
+	// ListOptions.Tags, it is also applied to the returned entries.
+	Tags   api.TagFilter
 	Limit  int
 	Cursor string
 }
@@ -29,6 +33,9 @@ func (c *Client) ListTrash(ctx context.Context, opts TrashOptions) (*api.TrashLi
 	if opts.Path != "" {
 		q.Set("path", strings.TrimLeft(opts.Path, "/"))
 	}
+	for _, g := range opts.Tags.Values() {
+		q.Add("tag", g)
+	}
 	if opts.Limit > 0 {
 		q.Set("limit", strconv.Itoa(opts.Limit))
 	}
@@ -38,6 +45,9 @@ func (c *Client) ListTrash(ctx context.Context, opts TrashOptions) (*api.TrashLi
 	var out api.TrashList
 	if err := c.call(ctx, request{method: http.MethodGet, route: api.RouteTrash, query: q, idempotent: true}, &out); err != nil {
 		return nil, err
+	}
+	if len(opts.Tags) > 0 {
+		out.Entries = slices.DeleteFunc(out.Entries, func(e api.TrashEntry) bool { return !opts.Tags.Match(e.Object.Tags) })
 	}
 	return &out, nil
 }

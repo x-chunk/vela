@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,10 @@ type ListOptions struct {
 	Broken bool
 	// Target selects only symlinks that refer to the object at this path.
 	Target string
+	// Tags selects objects by their own tags. Servers that predate tag
+	// filters ignore it, so List applies it to the returned objects as well;
+	// their directories cannot be checked and are returned as they are.
+	Tags api.TagFilter
 	// Limit is the page size (server default 200, maximum 1000).
 	Limit  int
 	Cursor string
@@ -60,6 +65,9 @@ func (o ListOptions) query() url.Values {
 	if o.Target != "" {
 		q.Set("target", strings.TrimLeft(o.Target, "/"))
 	}
+	for _, g := range o.Tags.Values() {
+		q.Add("tag", g)
+	}
 	if o.Limit > 0 {
 		q.Set("limit", strconv.Itoa(o.Limit))
 	}
@@ -75,6 +83,9 @@ func (c *Client) List(ctx context.Context, opts ListOptions) (*api.Listing, erro
 	err := c.call(ctx, request{method: http.MethodGet, route: api.RouteObject, query: opts.query(), idempotent: true}, &l)
 	if err != nil {
 		return nil, err
+	}
+	if len(opts.Tags) > 0 {
+		l.Objects = slices.DeleteFunc(l.Objects, func(o api.Object) bool { return !opts.Tags.Match(o.Tags) })
 	}
 	return &l, nil
 }
