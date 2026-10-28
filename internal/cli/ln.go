@@ -24,6 +24,7 @@ type lnFlags struct {
 	symbolic                  bool
 	keepTree                  bool
 	skip, skipExplicitly      bool
+	skipSymlinks              bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
@@ -50,7 +51,9 @@ func (a *App) lnCommand() *cobra.Command {
 			"or with --save-structure under its path relative to SCOPE. Every conflict (two objects\n" +
 			"with one destination, an existing destination without -f) is reported before the\n" +
 			"first symlink is created, and nothing is linked. --skip links the rest and silently\n" +
-			"leaves the conflicting objects out; --skip-explicitly also reports each one.",
+			"leaves the conflicting objects out; --skip-explicitly also reports each one.\n" +
+			"--skip-symlinks leaves symlinks out of the selection: new symlinks copy their file's\n" +
+			"tags, so a repeated run would otherwise select them too.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
@@ -71,8 +74,8 @@ func (a *App) lnCommand() *cobra.Command {
 				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly {
-				return usagef("--save-structure, --skip and --skip-explicitly need --by-tag or --by-tags")
+			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks {
+				return usagef("--save-structure, --skip, --skip-explicitly and --skip-symlinks need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -129,6 +132,7 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVar(&f.skip, "skip", false, "with --by-tag, leave conflicting objects out silently and link the rest")
 	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag, leave conflicting objects out, report each, and link the rest")
 	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
+	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
 }
@@ -256,7 +260,11 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 		return err
 	}
 	ctx, cancel := a.ctx(cmd)
-	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree)
+	var keep func(api.Object) bool
+	if f.skipSymlinks {
+		keep = func(o api.Object) bool { return o.Kind != api.KindSymlink }
+	}
+	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree, keep)
 	if err == nil {
 		var conflicts []planConflict
 		if conflicts, err = taggedConflicts(ctx, c, plan, f.force, "link", "linked"); err == nil {

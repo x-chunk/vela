@@ -433,8 +433,15 @@ func TestLnByTag(t *testing.T) {
 		t.Fatalf("--skip-explicitly = %+v (%+v)", r, objs)
 	}
 
+	// --skip-symlinks ignores the symlinks created above: no conflicts left.
+	r = h.ok("ln", "--by-tag", "q1", "dest3/", "--save-structure", "--skip-symlinks")
+	if !strings.Contains(r.stdout, "dest3/x/q1.txt -> x/q1.txt") || exists("dest3/dest/q1.txt") {
+		t.Fatalf("--skip-symlinks = %+v", r)
+	}
+
 	for _, args := range [][]string{
 		{"ln", "--skip", "a.txt", "b.txt"},
+		{"ln", "--skip-symlinks", "a.txt", "b.txt"},
 		{"ln", "--by-tag", "q1", "-r", "x/"},
 		{"ln", "--by-tag", "q1", "--skip", "--skip-explicitly", "y/"},
 	} {

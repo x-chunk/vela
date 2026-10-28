@@ -135,7 +135,7 @@ func (a *App) mvTagged(cmd *cobra.Command, scopes []string, dest string, byTag *
 	}
 	ctx, cancel := a.ctx(cmd)
 	defer cancel()
-	moves, err := a.planTaggedMoves(ctx, c, scopes, dest, f, opts.keepTree)
+	moves, err := a.planTaggedMoves(ctx, c, scopes, dest, f, opts.keepTree, nil)
 	if err != nil {
 		return err
 	}
@@ -180,8 +180,9 @@ func (a *App) mvTagged(cmd *cobra.Command, scopes []string, dest string, byTag *
 // planTaggedMoves maps every object of the selection to its destination
 // below dest: its base name, or with keepTree its path relative to the scope
 // it was found in (a file scope keeps only its name). Objects already at
-// their destination are left out.
-func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []string, dest string, f api.TagFilter, keepTree bool) ([]taggedMove, error) {
+// their destination are left out, and so are those that keep, if not nil,
+// rejects.
+func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []string, dest string, f api.TagFilter, keepTree bool, keep func(api.Object) bool) ([]taggedMove, error) {
 	if len(scopes) == 0 {
 		scopes = []string{""}
 	}
@@ -197,7 +198,7 @@ func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []st
 			dir += "/"
 		}
 		for _, o := range objs {
-			if seen[o.ID] {
+			if seen[o.ID] || keep != nil && !keep(o) {
 				continue
 			}
 			seen[o.ID] = true
