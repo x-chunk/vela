@@ -26,7 +26,7 @@ type lnFlags struct {
 	skip, skipExplicitly      bool
 	skipSymlinks              bool
 	yes                       bool
-	sync                      bool
+	sync, prune               bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
@@ -59,7 +59,9 @@ func (a *App) lnCommand() *cobra.Command {
 			"need a confirmation unless -y is given.\n\n" +
 			"--sync makes a repeated run link only what is missing: symlinks already in DEST that\n" +
 			"point at a selected file count as done, wherever they are, and symlinks are never\n" +
-			"selected (--skip-symlinks is implied).",
+			"selected (--skip-symlinks is implied). --prune also moves to the trash the symlinks in\n" +
+			"DEST whose file lies in SCOPE but is no longer selected or is in the trash. Files and\n" +
+			"symlinks to anything outside SCOPE are never touched.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
@@ -79,10 +81,13 @@ func (a *App) lnCommand() *cobra.Command {
 				if len(args) == 0 {
 					return usagef("%s --by-tag needs a destination directory", cmd.CommandPath())
 				}
+				if f.prune && !f.sync {
+					return usagef("--prune needs --sync")
+				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync {
-				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync and -y need --by-tag or --by-tags")
+			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune {
+				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune and -y need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -141,6 +146,7 @@ func (a *App) lnCommand() *cobra.Command {
 	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
 	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
+	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE that are no longer selected")
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
@@ -275,8 +281,17 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	}
 	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree, keep)
 	upToDate := 0
+	var prune []linkPrune
 	if err == nil && f.sync {
-		plan, upToDate, err = a.syncLinkPlan(ctx, c, plan, dest)
+		var l *api.Listing
+		if l, err = c.ListAll(ctx, client.ListOptions{Prefix: dest, Recursive: true, Limit: 1000}); err != nil {
+			err = fmt.Errorf("list %s: %w", dest, err)
+		} else {
+			if f.prune {
+				prune = pruneLinks(l.Objects, plan, scopes)
+			}
+			plan, upToDate = a.syncLinkPlan(l.Objects, plan)
+		}
 	}
 	if err == nil {
 		var conflicts []planConflict
@@ -290,6 +305,9 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	}
 	if f.sync && upToDate > 0 {
 		a.printer.Infof("%d symlink(s) up to date.", upToDate)
+	}
+	if f.prune {
+		return a.lnSyncPrune(cmd, f, req, plan, prune)
 	}
 	if len(plan) == 0 {
 		a.printer.Infof("Nothing to link.")
@@ -317,13 +335,9 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 // in dest and returns how many were dropped. A symlink at another path
 // than planned (the file was moved or renamed since) is kept and reported
 // instead of getting a duplicate.
-func (a *App) syncLinkPlan(ctx context.Context, c *client.Client, plan []taggedMove, dest string) ([]taggedMove, int, error) {
-	l, err := c.ListAll(ctx, client.ListOptions{Prefix: dest, Recursive: true, Limit: 1000})
-	if err != nil {
-		return nil, 0, fmt.Errorf("list %s: %w", dest, err)
-	}
+func (a *App) syncLinkPlan(existing []api.Object, plan []taggedMove) ([]taggedMove, int) {
 	linked := map[string]string{}
-	for _, o := range l.Objects {
+	for _, o := range existing {
 		if o.Kind != api.KindSymlink || o.Target == nil {
 			continue
 		}
@@ -336,7 +350,7 @@ func (a *App) syncLinkPlan(ctx context.Context, c *client.Client, plan []taggedM
 	for _, m := range plan {
 		planned[m.id] = m.To
 	}
-	for _, o := range l.Objects {
+	for _, o := range existing {
 		if o.Kind == api.KindSymlink && o.Target != nil && planned[o.Target.ID] == o.Path {
 			linked[o.Target.ID] = o.Path
 		}
@@ -355,7 +369,136 @@ func (a *App) syncLinkPlan(ctx context.Context, c *client.Client, plan []taggedM
 			a.printer.Warnf("%s is already linked at %s, not at %s", m.From, at, m.To)
 		}
 	}
-	return kept, upToDate, nil
+	return kept, upToDate
+}
+
+// linkPrune is a symlink that ln --sync --prune moves to the trash.
+type linkPrune struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// pruneLinks returns the symlinks among existing (the contents of DEST)
+// whose file lies in one of scopes but is not in plan: it lost its tags or
+// is in the trash. A gone target is left alone, because "gone" also means
+// outside the key's prefix, where the symlink may well work for others;
+// vela rm --broken removes such symlinks deliberately.
+func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string) []linkPrune {
+	selected := make(map[string]bool, len(plan))
+	for _, m := range plan {
+		selected[m.id] = true
+	}
+	var out []linkPrune
+	for _, o := range existing {
+		t := o.Target
+		if o.Kind != api.KindSymlink || t == nil || t.Path == nil || selected[t.ID] || !inScopes(*t.Path, scopes) {
+			continue
+		}
+		switch t.State {
+		case api.TargetOK:
+			out = append(out, linkPrune{Path: o.Path, Reason: "no longer selected"})
+		case api.TargetTrashed:
+			out = append(out, linkPrune{Path: o.Path, Reason: "the file is in the trash"})
+		}
+	}
+	return out
+}
+
+// inScopes reports whether p is one of the file scopes or below one of the
+// directory scopes; no scopes means everything.
+func inScopes(p string, scopes []string) bool {
+	if len(scopes) == 0 {
+		return true
+	}
+	for _, raw := range scopes {
+		s := strings.TrimLeft(raw, "/")
+		if s == "" || s == p || strings.HasPrefix(p, strings.TrimSuffix(s, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// lnSyncResult is the --json result of ln --sync --prune.
+type lnSyncResult struct {
+	Created []*api.Object `json:"created"`
+	Pruned  []string      `json:"pruned"`
+}
+
+// lnSyncPlan is the --dry-run --json plan of ln --sync --prune.
+type lnSyncPlan struct {
+	Create []taggedMove `json:"create"`
+	Prune  []linkPrune  `json:"prune"`
+}
+
+// lnSyncPrune confirms and carries out a synchronization with pruning:
+// stale symlinks go to the trash first, then the missing ones are created.
+func (a *App) lnSyncPrune(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, plan []taggedMove, prune []linkPrune) error {
+	if len(plan) == 0 && len(prune) == 0 {
+		a.printer.Infof("Nothing to do.")
+		if a.jsonOut && !f.dryRun {
+			return a.printer.JSONValue(lnSyncResult{Created: []*api.Object{}, Pruned: []string{}})
+		}
+		return nil
+	}
+	var lines []string
+	for _, m := range plan {
+		lines = append(lines, "+ "+m.To+" -> "+m.From)
+	}
+	for _, p := range prune {
+		lines = append(lines, "- "+p.Path+" ("+p.Reason+")")
+	}
+	q := fmt.Sprintf("Create %d symlink(s) and move %d to the trash?", len(plan), len(prune))
+	if ok, err := a.confirmPlan(lines, lnSyncPlan{Create: nonNil(plan), Prune: nonNil(prune)}, q, f.yes, f.dryRun); err != nil || !ok {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	res := lnSyncResult{Created: []*api.Object{}, Pruned: []string{}}
+	var errs []error
+	var paths []string
+	for _, p := range prune {
+		_, err := c.Delete(ctx, p.Path, client.DeleteOptions{})
+		errs, paths = append(errs, err), append(paths, p.Path)
+		if err != nil {
+			continue
+		}
+		res.Pruned = append(res.Pruned, p.Path)
+		a.printer.Printf("Moved %s to the trash (%s)\n", p.Path, p.Reason)
+	}
+	for _, m := range plan {
+		r := req
+		r.Source, r.Path = m.From, m.To
+		o, _, err := c.CreateSymlink(ctx, r)
+		if err != nil {
+			err = fmt.Errorf("%s: %w", m.From, a.symlinkError(ctx, c, err, m.From))
+		}
+		errs, paths = append(errs, err), append(paths, m.From)
+		if err != nil {
+			continue
+		}
+		res.Created = append(res.Created, o)
+		a.printSymlink(o)
+	}
+	if err := batchResult("sync", len(errs), errs, paths); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(res)
+	}
+	return nil
+}
+
+// nonNil turns a nil slice into an empty one, so that JSON shows [].
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // resolveLinkConflicts refuses a plan with conflicts, or with --skip and

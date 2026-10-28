@@ -486,3 +486,34 @@ func TestLnByTagSync(t *testing.T) {
 		t.Fatalf("conflict: exit %d, stderr %q", r.code, r.stderr)
 	}
 }
+
+func TestLnByTagPrune(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "-y")
+	h.seedTagged("outside.pdf")
+	h.ok("ln", "outside.pdf", "L/manual.pdf")
+	h.seedTagged("docs/new.pdf", "math")
+	h.ok("meta", "docs/math.pdf", "--untag", "math")
+	h.ok("rm", "docs/sub/math2.pdf")
+
+	r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "--dry-run")
+	want := "+ L/new.pdf -> docs/new.pdf\n- L/math.pdf (no longer selected)\n- L/math2.pdf (the file is in the trash)"
+	if got := strings.TrimSpace(r.stdout); got != want {
+		t.Fatalf("plan = %q", got)
+	}
+	var res struct {
+		Created []api.Object `json:"created"`
+		Pruned  []string     `json:"pruned"`
+	}
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "-y", "--json").json(t, &res)
+	if len(res.Created) != 1 || len(res.Pruned) != 2 || exists("L/math.pdf") || !exists("L/manual.pdf") || !exists("L/new.pdf") {
+		t.Fatalf("prune = %+v", res)
+	}
+	if r := h.exec("", "ln", "--by-tag", "math", "L/", "--prune", "-y"); r.code != exitUsage {
+		t.Errorf("--prune without --sync: exit %d", r.code)
+	}
+}
