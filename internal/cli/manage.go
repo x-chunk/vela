@@ -451,7 +451,7 @@ func (a *App) rmTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags, pur
 		return a.printer.JSONValue(results)
 	}
 	if !purge {
-		a.printer.Infof("Restore with: vela trash restore <path>")
+		a.printer.Infof("Restore with: vela trash restore --by-tag ...")
 	}
 	return nil
 }

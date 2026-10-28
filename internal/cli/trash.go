@@ -79,14 +79,30 @@ func (a *App) trashLsCommand() *cobra.Command {
 func (a *App) trashRestoreCommand() *cobra.Command {
 	var to string
 	var force bool
+	var byTag tagFlags
+	var conf confirmFlags
 	cmd := &cobra.Command{
 		Use:   "restore ID|ORIGINAL_PATH",
 		Short: "Restore a deleted file",
 		Long: "Restore a trash entry by its ID, or by its original path (the most recently deleted\n" +
-			"entry with that path). Signed links to the file work again.",
-		Example: "  vela trash restore notes/old.md\n  vela trash restore 01jb6z... --to notes/recovered.md",
-		Args:    exactArgs(1),
+			"entry with that path). Signed links to the file work again.\n\n" +
+			"--by-tag and --by-tags restore, for every original path below the given ones\n" +
+			"(everything by default), its most recent entry whose file had these tags. Existing\n" +
+			"files are reported before anything is restored; the entries are shown and need a\n" +
+			"confirmation unless -y is given.",
+		Example: "  vela trash restore notes/old.md\n  vela trash restore 01jb6z... --to notes/recovered.md\n" +
+			"  vela trash restore --by-tag q1 docs/",
+		Args: byTag.args(exactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				if to != "" {
+					return usagef("--to cannot be used with --by-tag")
+				}
+				return a.restoreTagged(cmd, args, &byTag, force, conf)
+			}
+			if conf.dryRun || conf.yes {
+				return usagef("--dry-run and -y need --by-tag or --by-tags")
+			}
 			c, _, err := a.client()
 			if err != nil {
 				return err
@@ -128,7 +144,79 @@ func (a *App) trashRestoreCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&to, "to", "", "restore to this path instead of the original")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite a file at the target path (it goes to the trash)")
+	byTag.register(cmd)
+	conf.register(cmd, "restore without asking")
 	return cmd
+}
+
+func (a *App) restoreTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags, force bool, conf confirmFlags) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	all, err := a.selectTrashTagged(ctx, c, scopes, f)
+	if err != nil {
+		return err
+	}
+	// Entries come newest first: keep the first one of every path.
+	var entries []api.TrashEntry
+	seen := map[string]bool{}
+	for _, e := range all {
+		if !seen[e.OriginalPath] {
+			seen[e.OriginalPath] = true
+			entries = append(entries, e)
+		}
+	}
+	if len(entries) == 0 {
+		return &cliError{code: exitNotFound, slug: string(api.CodeNotFound), msg: "nothing in the trash tagged " + f.String()}
+	}
+	if !force {
+		var taken []string
+		for _, e := range entries {
+			_, err := c.Stat(ctx, e.OriginalPath)
+			switch {
+			case err == nil:
+				taken = append(taken, e.OriginalPath)
+			case !api.IsCode(err, api.CodeNotFound):
+				return fmt.Errorf("check %s: %w", e.OriginalPath, err)
+			}
+		}
+		if len(taken) > 0 {
+			return &cliError{code: exitConflict, slug: string(api.CodeAlreadyExists),
+				msg:  fmt.Sprintf("nothing restored: %d path(s) exist:\n  %s", len(taken), strings.Join(taken, "\n  ")),
+				hint: "use --force to overwrite them (they go to the trash)"}
+		}
+	}
+	q := fmt.Sprintf("Restore %d file(s)?", len(entries))
+	if ok, err := a.confirmPlan(trashLines(entries), entries, q, conf.yes, conf.dryRun); err != nil || !ok {
+		return err
+	}
+	ids := make([]string, len(entries))
+	errs := make([]error, len(entries))
+	restored := []*api.Object{}
+	for i, e := range entries {
+		ids[i] = e.ID
+		o, err := c.Restore(ctx, e.ID, api.RestoreRequest{Overwrite: force})
+		if err != nil {
+			errs[i] = fmt.Errorf("%s: %w", e.OriginalPath, err)
+			continue
+		}
+		restored = append(restored, o)
+		a.printer.Printf("Restored %s\n", o.Path)
+	}
+	if err := batchResult("restore", len(ids), errs, ids); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(restored)
+	}
+	return nil
 }
 
 func (a *App) trashPurgeCommand() *cobra.Command {

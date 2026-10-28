@@ -368,3 +368,33 @@ func TestTrashPurgeByTag(t *testing.T) {
 		t.Fatalf("purge left %d entries", count())
 	}
 }
+
+func TestTrashRestoreByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+	h.ok("rm", "--by-tag", "q1", "-y")
+	// Two entries for a.txt: only the newer one, tagged q1, is restored.
+	h.seedTagged("a.txt", "q1", "new")
+	h.ok("rm", "a.txt")
+
+	r := h.ok("trash", "restore", "--by-tag", "q1", "--dry-run")
+	if lines := strings.Split(strings.TrimSpace(r.stdout), "\n"); len(lines) != 2 {
+		t.Fatalf("dry run = %q", r.stdout)
+	}
+	h.seedTagged("other/q1.txt")
+	r = h.exec("", "trash", "restore", "--by-tag", "q1", "-y")
+	if r.code != exitConflict || !strings.Contains(r.stderr, "other/q1.txt") || exists("a.txt") {
+		t.Fatalf("conflict: exit %d, stderr %q", r.code, r.stderr)
+	}
+	h.ok("trash", "restore", "--by-tag", "q1", "-y", "--force")
+	var o api.Object
+	h.ok("stat", "a.txt", "--json").json(t, &o)
+	if strings.Join(o.Tags, ",") != "q1,new" {
+		t.Errorf("restored a.txt has tags %v; want the newest entry", o.Tags)
+	}
+	if r := h.exec("", "trash", "restore", "--by-tag", "q1", "--to", "x"); r.code != exitUsage {
+		t.Errorf("--to with --by-tag: exit %d", r.code)
+	}
+}
