@@ -57,6 +57,7 @@ func (s *Server) apiRoutes() http.Handler {
 	})
 	route(api.RouteCont+"/{path...}", map[string]apiHandler{http.MethodGet: s.handleDownload, http.MethodPut: s.handleUpload})
 	route(api.RouteMove, map[string]apiHandler{http.MethodPost: s.handleMove})
+	route(api.RouteSymlinks, map[string]apiHandler{http.MethodPost: s.handleSymlinkCreate})
 	route(api.RouteTrash, map[string]apiHandler{http.MethodGet: s.handleTrashList, http.MethodDelete: s.handleTrashPurge})
 	route(api.RouteTrash+"/{id}", map[string]apiHandler{http.MethodDelete: s.handleTrashPurgeEntry})
 	route(api.RouteTrash+"/{id}/restore", map[string]apiHandler{http.MethodPost: s.handleRestore})
@@ -155,8 +156,19 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, p service.Pr
 	if err != nil {
 		return err
 	}
+	broken, err := boolParam(q.Get("broken"), "broken")
+	if err != nil {
+		return err
+	}
+	var kind api.ObjectKind
+	if raw := q.Get("kind"); raw != "" {
+		if kind, err = api.ParseObjectKind(raw); err != nil {
+			return requestError(service.ErrInvalidRequest, err.Error())
+		}
+	}
 	listing, err := s.svc.List(r.Context(), p, service.ListParams{
-		Prefix: q.Get("prefix"), Recursive: recursive, Visibilities: vis, Limit: limit, Cursor: q.Get("cursor"),
+		Prefix: q.Get("prefix"), Recursive: recursive, Visibilities: vis, Kind: kind, Broken: broken,
+		Target: q.Get("target"), Limit: limit, Cursor: q.Get("cursor"),
 	})
 	if err != nil {
 		return err
@@ -312,6 +324,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request, p service.
 		status = http.StatusCreated
 		w.Header().Set("Location", api.ObjectRoute(o.Path))
 	}
+	w.Header().Set("ETag", api.FormatRevisionETag(o.Revision))
 	writeJSON(w, status, o)
 	return nil
 }
@@ -335,6 +348,35 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request, p service.Pr
 		return err
 	}
 	writeJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// handleSymlinkCreate answers 201 with the new symlink, 200 with a symlink
+// retargeted in place, or 200 with a summary for a recursive request.
+func (s *Server) handleSymlinkCreate(w http.ResponseWriter, r *http.Request, p service.Principal) error {
+	var req api.CreateSymlinkRequest
+	if err := decodeJSON(w, r, smallBodyLimit, &req); err != nil {
+		return err
+	}
+	if req.Recursive {
+		out, err := s.svc.CreateSymlinkTree(r.Context(), p, req)
+		if err != nil {
+			return err
+		}
+		writeJSON(w, http.StatusOK, out)
+		return nil
+	}
+	o, created, err := s.svc.CreateSymlink(r.Context(), p, req)
+	if err != nil {
+		return err
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+		w.Header().Set("Location", api.ObjectRoute(o.Path))
+	}
+	w.Header().Set("ETag", api.FormatRevisionETag(o.Revision))
+	writeJSON(w, status, o)
 	return nil
 }
 

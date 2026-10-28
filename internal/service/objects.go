@@ -27,6 +27,7 @@ func (s *Service) Info(p Principal) api.Info {
 			LinkDefaultTTL: api.FormatDuration(s.opts.LinkDefaultTTL),
 			LinkMaxTTL:     api.FormatDuration(s.opts.LinkMaxTTL),
 		},
+		Features: api.Features{Symlinks: true},
 	}
 }
 
