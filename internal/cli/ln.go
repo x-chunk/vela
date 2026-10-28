@@ -26,7 +26,7 @@ type lnFlags struct {
 	skip, skipExplicitly      bool
 	skipSymlinks              bool
 	yes                       bool
-	sync, prune               bool
+	sync, prune, strict       bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
@@ -61,7 +61,8 @@ func (a *App) lnCommand() *cobra.Command {
 			"point at a selected file count as done, wherever they are, and symlinks are never\n" +
 			"selected (--skip-symlinks is implied). --prune also moves to the trash the symlinks in\n" +
 			"DEST whose file lies in SCOPE but is no longer selected or is in the trash. Files and\n" +
-			"symlinks to anything outside SCOPE are never touched.",
+			"symlinks to anything outside SCOPE are never touched. A new symlink may take the place\n" +
+			"of a pruned one, with a warning; --strict refuses that as a conflict instead.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
@@ -84,10 +85,13 @@ func (a *App) lnCommand() *cobra.Command {
 				if f.prune && !f.sync {
 					return usagef("--prune needs --sync")
 				}
+				if f.strict && !f.prune {
+					return usagef("--strict needs --prune")
+				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune {
-				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune and -y need --by-tag or --by-tags")
+			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune || f.strict {
+				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune, --strict and -y need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -147,6 +151,7 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
 	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
 	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE that are no longer selected")
+	fl.BoolVar(&f.strict, "strict", false, "with --prune, treat the place of a pruned symlink as taken")
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
@@ -296,6 +301,9 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	if err == nil {
 		var conflicts []planConflict
 		if conflicts, err = taggedConflicts(ctx, c, plan, f.force, "link", "linked"); err == nil {
+			if !f.strict {
+				conflicts = a.freedByPrune(plan, conflicts, prune)
+			}
 			plan, err = a.resolveLinkConflicts(f, plan, conflicts)
 		}
 	}
@@ -402,6 +410,25 @@ func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string) []lin
 		}
 	}
 	return out
+}
+
+// freedByPrune drops the conflicts of destinations that a pruned symlink
+// occupies: the symlinks are trashed before any is created, so the place is
+// free by then. Each such replacement is reported.
+func (a *App) freedByPrune(plan []taggedMove, conflicts []planConflict, prune []linkPrune) []planConflict {
+	pruned := make(map[string]bool, len(prune))
+	for _, p := range prune {
+		pruned[p.Path] = true
+	}
+	kept := conflicts[:0:0]
+	for _, p := range conflicts {
+		if m := plan[p.index]; p.exists && pruned[m.To] {
+			a.printer.Warnf("%s takes the place of the pruned symlink %s", m.From, m.To)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
 }
 
 // inScopes reports whether p is one of the file scopes or below one of the

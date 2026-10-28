@@ -517,3 +517,28 @@ func TestLnByTagPrune(t *testing.T) {
 		t.Errorf("--prune without --sync: exit %d", r.code)
 	}
 }
+
+func TestLnByTagPruneFreesPlace(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+
+	// L/math.pdf links docs/math.pdf, which loses its tag; docs/sub/math.pdf
+	// gains it and wants the same flat place.
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "-y")
+	h.ok("meta", "docs/math.pdf", "--untag", "math")
+	h.seedTagged("docs/sub/math.pdf", "math")
+
+	r := h.exec("", "ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "--strict", "-y")
+	if r.code != exitConflict || !strings.Contains(r.stderr, "docs/sub/math.pdf -> L/math.pdf: the destination exists") {
+		t.Fatalf("--strict: exit %d, stderr %q", r.code, r.stderr)
+	}
+	r = h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "-y")
+	if !strings.Contains(r.stderr, "docs/sub/math.pdf takes the place of the pruned symlink L/math.pdf") ||
+		!strings.Contains(r.stdout, "L/math.pdf -> docs/sub/math.pdf") {
+		t.Fatalf("replace = %+v", r)
+	}
+	if r := h.exec("", "ln", "--by-tag", "math", "L/", "--sync", "--strict", "-y"); r.code != exitUsage {
+		t.Errorf("--strict without --prune: exit %d", r.code)
+	}
+}

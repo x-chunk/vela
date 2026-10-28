@@ -244,6 +244,9 @@ func checkTaggedMoves(ctx context.Context, c *client.Client, moves []taggedMove,
 type planConflict struct {
 	index int
 	msg   string
+	// exists marks the conflict of an existing destination, which a caller
+	// may resolve by removing that destination first.
+	exists bool
 }
 
 // taggedConflicts finds the conflicts of checkTaggedMoves without failing,
@@ -292,6 +295,7 @@ func taggedConflicts(ctx context.Context, c *client.Client, moves []taggedMove, 
 		}
 		if exists && !force {
 			add(i, "%s -> %s: the destination exists", m.From, m.To)
+			problems[len(problems)-1].exists = true
 		}
 		for _, anc := range api.Ancestors(m.To) {
 			file, err := fileAt(anc)
