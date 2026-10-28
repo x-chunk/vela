@@ -177,3 +177,265 @@ func TestCreateSymlinkOverwrite(t *testing.T) {
 		t.Errorf("trash = %+v, %v", trash, err)
 	}
 }
+
+// readMatrix sets up the cases of docs/SPEC-symlinks.md section 3.3: one
+// symlink per target situation, all public themselves.
+func readMatrix(t *testing.T) *env {
+	e := newEnv(t)
+	e.put("orig/pub.txt", "pub", api.Public)
+	e.put("orig/unl.txt", "unl", api.Unlisted)
+	e.put("orig/priv.txt", "priv", api.Private)
+	e.put("orig/exp.txt", "exp", api.Public)
+	e.put("orig/trash.txt", "trash", api.Public)
+	e.put("orig/gone.txt", "gone", api.Public)
+	e.put("other/priv.txt", "other", api.Private)
+	for _, name := range []string{"pub", "unl", "priv", "exp", "trash", "gone"} {
+		e.ln(e.admin, "orig/"+name+".txt", "ln/"+name+".txt")
+	}
+	e.ln(e.admin, "other/priv.txt", "ln/other.txt")
+	e.ln(e.admin, "orig/pub.txt", "ln/own-private.txt")
+	e.ln(e.admin, "orig/pub.txt", "ln/own-expired.txt")
+	soon := t0.Add(time.Minute)
+	for path, patch := range map[string]api.ObjectPatch{
+		"orig/exp.txt":       {ExpiresAt: api.Some(soon)},
+		"ln/own-expired.txt": {ExpiresAt: api.Some(soon)},
+		"ln/own-private.txt": {Visibility: api.Some(api.Private)},
+		"ln/priv.txt":        {Visibility: api.Some(api.Public)},
+		"ln/other.txt":       {Visibility: api.Some(api.Public)},
+	} {
+		if _, err := e.svc.Patch(e.ctx, e.admin, path, patch, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "orig/trash.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "orig/gone.txt", Purge: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Advance(time.Hour)
+	return e
+}
+
+func TestSymlinkPublicAccess(t *testing.T) {
+	t.Parallel()
+	e := readMatrix(t)
+	for path, want := range map[string]string{
+		"ln/pub.txt": "pub", "ln/unl.txt": "unl",
+		"ln/priv.txt": "", "ln/exp.txt": "", "ln/trash.txt": "", "ln/gone.txt": "",
+		"ln/other.txt": "", "ln/own-private.txt": "", "ln/own-expired.txt": "",
+	} {
+		res, err := e.svc.ResolvePublic(e.ctx, path)
+		if want == "" {
+			if !errors.Is(err, service.ErrNotFound) {
+				t.Errorf("%s: %+v, %v; want not found", path, res, err)
+			}
+			continue
+		}
+		if err != nil || res.Content == nil {
+			t.Errorf("%s: %+v, %v", path, res, err)
+			continue
+		}
+		c := *res.Content
+		if got := e.read(c); got != want {
+			t.Errorf("%s: content %q, want %q", path, got, want)
+		}
+		if c.Object.Path != path || c.Object.SHA256 != sha(want) || c.Object.Visibility == api.Public && want == "unl" {
+			t.Errorf("%s: delivered object = %+v", path, c.Object)
+		}
+	}
+
+	// The index lists only effectively public, live symlinks.
+	listing, err := e.svc.Index(e.ctx, "ln/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range listing.Files {
+		names = append(names, f.Path)
+	}
+	if !reflect.DeepEqual(names, []string{"ln/pub.txt"}) {
+		t.Errorf("index = %v", names)
+	}
+	if listing.Files[0].Size != 3 {
+		t.Errorf("index size = %d", listing.Files[0].Size)
+	}
+}
+
+func TestSymlinkAPIAccess(t *testing.T) {
+	t.Parallel()
+	e := readMatrix(t)
+	for path, want := range map[string]struct {
+		content string
+		state   api.TargetState
+	}{
+		"ln/pub.txt":   {"pub", api.TargetOK},
+		"ln/priv.txt":  {"priv", api.TargetOK},
+		"ln/exp.txt":   {"exp", api.TargetOK}, // expired, not yet trashed: still rescuable
+		"ln/trash.txt": {"", api.TargetTrashed},
+		"ln/gone.txt":  {"", api.TargetGone},
+	} {
+		o, err := e.svc.Stat(e.ctx, e.admin, path)
+		if err != nil || o.Target == nil || o.Target.State != want.state {
+			t.Errorf("stat %s = %+v, %v", path, o.Target, err)
+		}
+		c, err := e.svc.Download(e.ctx, e.admin, path)
+		if want.content == "" {
+			if !errors.Is(err, service.ErrNotFound) {
+				t.Errorf("download %s: %v; want not found", path, err)
+			}
+			continue
+		}
+		if err != nil || e.read(c) != want.content {
+			t.Errorf("download %s: %v", path, err)
+		}
+	}
+	o, _ := e.svc.Stat(e.ctx, e.admin, "ln/exp.txt")
+	if !o.Target.Expired {
+		t.Errorf("expired target not reported: %+v", o.Target)
+	}
+	o, _ = e.svc.Stat(e.ctx, e.admin, "ln/trash.txt")
+	if o.Target.Path == nil || *o.Target.Path != "orig/trash.txt" || o.Size != 0 || o.SHA256 != "" || o.URL != nil {
+		t.Errorf("trashed target = %+v, object %+v", o.Target, o)
+	}
+
+	// A key limited to ln/ sees targets outside its prefix as gone and
+	// cannot follow them, although an admin made the symlinks.
+	k := e.principal(api.ScopeRW, "ln/")
+	o, err := e.svc.Stat(e.ctx, k, "ln/pub.txt")
+	if err != nil || o.Target.State != api.TargetGone || o.Target.Path != nil || o.Target.Visibility != nil || o.Size != 0 || o.SHA256 != "" {
+		t.Errorf("stat outside prefix = %+v, %v", o, err)
+	}
+	if _, err := e.svc.Download(e.ctx, k, "ln/pub.txt"); !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("download outside prefix: %v", err)
+	}
+	if _, err := e.svc.CreateLink(e.ctx, k, api.CreateLinkRequest{Path: "ln/pub.txt"}); !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("share outside prefix: %v", err)
+	}
+	if _, err := e.svc.CreateLink(e.ctx, e.admin, api.CreateLinkRequest{Path: "ln/priv.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	links, err := e.svc.ListLinks(e.ctx, k, service.LinkParams{})
+	if err != nil || len(links.Links) != 0 {
+		t.Errorf("links of a prefixed key = %+v, %v", links, err)
+	}
+	links, err = e.svc.ListLinks(e.ctx, e.admin, service.LinkParams{})
+	if err != nil || len(links.Links) != 1 {
+		t.Errorf("links of admin = %+v, %v", links, err)
+	}
+}
+
+func TestSymlinkListingFilters(t *testing.T) {
+	t.Parallel()
+	e := readMatrix(t)
+	paths := func(lp service.ListParams) []string {
+		t.Helper()
+		lp.Recursive = true
+		res, err := e.svc.List(e.ctx, e.admin, lp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, o := range res.Objects {
+			out = append(out, o.Path)
+		}
+		return out
+	}
+	if got := paths(service.ListParams{Prefix: "ln/", Broken: true}); !reflect.DeepEqual(got, []string{"ln/gone.txt", "ln/trash.txt"}) {
+		t.Errorf("broken = %v", got)
+	}
+	if got := paths(service.ListParams{Kind: api.KindFile}); len(got) != 5 {
+		t.Errorf("files = %v", got)
+	}
+	if got := paths(service.ListParams{Target: "orig/pub.txt"}); !reflect.DeepEqual(got, []string{"ln/own-expired.txt", "ln/own-private.txt", "ln/pub.txt"}) {
+		t.Errorf("target = %v", got)
+	}
+	if got := paths(service.ListParams{Target: "orig/missing.txt"}); len(got) != 0 {
+		t.Errorf("missing target = %v", got)
+	}
+	if got := paths(service.ListParams{Prefix: "ln/", Visibilities: []api.Visibility{api.Unlisted}}); !reflect.DeepEqual(got, []string{"ln/unl.txt"}) {
+		t.Errorf("effective unlisted = %v", got)
+	}
+	if _, err := e.svc.List(e.ctx, e.principal(api.ScopeRO, "ln/"), service.ListParams{Prefix: "ln/", Target: "orig/pub.txt"}); !errors.Is(err, service.ErrForbidden) {
+		t.Errorf("target outside prefix: %v", err)
+	}
+	if _, err := e.svc.List(e.ctx, e.admin, service.ListParams{Kind: "dir"}); !errors.Is(err, service.ErrInvalidRequest) {
+		t.Errorf("unknown kind: %v", err)
+	}
+}
+
+func TestSymlinkSignedLinks(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("orig/a.txt", "aaa", api.Private)
+	e.put("orig/b.txt", "bb", api.Private)
+	e.ln(e.admin, "orig/a.txt", "ln/x")
+	link, err := e.svc.CreateLink(e.ctx, e.admin, api.CreateLinkRequest{Path: "ln/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func() (string, error) {
+		c, err := e.svc.ResolveLink(e.ctx, link.ID, queryParam(*link.URL, "exp"), queryParam(*link.URL, "sig"))
+		if err != nil {
+			return "", err
+		}
+		if c.Object.Path != "ln/x" {
+			t.Errorf("delivered path = %s", c.Object.Path)
+		}
+		return e.read(c), nil
+	}
+	// Visibility does not matter for signed links.
+	if got, err := resolve(); err != nil || got != "aaa" {
+		t.Errorf("resolve = %q, %v", got, err)
+	}
+	if _, _, err := e.svc.CreateSymlink(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/b.txt", Path: "ln/x", Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolve(); err != nil || got != "bb" {
+		t.Errorf("after retarget = %q, %v", got, err)
+	}
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "orig/b.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolve(); !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("broken: %v", err)
+	}
+}
+
+func TestSymlinkWebSession(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("k/own.txt", "own", api.Private)
+	e.put("other/priv.txt", "priv", api.Private)
+	e.put("other/pub.txt", "pub", api.Public)
+	e.ln(e.admin, "k/own.txt", "k/to-own")
+	e.ln(e.admin, "other/priv.txt", "k/to-priv")
+	e.ln(e.admin, "other/pub.txt", "k/to-pub")
+	e.ln(e.admin, "other/priv.txt", "elsewhere/to-priv")
+	if _, err := e.svc.Patch(e.ctx, e.admin, "elsewhere/to-priv", api.ObjectPatch{Visibility: api.Some(api.Public)}, 0); err != nil {
+		t.Fatal(err)
+	}
+	viewer := e.principal(api.ScopeRO, "k/")
+	for path, ok := range map[string]bool{
+		"k/to-own": true, "k/to-pub": true, "k/to-priv": false, "elsewhere/to-priv": false,
+	} {
+		res, err := e.svc.ResolvePublicFor(e.ctx, path, &viewer)
+		if ok != (err == nil && res.Content != nil) {
+			t.Errorf("%s: %+v, %v; want served=%v", path, res, err, ok)
+		}
+		if !ok && !errors.Is(err, service.ErrNotFound) {
+			t.Errorf("%s: %v; want not found", path, err)
+		}
+	}
+	listing, err := e.svc.IndexFor(e.ctx, "k/", &viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range listing.Files {
+		names = append(names, f.Path)
+	}
+	if !reflect.DeepEqual(names, []string{"k/own.txt", "k/to-own", "k/to-pub"}) {
+		t.Errorf("session index = %v", names)
+	}
+}

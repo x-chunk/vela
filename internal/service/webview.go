@@ -39,7 +39,7 @@ func (s *Service) IndexFor(ctx context.Context, rawPrefix string, viewer *Princi
 	}
 	// The page is anonymous; only navigation toward the prefix may differ,
 	// because the ancestors of the prefix open for this session.
-	live, err := s.store.HasLiveObjects(ctx, viewer.Prefix, s.now())
+	live, err := s.sessionHasObjects(ctx, viewer.Prefix, viewer.Prefix, s.now())
 	if err != nil {
 		return IndexListing{}, err
 	}
@@ -49,7 +49,10 @@ func (s *Service) IndexFor(ctx context.Context, rawPrefix string, viewer *Princi
 
 // ResolvePublicFor resolves a direct URL as viewer sees it. A nil viewer is
 // an anonymous visitor, exactly as ResolvePublic. Inside the key's prefix
-// every live object is served; private objects elsewhere remain 404.
+// every live object is served; private objects elsewhere remain 404. A
+// symlink inside the prefix is served only if its target is effectively
+// non-private or also inside the prefix, so a symlink cannot open a private
+// file elsewhere to the session.
 func (s *Service) ResolvePublicFor(ctx context.Context, rawPath string, viewer *Principal) (PublicResult, error) {
 	if viewer == nil {
 		return s.ResolvePublic(ctx, rawPath)
@@ -69,7 +72,7 @@ func (s *Service) ResolvePublicFor(ctx context.Context, rawPath string, viewer *
 	case err == nil:
 		// Inside the prefix every live object is served; a file beside the
 		// way to it follows the anonymous rules.
-		if o.ExpiredAt(now) || (!inside && o.Visibility == api.Private) {
+		if !o.LiveAt(now) || (!inside && o.EffectiveVisibility() == api.Private) || !sessionMayFollow(o, k) {
 			return PublicResult{}, notFoundf("not found")
 		}
 		return s.publicContent(ctx, o)
@@ -91,13 +94,28 @@ func (s *Service) ResolvePublicFor(ctx context.Context, rawPath string, viewer *
 // tree. It must agree with sessionTree.
 func (s *Service) sessionPageExists(ctx context.Context, dir, k string, now time.Time) (bool, error) {
 	if api.IsWithin(dir, k) {
-		return s.store.HasLiveObjects(ctx, dir, now)
+		return s.sessionHasObjects(ctx, dir, k, now)
 	}
-	live, err := s.store.HasLiveObjects(ctx, k, now)
+	live, err := s.sessionHasObjects(ctx, k, k, now)
 	if err != nil || live {
 		return live, err
 	}
 	return s.publicDirExists(ctx, dir, now)
+}
+
+// sessionHasObjects reports whether the session with prefix k sees a live
+// object below prefix, which lies inside k. It must agree with the listing
+// sessionTree makes, symlink rules included.
+func (s *Service) sessionHasObjects(ctx context.Context, prefix, k string, now time.Time) (bool, error) {
+	res, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: prefix, Recursive: true, LiveAt: now, TargetWithin: k, Limit: 1})
+	return len(res.Objects) > 0, err
+}
+
+// sessionMayFollow reports whether a session with prefix k may be served o:
+// a file always, a symlink only when its target is effectively non-private
+// or lies inside k.
+func sessionMayFollow(o domain.Object, k string) bool {
+	return !o.IsSymlink() || o.EffectiveVisibility() != api.Private || targetVisibleTo(o, k)
 }
 
 // sessionPolicies makes the pages a session can open linkable in breadcrumbs
@@ -184,7 +202,7 @@ func (s *Service) sessionTree(ctx context.Context, prefix, k string) (sessionTre
 		if within {
 			scope = prefix
 		}
-		own, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: scope, Recursive: true, LiveAt: now})
+		own, err := s.store.ListObjects(ctx, domain.ListQuery{Prefix: scope, Recursive: true, LiveAt: now, TargetWithin: k})
 		if err != nil {
 			return sessionTreeResult{}, nil, err
 		}
@@ -225,7 +243,7 @@ func buildSessionTree(prefix string, objects []domain.Object) *sessionNode {
 	root := &sessionNode{prefix: prefix, children: map[string]*sessionNode{}}
 	for _, o := range objects {
 		node := root
-		public := o.Visibility == api.Public
+		public := o.EffectiveVisibility() == api.Public
 		node.public = node.public || public
 		suffix := strings.TrimPrefix(api.ParentPrefix(o.Path), prefix)
 		for _, segment := range strings.Split(strings.TrimSuffix(suffix, "/"), "/") {

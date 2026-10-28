@@ -99,6 +99,11 @@ func (s *Service) CreateLink(ctx context.Context, p Principal, req api.CreateLin
 		if err != nil {
 			return err
 		}
+		// A signed link grants anonymous access to whatever the symlink
+		// resolves to, so a key may only sign one it could follow itself.
+		if !targetVisibleTo(o, p.Prefix) {
+			return notFoundf("%s is a broken symlink", path)
+		}
 		key, err := s.activeSigningKey(ctx, w, now)
 		if err != nil {
 			return err
@@ -157,9 +162,33 @@ func (s *Service) ListLinks(ctx context.Context, p Principal, lp LinkParams) (ap
 	}
 	out := api.LinkList{Links: make([]api.Link, 0, len(recs))}
 	for _, r := range recs {
-		out.Links = append(out.Links, s.linkDTO(r))
+		hidden, err := s.linkLeadsOutside(ctx, r, p.Prefix)
+		if err != nil {
+			return api.LinkList{}, err
+		}
+		if !hidden {
+			out.Links = append(out.Links, s.linkDTO(r))
+		}
 	}
 	return out, nil
+}
+
+// linkLeadsOutside reports whether a listed link's URL would give a key with
+// prefix access beyond it: a link to a symlink, made by a broader key, whose
+// target is outside the prefix. Such links are left out of the listing,
+// because the listing hands out working URLs.
+func (s *Service) linkLeadsOutside(ctx context.Context, r domain.LinkRecord, prefix string) (bool, error) {
+	if prefix == "" || r.ObjectState != domain.ObjectLive {
+		return false, nil
+	}
+	o, err := s.store.ObjectByID(ctx, r.ObjectID)
+	if isNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return o.IsSymlink() && o.Target.Live() && !api.IsWithin(o.Target.Path, prefix), nil
 }
 
 // RevokeLink makes a link stop working immediately.
@@ -224,7 +253,9 @@ func (s *Service) ResolveLink(ctx context.Context, linkID, expParam, sig string)
 	if err != nil {
 		return Content{}, err
 	}
-	if o.ExpiredAt(now) {
+	// Visibility does not matter for a signed link, but a symlink must still
+	// lead to a live, unexpired file.
+	if !o.LiveAt(now) {
 		return Content{}, notFoundf("link not found")
 	}
 	c := s.content(o)

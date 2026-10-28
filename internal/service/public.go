@@ -20,7 +20,9 @@ type PublicResult struct {
 // ResolvePublic resolves a direct URL. Public and unlisted objects are
 // served; private, expired, trashed and missing ones are all ErrNotFound.
 // Answering 404 rather than 403 for private objects keeps their existence
-// secret (spec section 3).
+// secret (spec section 3). A symlink is served by its effective visibility
+// and only while it and its target are live, so a broken symlink and a
+// public symlink to a private file look exactly like a missing path.
 func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResult, error) {
 	path, err := api.CleanObjectPath(rawPath)
 	if err != nil {
@@ -30,7 +32,7 @@ func (s *Service) ResolvePublic(ctx context.Context, rawPath string) (PublicResu
 	o, err := s.store.ObjectByPath(ctx, path)
 	switch {
 	case err == nil:
-		if o.Visibility != api.Private && !o.ExpiredAt(now) {
+		if o.EffectiveVisibility() != api.Private && o.LiveAt(now) {
 			return s.publicContent(ctx, o)
 		}
 		// A file cannot also be a directory, so there is nothing else here.

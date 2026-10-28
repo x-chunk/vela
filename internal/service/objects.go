@@ -32,11 +32,19 @@ func (s *Service) Info(p Principal) api.Info {
 
 // ListParams are the query parameters of GET /api/v1/objects.
 type ListParams struct {
-	Prefix       string
-	Recursive    bool
+	Prefix    string
+	Recursive bool
+	// Visibilities filters by effective visibility.
 	Visibilities []api.Visibility
-	Limit        int
-	Cursor       string
+	// Kind selects files or symlinks; "" selects both.
+	Kind api.ObjectKind
+	// Broken selects only symlinks whose target is not live.
+	Broken bool
+	// Target selects only symlinks that refer to the object at this path,
+	// which must lie inside the key's prefix.
+	Target string
+	Limit  int
+	Cursor string
 }
 
 // Listing limits from spec section 10.4.
@@ -69,14 +77,42 @@ func (s *Service) List(ctx context.Context, p Principal, lp ListParams) (api.Lis
 	if err != nil {
 		return api.Listing{}, err
 	}
-	res, err := s.store.ListObjects(ctx, domain.ListQuery{
+	q := domain.ListQuery{
 		Prefix:       prefix,
 		Within:       within,
 		Recursive:    lp.Recursive,
 		Visibilities: lp.Visibilities,
+		Kind:         domain.Kind(lp.Kind),
+		Broken:       lp.Broken,
 		After:        after,
 		Limit:        limit,
-	})
+	}
+	if lp.Kind != "" && !lp.Kind.Valid() {
+		return api.Listing{}, invalidf("kind must be file or symlink")
+	}
+	if lp.Broken {
+		q.Kind = domain.KindSymlink
+	}
+	if lp.Target != "" {
+		target, err := api.CleanObjectPath(lp.Target)
+		if err != nil {
+			return api.Listing{}, pathError(err)
+		}
+		if err := p.checkPath(target); err != nil {
+			return api.Listing{}, err
+		}
+		o, err := s.store.ObjectByPath(ctx, target)
+		switch {
+		case isNotFound(err) || (err == nil && o.IsSymlink()):
+			// A filter, not a lookup: nothing refers to a missing object,
+			// and symlinks never refer to symlinks.
+			return api.Listing{Prefix: prefix, Dirs: []string{}, Objects: []api.Object{}}, nil
+		case err != nil:
+			return api.Listing{}, err
+		}
+		q.TargetID, q.Kind = o.ID, domain.KindSymlink
+	}
+	res, err := s.store.ListObjects(ctx, q)
 	if err != nil {
 		return api.Listing{}, err
 	}
@@ -125,11 +161,16 @@ func (s *Service) Stat(ctx context.Context, p Principal, path string) (api.Objec
 
 // Download locates an object's content for an API download. Unlike public
 // delivery it serves every visibility and, deliberately, expired objects that
-// the janitor has not trashed yet, so they can still be rescued.
+// the janitor has not trashed yet, so they can still be rescued. A symlink is
+// followed only to a live target inside the key's prefix; anything else is
+// 404, never 403, so the key learns nothing about objects outside its prefix.
 func (s *Service) Download(ctx context.Context, p Principal, path string) (Content, error) {
 	o, err := s.objectFor(ctx, p, api.ScopeRO, path)
 	if err != nil {
 		return Content{}, err
+	}
+	if !targetVisibleTo(o, p.Prefix) {
+		return Content{}, notFoundf("%s is a broken symlink", o.Path)
 	}
 	return s.content(o), nil
 }

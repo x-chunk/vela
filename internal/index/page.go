@@ -198,7 +198,7 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 			ContentType: o.ContentType,
 			UpdatedAt:   o.UpdatedAt.UTC(),
 			Kind:        KindOf(o.Path, o.ContentType),
-			Flags:       fileFlags(session, o.Visibility),
+			Flags:       fileFlags(session, o.EffectiveVisibility()),
 		})
 	}
 	sort.SliceStable(p.Dirs, func(i, j int) bool { return NaturalLess(p.Dirs[i].Name, p.Dirs[j].Name) })

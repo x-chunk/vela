@@ -209,7 +209,20 @@ type Content struct {
 	DeliveryUntil *time.Time
 }
 
+// content prepares o for delivery. The caller has already decided that o may
+// be served; for a symlink that includes a live target. A symlink is
+// delivered as a file with the target's bytes under its own name and
+// disposition, its effective visibility (which sets the cache policy) and the
+// earlier of the two expiries (which bounds external delivery grants).
 func (s *Service) content(o domain.Object) Content {
+	if o.IsSymlink() {
+		t := o.Target
+		o.BlobID = t.BlobID
+		o.Visibility = o.EffectiveVisibility()
+		if t.ExpiresAt != nil && (o.ExpiresAt == nil || t.ExpiresAt.Before(*o.ExpiresAt)) {
+			o.ExpiresAt = t.ExpiresAt
+		}
+	}
 	return Content{Object: o, BlobPath: s.blobs.RelPath(o.BlobID)}
 }
 
