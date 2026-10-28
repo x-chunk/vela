@@ -145,6 +145,12 @@ func (a *App) getTree(ctx context.Context, c *client.Client, raw, local string, 
 	for i := range l.Objects {
 		o := &l.Objects[i]
 		paths[i] = o.Path
+		if isBroken(o) {
+			// Skipped, not fatal: the other files still download, and the
+			// failure list names the symlink, so the exit code is 7.
+			errs[i] = &cliError{code: exitNotFound, slug: "broken_symlink", msg: "skipped broken symlink " + brokenLabel(o), hint: brokenHint(o)}
+			continue
+		}
 		rel := filepath.FromSlash(strings.TrimPrefix(o.Path, prefix))
 		if !filepath.IsLocal(rel) {
 			errs[i] = fmt.Errorf("refusing to write outside %s: %s", local, o.Path)

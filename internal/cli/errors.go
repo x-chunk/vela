@@ -88,7 +88,7 @@ func exitCode(err error) int {
 		switch ae.Code {
 		case api.CodeNotFound:
 			return exitNotFound
-		case api.CodeConflict, api.CodeAlreadyExists, api.CodePathConflict, api.CodePreconditionFailed:
+		case api.CodeConflict, api.CodeAlreadyExists, api.CodePathConflict, api.CodeIsSymlink, api.CodePreconditionFailed:
 			return exitConflict
 		case api.CodeUnauthorized, api.CodeForbidden:
 			return exitAuth

@@ -32,8 +32,9 @@ func remotePrefix(raw string) (string, error) {
 }
 
 func (a *App) lsCommand() *cobra.Command {
-	var recursive, long bool
+	var recursive, long, broken bool
 	var visibility []string
+	var kind, target string
 	cmd := &cobra.Command{
 		Use:   "ls [DIR/]",
 		Short: "List a directory",
@@ -60,15 +61,31 @@ func (a *App) lsCommand() *cobra.Command {
 					vis = append(vis, pv)
 				}
 			}
+			var k api.ObjectKind
+			if kind != "" {
+				if k, err = api.ParseObjectKind(kind); err != nil {
+					return usageError(err)
+				}
+			}
+			if target != "" {
+				if target, err = remotePath(target); err != nil {
+					return err
+				}
+			}
 			c, _, err := a.client()
 			if err != nil {
 				return err
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
-			l, err := c.ListAll(ctx, client.ListOptions{Prefix: prefix, Recursive: recursive, Visibility: vis, Limit: 1000})
+			l, err := c.ListAll(ctx, client.ListOptions{
+				Prefix: prefix, Recursive: recursive, Visibility: vis, Kind: k, Broken: broken, Target: target, Limit: 1000,
+			})
 			if err != nil {
 				return err
+			}
+			if k != "" || broken || target != "" {
+				l.Objects = keepObjects(l.Objects, k, broken, target != "")
 			}
 			// "vela ls docs/a.pdf" names a file: show it rather than an
 			// empty directory.
@@ -102,7 +119,10 @@ func (a *App) lsCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "list all objects below the directory")
 	cmd.Flags().BoolVarP(&long, "long", "l", false, "long format: visibility, size, date, title")
-	cmd.Flags().StringSliceVar(&visibility, "visibility", nil, "only show these visibilities (public,unlisted,private)")
+	cmd.Flags().StringSliceVar(&visibility, "visibility", nil, "only show these effective visibilities (public,unlisted,private)")
+	cmd.Flags().StringVar(&kind, "type", "", "only show files or symlinks (file, symlink)")
+	cmd.Flags().BoolVar(&broken, "broken", false, "only show broken symlinks")
+	cmd.Flags().StringVar(&target, "target", "", "only show symlinks to this file")
 	return cmd
 }
 
@@ -129,14 +149,25 @@ func (a *App) printListing(l *api.Listing, long bool, policies map[string]api.Di
 				labels += " [no index]"
 			}
 		}
-		rows = append(rows, []any{"", "-", "-", output.Styled(string(p.Dir(rel(d))) + labels), ""})
+		rows = append(rows, []any{"d", "", "-", "-", output.Styled(string(p.Dir(rel(d))) + labels), ""})
 	}
-	for _, o := range l.Objects {
-		var name any = rel(o.Path)
-		if o.Expired {
-			name = output.Styled(output.Clean(rel(o.Path)) + " " + string(p.Dim("(expired)")))
+	for i := range l.Objects {
+		o := &l.Objects[i]
+		name := output.Clean(rel(o.Path))
+		if isSymlink(o) {
+			name += " -> " + output.Clean(targetLabel(o))
 		}
-		rows = append(rows, []any{p.Visibility(o.Visibility), output.Size(o.Size), output.Time(o.UpdatedAt), name, o.Title})
+		if o.Expired {
+			name += " " + string(p.Dim("(expired)"))
+		}
+		if isBroken(o) {
+			name += " " + string(p.Error(brokenLabel(o)))
+		}
+		kind := "-"
+		if isSymlink(o) {
+			kind = "l"
+		}
+		rows = append(rows, []any{kind, p.Visibility(o.Visibility), output.Size(o.Size), output.Time(o.UpdatedAt), output.Styled(name), o.Title})
 	}
 	p.Table(nil, rows)
 }
@@ -165,7 +196,7 @@ func (a *App) statCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.printer.JSONValue(o)
 			}
-			a.printObject(o)
+			a.printObject(ctx, c, o)
 			return nil
 		},
 	}
@@ -183,7 +214,10 @@ func (a *App) notFoundHint(ctx context.Context, c *client.Client, err error, pat
 	return err
 }
 
-func (a *App) printObject(o *api.Object) {
+// printObject prints every metadata field of o and, best effort, how it
+// relates to symlinks: a symlink's target, or the symlinks pointing at a
+// file.
+func (a *App) printObject(ctx context.Context, c *client.Client, o *api.Object) {
 	p := a.printer
 	url := "none (private; create a temporary link with: vela share " + o.Path + ")"
 	if o.URL != nil {
@@ -213,6 +247,12 @@ func (a *App) printObject(o *api.Object) {
 		{Key: "SHA-256", Value: o.SHA256},
 		{Key: "ID", Value: o.ID},
 	})
+	// A failed lookup only leaves the symlink list out of the report.
+	links, _ := symlinksTo(ctx, c, o)
+	p.KeyValues(a.symlinkDetails(o, links))
+	if isBroken(o) {
+		p.Warnf("%s is a broken symlink; %s", o.Path, brokenHint(o))
+	}
 }
 
 func (a *App) urlCommand() *cobra.Command {

@@ -326,6 +326,7 @@ func (a *App) uploadOne(ctx context.Context, c *client.Client, it putItem, md me
 	}
 	if err != nil {
 		err = hintFor(err, api.CodeAlreadyExists, "use --force to overwrite")
+		err = hintFor(err, api.CodeIsSymlink, "content is never written through a symlink; remove it with \"vela rm\" or retarget it with \"vela ln -f\"")
 		err = hintFor(err, api.CodePathConflict, "a file and a directory cannot share a name")
 		return nil, fmt.Errorf("%s: %w", it.Remote, err)
 	}

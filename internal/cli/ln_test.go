@@ -102,3 +102,94 @@ func TestLnOldServer(t *testing.T) {
 		t.Errorf("old server = %+v", r)
 	}
 }
+
+func TestSymlinksInOtherCommands(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("orig/a.txt", "a", api.Public)
+	h.seed("orig/b.txt", "b", api.Public)
+	h.ok("ln", "orig/a.txt", "s1/a")
+	h.ok("ln", "orig/a.txt", "s1/a2")
+	h.ok("ln", "orig/b.txt", "s1/b")
+
+	r := h.ok("ls", "-l", "s1/")
+	if !strings.Contains(r.stdout, "a -> orig/a.txt") || !strings.Contains(r.stdout, "l ") {
+		t.Errorf("ls -l = %q", r.stdout)
+	}
+	r = h.ok("stat", "orig/a.txt")
+	if !strings.Contains(r.stdout, "Symlinks:") || !strings.Contains(r.stdout, "s1/a2") {
+		t.Errorf("stat of a target = %q", r.stdout)
+	}
+	r = h.ok("stat", "s1/a")
+	if !strings.Contains(r.stdout, "Target:") || !strings.Contains(r.stdout, "orig/a.txt") {
+		t.Errorf("stat of a symlink = %q", r.stdout)
+	}
+	if r := h.ok("cat", "s1/a"); r.stdout != "a" {
+		t.Errorf("cat = %q", r.stdout)
+	}
+	r = h.exec("", "put", h.file("x.txt", "x"), "s1/a", "--force")
+	if r.code != exitConflict || !strings.Contains(r.stderr, "vela ln -f") {
+		t.Errorf("put onto symlink = %+v", r)
+	}
+
+	// Deleting a target warns and breaks its symlinks.
+	r = h.ok("rm", "orig/a.txt")
+	if !strings.Contains(r.stderr, "2 symlink(s) now point to a trashed file") {
+		t.Errorf("rm warning = %q", r.stderr)
+	}
+	r = h.ok("ls", "-l", "s1/")
+	if !strings.Contains(r.stdout, "(broken: trashed)") {
+		t.Errorf("ls -l broken = %q", r.stdout)
+	}
+	r = h.ok("stat", "s1/a")
+	if !strings.Contains(r.stderr, "vela trash restore orig/a.txt") {
+		t.Errorf("stat hint = %q", r.stderr)
+	}
+	var l api.Listing
+	h.ok("ls", "--json", "--broken", "s1/").json(t, &l)
+	if len(l.Objects) != 2 {
+		t.Errorf("ls --broken = %+v", l.Objects)
+	}
+	h.ok("ls", "--json", "--type", "symlink", "-r").json(t, &l)
+	if len(l.Objects) != 3 {
+		t.Errorf("ls --type symlink = %+v", l.Objects)
+	}
+	h.ok("ls", "--json", "-r", "--target", "orig/b.txt").json(t, &l)
+	if len(l.Objects) != 1 || l.Objects[0].Path != "s1/b" {
+		t.Errorf("ls --target = %+v", l.Objects)
+	}
+
+	// get -r skips broken symlinks and exits 7.
+	if r := h.exec("", "get", "-r", "s1/", h.dir+"/out"); r.code != exitPartial {
+		t.Errorf("get -r = %+v", r)
+	}
+
+	// rm --broken needs confirmation without a terminal, then removes only them.
+	if r := h.exec("", "rm", "--broken", "s1/"); r.code == 0 {
+		t.Errorf("rm --broken without -y = %+v", r)
+	}
+	h.ok("rm", "--broken", "-y", "s1/")
+	h.ok("ls", "--json", "-r", "s1/").json(t, &l)
+	if len(l.Objects) != 1 || l.Objects[0].Path != "s1/b" {
+		t.Errorf("after rm --broken = %+v", l.Objects)
+	}
+	r = h.ok("trash", "ls")
+	if !strings.Contains(r.stdout, "s1/a -> orig/a.txt") {
+		t.Errorf("trash ls = %q", r.stdout)
+	}
+	h.seed("orig/c.txt", "c", api.Public)
+	h.ok("ln", "orig/c.txt", "s1/c")
+	h.ok("rm", "orig/c.txt")
+	r = h.ok("trash", "purge", "-y")
+	if !strings.Contains(r.stderr, "1 symlink(s) now point to a deleted file") {
+		t.Errorf("purge warning = %q", r.stderr)
+	}
+}
+
+func TestRmBrokenIgnoresOldServers(t *testing.T) {
+	t.Parallel()
+	got := keepObjects([]api.Object{{Path: "file"}, {Path: "link", Kind: api.KindSymlink, Target: &api.SymlinkTarget{State: api.TargetOK}}}, "", true, false)
+	if len(got) != 0 {
+		t.Errorf("keepObjects = %+v; an old server's files must never count as broken", got)
+	}
+}

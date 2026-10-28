@@ -115,6 +115,7 @@ func (a *App) newCommand() *cobra.Command {
 			o, err := c.Create(ctx, req)
 			if err != nil {
 				err = hintFor(err, api.CodeAlreadyExists, "\"vela new\" never overwrites; use \"vela put --force\"")
+				err = hintFor(err, api.CodeIsSymlink, "remove the symlink with \"vela rm\" first")
 				return hintFor(err, api.CodePayloadTooLarge, "use \"vela put\" for larger files")
 			}
 			if a.jsonOut {

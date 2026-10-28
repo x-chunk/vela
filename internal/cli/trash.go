@@ -53,7 +53,11 @@ func (a *App) trashLsCommand() *cobra.Command {
 			}
 			rows := make([][]any, 0, len(entries))
 			for _, e := range entries {
-				rows = append(rows, []any{e.ID, output.Time(e.DeletedAt), output.Time(e.PurgeAt), output.Size(e.Object.Size), e.OriginalPath})
+				path := output.Clean(e.OriginalPath)
+				if isSymlink(&e.Object) {
+					path += " -> " + output.Clean(targetLabel(&e.Object))
+				}
+				rows = append(rows, []any{e.ID, output.Time(e.DeletedAt), output.Time(e.PurgeAt), output.Size(e.Object.Size), path})
 			}
 			a.printer.Table([]string{"ID", "DELETED", "PURGED AT", "SIZE", "PATH"}, rows)
 			return nil
@@ -159,6 +163,7 @@ func (a *App) trashPurgeCommand() *cobra.Command {
 					return a.printer.JSONValue(res)
 				}
 				a.printer.Printf("Purged %d trash entr%s.\n", res.Purged, map[bool]string{true: "y", false: "ies"}[res.Purged == 1])
+				a.warnSymlinksAffected(res.SymlinksAffected, true)
 				return nil
 			}
 			errs := make([]error, len(args))

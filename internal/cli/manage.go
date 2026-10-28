@@ -82,17 +82,22 @@ func (a *App) mvCommand() *cobra.Command {
 }
 
 func (a *App) rmCommand() *cobra.Command {
-	var recursive, purge, yes bool
+	var recursive, purge, yes, broken bool
 	cmd := &cobra.Command{
 		Use:   "rm PATH...",
 		Short: "Delete files (to the trash)",
 		Long: "Move files to the trash, from where \"vela trash restore\" brings them back until they\n" +
 			"are purged automatically. Directories (ending with /) need -r. --purge deletes for good\n" +
 			"(admin keys only). -r and --purge ask for confirmation; -y skips it, and is required\n" +
-			"when stdin is not a terminal.",
-		Example: "  vela rm notes/old.md\n  vela rm -r drafts/\n  vela rm --purge -y secret.pdf",
+			"when stdin is not a terminal. Removing a symlink never touches the file it points at;\n" +
+			"removing a file breaks the symlinks pointing at it. --broken removes the broken\n" +
+			"symlinks in the given directories (with -r, also below them).",
+		Example: "  vela rm notes/old.md\n  vela rm -r drafts/\n  vela rm --purge -y secret.pdf\n  vela rm --broken -r sorted/",
 		Args:    minArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if broken {
+				return a.rmBroken(cmd, args, recursive, purge, yes)
+			}
 			paths := make([]string, len(args))
 			for i, raw := range args {
 				p, isDir, err := api.CleanPath(raw)
@@ -144,6 +149,7 @@ func (a *App) rmCommand() *cobra.Command {
 				default:
 					a.printer.Printf("Moved %s to the trash (%d object(s))\n", p, res.Deleted)
 				}
+				a.warnSymlinksAffected(res.SymlinksAffected, purge)
 			}
 			if err := batchResult("delete", len(paths), errs, paths); err != nil {
 				return err
@@ -161,7 +167,83 @@ func (a *App) rmCommand() *cobra.Command {
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "delete directories recursively")
 	cmd.Flags().BoolVar(&purge, "purge", false, "delete permanently, bypassing the trash (admin)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
+	cmd.Flags().BoolVar(&broken, "broken", false, "remove the broken symlinks in the given directories")
 	return cmd
+}
+
+// warnSymlinksAffected reports symlinks a deletion left broken.
+func (a *App) warnSymlinksAffected(n int, purged bool) {
+	if n == 0 {
+		return
+	}
+	state := "a trashed file"
+	if purged {
+		state = "a deleted file"
+	}
+	a.printer.Warnf("%d symlink(s) now point to %s (list them with: vela ls -r --broken)", n, state)
+}
+
+// rmBroken removes the broken symlinks in dirs, after one confirmation.
+func (a *App) rmBroken(cmd *cobra.Command, dirs []string, recursive, purge, yes bool) error {
+	prefixes := make([]string, len(dirs))
+	for i, raw := range dirs {
+		if raw != "" && !strings.HasSuffix(raw, "/") {
+			raw += "/"
+		}
+		p, err := remotePrefix(raw)
+		if err != nil {
+			return err
+		}
+		prefixes[i] = p
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	var paths []string
+	for _, prefix := range prefixes {
+		l, err := c.ListAll(ctx, client.ListOptions{Prefix: prefix, Recursive: recursive, Broken: true, Limit: 1000})
+		if err != nil {
+			return err
+		}
+		for _, o := range keepObjects(l.Objects, "", true, false) {
+			paths = append(paths, o.Path)
+		}
+	}
+	if len(paths) == 0 {
+		if a.jsonOut {
+			return a.printer.JSONValue([]*api.DeleteResponse{})
+		}
+		a.printer.Infof("No broken symlinks found.")
+		return nil
+	}
+	what := "Delete"
+	if purge {
+		what = "Permanently delete"
+	}
+	if err := a.confirm(fmt.Sprintf("%s %d broken symlink(s)?", what, len(paths)), yes); err != nil {
+		return err
+	}
+	errs := make([]error, len(paths))
+	results := []*api.DeleteResponse{}
+	for i, p := range paths {
+		res, err := c.Delete(ctx, p, client.DeleteOptions{Purge: purge})
+		if err != nil {
+			errs[i] = fmt.Errorf("%s: %w", p, err)
+			continue
+		}
+		results = append(results, res)
+		a.printer.Printf("Removed %s\n", p)
+	}
+	if err := batchResult("delete", len(paths), errs, paths); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(results)
+	}
+	return nil
 }
 
 func (a *App) metaCommand() *cobra.Command {
@@ -251,7 +333,7 @@ func (a *App) metaCommand() *cobra.Command {
 				if a.jsonOut {
 					return a.printer.JSONValue(cur)
 				}
-				a.printObject(cur)
+				a.printObject(ctx, c, cur)
 				return nil
 			}
 			o, err := c.Patch(ctx, path, patch, cur.Revision)
@@ -261,7 +343,7 @@ func (a *App) metaCommand() *cobra.Command {
 			if a.jsonOut {
 				return a.printer.JSONValue(o)
 			}
-			a.printObject(o)
+			a.printObject(ctx, c, o)
 			return nil
 		},
 	}
