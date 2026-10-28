@@ -22,10 +22,13 @@ type lnFlags struct {
 	tags                      []string
 	disposition, expires      string
 	symbolic                  bool
+	keepTree                  bool
+	skip, skipExplicitly      bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
 	var f lnFlags
+	var byTag tagFlags
 	cmd := &cobra.Command{
 		Use:   "ln SOURCE... DEST",
 		Short: "Create symlinks to files",
@@ -41,16 +44,35 @@ func (a *App) lnCommand() *cobra.Command {
 			"With several SOURCEs, DEST must be a directory (ending with /). -r links every file\n" +
 			"under a directory at once; files added to it later are not linked. -f replaces an\n" +
 			"existing DEST: a symlink is retargeted in place (its URL and signed links follow the\n" +
-			"new file), a file goes to the trash.",
+			"new file), a file goes to the trash.\n\n" +
+			"With --by-tag or --by-tags, \"ln [SCOPE...] DEST/\" links every object with these tags\n" +
+			"below SCOPE (everything by default) into the directory DEST: each under its own name,\n" +
+			"or with --save-structure under its path relative to SCOPE. Every conflict (two objects\n" +
+			"with one destination, an existing destination without -f) is reported before the\n" +
+			"first symlink is created, and nothing is linked. --skip links the rest and silently\n" +
+			"leaves the conflicting objects out; --skip-explicitly also reports each one.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
-			"  vela ln -f originals/new.pdf latest.pdf",
-		Args: minArgs(2),
+			"  vela ln -f originals/new.pdf latest.pdf\n" +
+			"  vela ln --by-tag travel originals/ sorted/travel/ --skip-explicitly",
+		Args: byTag.args(minArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req, err := f.request(cmd, a)
 			if err != nil {
 				return err
+			}
+			if byTag.used() {
+				if f.recursive {
+					return usagef("-r cannot be combined with --by-tag or --by-tags")
+				}
+				if len(args) == 0 {
+					return usagef("%s --by-tag needs a destination directory", cmd.CommandPath())
+				}
+				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
+			}
+			if f.keepTree || f.skip || f.skipExplicitly {
+				return usagef("--save-structure, --skip and --skip-explicitly need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -103,6 +125,11 @@ func (a *App) lnCommand() *cobra.Command {
 	// Muscle memory from ln -s: accepted and ignored, every Vela link is symbolic.
 	fl.BoolVarP(&f.symbolic, "symbolic", "s", false, "accepted for compatibility with ln -s; has no effect")
 	_ = fl.MarkHidden("symbolic")
+	fl.BoolVar(&f.keepTree, "save-structure", false, "with --by-tag, keep paths relative to SCOPE instead of linking flat")
+	fl.BoolVar(&f.skip, "skip", false, "with --by-tag, leave conflicting objects out silently and link the rest")
+	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag, leave conflicting objects out, report each, and link the rest")
+	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
+	byTag.register(cmd)
 	return cmd
 }
 
@@ -206,6 +233,81 @@ func (a *App) lnFiles(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReques
 	default:
 		return a.printer.JSONValue(results)
 	}
+}
+
+// lnTagged links the objects of a tag selection into the directory dest. It
+// plans every symlink and checks every destination before creating the
+// first one: a conflict refuses the whole plan unless --skip or
+// --skip-explicitly drops the conflicting entries.
+func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, scopes []string, dest string, byTag *tagFlags) error {
+	filter, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	dest = strings.TrimLeft(dest, "/")
+	if dest != "" && !strings.HasSuffix(dest, "/") {
+		dest += "/"
+	}
+	if dest, err = remotePrefix(dest); err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree)
+	if err == nil {
+		var conflicts []planConflict
+		if conflicts, err = taggedConflicts(ctx, c, plan, f.force, "link", "linked"); err == nil {
+			plan, err = a.resolveLinkConflicts(f, plan, conflicts)
+		}
+	}
+	cancel()
+	if err != nil {
+		return err
+	}
+	if len(plan) == 0 {
+		a.printer.Infof("Nothing to link.")
+		if a.jsonOut && !f.dryRun {
+			return a.printer.JSONValue([]api.Object{})
+		}
+		return nil
+	}
+	pairs := make([][2]string, len(plan))
+	for i, m := range plan {
+		pairs[i] = [2]string{m.From, m.To}
+	}
+	return a.lnFiles(cmd, f, req, pairs)
+}
+
+// resolveLinkConflicts refuses a plan with conflicts, or with --skip and
+// --skip-explicitly returns it without the conflicting entries.
+func (a *App) resolveLinkConflicts(f lnFlags, plan []taggedMove, conflicts []planConflict) ([]taggedMove, error) {
+	if len(conflicts) == 0 {
+		return plan, nil
+	}
+	if !f.skip && !f.skipExplicitly {
+		hint := "use --skip or --skip-explicitly to link the rest"
+		if !f.force {
+			hint += ", -f to replace existing destinations"
+		}
+		return nil, conflictError("nothing linked", conflicts, hint)
+	}
+	drop := make(map[int]bool, len(conflicts))
+	for _, p := range conflicts {
+		drop[p.index] = true
+		if f.skipExplicitly {
+			a.printer.Warnf("skipped %s", p.msg)
+		}
+	}
+	kept := plan[:0:0]
+	for i, m := range plan {
+		if !drop[i] {
+			kept = append(kept, m)
+		}
+	}
+	return kept, nil
 }
 
 func (a *App) lnTree(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, rawSource, rawDest string) error {

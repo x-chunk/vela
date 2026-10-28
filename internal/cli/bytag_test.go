@@ -398,3 +398,48 @@ func TestTrashRestoreByTag(t *testing.T) {
 		t.Errorf("--to with --by-tag: exit %d", r.code)
 	}
 }
+
+func TestLnByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	r := h.ok("ln", "--by-tag", "math", "docs/", "links/", "--save-structure", "--dry-run")
+	if !strings.Contains(r.stdout, "would link links/sub/math2.pdf -> docs/sub/math2.pdf") || exists("links/math.pdf") {
+		t.Fatalf("dry run = %+v", r)
+	}
+
+	// a.txt and other/q1.txt are fine, x/q1.txt collides with other/q1.txt
+	// and dest/a.txt exists: nothing is linked, every conflict is reported.
+	h.seedTagged("dest/a.txt")
+	h.seedTagged("x/q1.txt", "q1")
+	r = h.exec("", "ln", "--by-tag", "q1", "dest/")
+	if r.code != exitConflict || !strings.Contains(r.stderr, "a.txt -> dest/a.txt: the destination exists") ||
+		!strings.Contains(r.stderr, "would both link to dest/q1.txt") || !strings.Contains(r.stderr, "--skip") || exists("dest/q1.txt") {
+		t.Fatalf("conflicts: exit %d, stderr %q", r.code, r.stderr)
+	}
+
+	// --skip links the rest without a word; --skip-explicitly reports. The new
+	// symlinks copy the tag q1, so the second run selects them too.
+	r = h.ok("ln", "--by-tag", "q1", "dest/", "--skip")
+	if strings.Contains(r.stderr, "skipped") || !strings.Contains(r.stdout, "dest/q1.txt -> other/q1.txt") {
+		t.Fatalf("--skip = %+v", r)
+	}
+	r = h.ok("ln", "--by-tag", "q1", "dest2/", "--skip-explicitly", "--json")
+	var objs []api.Object
+	r.json(t, &objs)
+	if len(objs) != 2 || !strings.Contains(r.stderr, "and x/q1.txt would both link to dest2/q1.txt") {
+		t.Fatalf("--skip-explicitly = %+v (%+v)", r, objs)
+	}
+
+	for _, args := range [][]string{
+		{"ln", "--skip", "a.txt", "b.txt"},
+		{"ln", "--by-tag", "q1", "-r", "x/"},
+		{"ln", "--by-tag", "q1", "--skip", "--skip-explicitly", "y/"},
+	} {
+		if r := h.exec("", args...); r.code != exitUsage {
+			t.Errorf("%v: exit %d", args, r.code)
+		}
+	}
+}
