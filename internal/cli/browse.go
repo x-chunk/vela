@@ -35,13 +35,16 @@ func (a *App) lsCommand() *cobra.Command {
 	var recursive, long, broken bool
 	var visibility []string
 	var kind, target string
+	var byTag tagFlags
 	cmd := &cobra.Command{
 		Use:   "ls [DIR/]",
 		Short: "List a directory",
 		Long: "List a directory (the root by default). With -r, list every object below it.\n" +
-			"Naming a file instead of a directory shows that file.",
-		Example: "  vela ls\n  vela ls docs/math/ -l\n  vela ls -r docs/ --visibility private",
-		Args:    rangeArgs(0, 1),
+			"Naming a file instead of a directory shows that file. --by-tag and --by-tags search\n" +
+			"everything below the directory (as -r does) for objects with these tags.",
+		Example: "  vela ls\n  vela ls docs/math/ -l\n  vela ls -r docs/ --visibility private\n" +
+			"  vela ls --by-tag q1 --by-tags 'math draft'",
+		Args: rangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			raw := ""
 			if len(args) == 1 {
@@ -72,6 +75,13 @@ func (a *App) lsCommand() *cobra.Command {
 					return err
 				}
 			}
+			tags, err := byTag.filter()
+			if err != nil {
+				return err
+			}
+			if len(tags) > 0 {
+				recursive = true
+			}
 			c, _, err := a.client()
 			if err != nil {
 				return err
@@ -79,7 +89,7 @@ func (a *App) lsCommand() *cobra.Command {
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
 			l, err := c.ListAll(ctx, client.ListOptions{
-				Prefix: prefix, Recursive: recursive, Visibility: vis, Kind: k, Broken: broken, Target: target, Limit: 1000,
+				Prefix: prefix, Recursive: recursive, Visibility: vis, Kind: k, Broken: broken, Target: target, Tags: tags, Limit: 1000,
 			})
 			if err != nil {
 				return err
@@ -90,7 +100,7 @@ func (a *App) lsCommand() *cobra.Command {
 			// "vela ls docs/a.pdf" names a file: show it rather than an
 			// empty directory.
 			if len(l.Dirs) == 0 && len(l.Objects) == 0 && raw != "" && !strings.HasSuffix(raw, "/") {
-				if o, err := c.Stat(ctx, raw); err == nil {
+				if o, err := c.Stat(ctx, raw); err == nil && tags.Match(o.Tags) {
 					l.Prefix = api.ParentPrefix(o.Path)
 					l.Objects = []api.Object{*o}
 				}
@@ -123,6 +133,7 @@ func (a *App) lsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&kind, "type", "", "only show files or symlinks (file, symlink)")
 	cmd.Flags().BoolVar(&broken, "broken", false, "only show broken symlinks")
 	cmd.Flags().StringVar(&target, "target", "", "only show symlinks to this file")
+	byTag.register(cmd)
 	return cmd
 }
 

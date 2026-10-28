@@ -31,6 +31,8 @@ type harness struct {
 	run func(ctx context.Context, stdin io.Reader, interactive bool, name string, args ...string) error
 	// onRequest, if set, sees every HTTP request the CLI sends.
 	onRequest func(*http.Request)
+	// tty makes stdin a terminal, so that commands ask for confirmation.
+	tty bool
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -83,7 +85,7 @@ func (h *harness) execIn(stdin io.Reader, args ...string) result {
 		Out:           &out,
 		Err:           &errOut,
 		LookupEnv:     func(k string) (string, bool) { v, ok := env[k]; return v, ok },
-		InIsTerminal:  func() bool { return false },
+		InIsTerminal:  func() bool { return h.tty },
 		OutIsTerminal: func() bool { return false },
 		ErrIsTerminal: func() bool { return false },
 		ReadSecret:    func() (string, error) { return "", fmt.Errorf("no terminal") },
@@ -125,6 +127,19 @@ func (h *harness) seed(path, content string, vis api.Visibility) {
 		h.t.Fatal(err)
 	}
 	if _, _, err := c.Upload(context.Background(), path, strings.NewReader(content), client.UploadOptions{Size: int64(len(content)), Visibility: vis}); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// seedTagged uploads a private file with tags.
+func (h *harness) seedTagged(path string, tags ...string) {
+	h.t.Helper()
+	c, err := client.New(h.ts.URL, h.ts.AdminKey)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	opts := client.UploadOptions{Size: int64(len(path)), Tags: tags}
+	if _, _, err := c.Upload(context.Background(), path, strings.NewReader(path), opts); err != nil {
 		h.t.Fatal(err)
 	}
 }
