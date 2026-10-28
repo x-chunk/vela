@@ -340,15 +340,10 @@ func (a *App) metaCommand() *cobra.Command {
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
 			if recursive {
-				var targets []api.Object
-				for _, raw := range args {
-					objs, err := a.resolveTargets(ctx, c, raw, true)
-					if err != nil {
-						return err
-					}
-					targets = append(targets, objs...)
+				targets, err := a.batchTargets(ctx, c, args, true)
+				if err != nil {
+					return err
 				}
-				targets = uniqueObjects(targets)
 				updated, n, err := applyPatches(ctx, c, "metadata change", targets, func(o api.Object) api.ObjectPatch {
 					return dropUnchanged(patchFor(o), o)
 				})
@@ -453,23 +448,31 @@ func (a *App) visCommand() *cobra.Command {
 			}
 			ctx, cancel := a.ctx(cmd)
 			defer cancel()
-			// Resolve every argument before changing anything: a typo must
-			// not leave the command half done or report a hollow success.
-			var targets []api.Object
-			for _, raw := range args[:len(args)-1] {
-				objs, err := a.resolveTargets(ctx, c, raw, recursive)
-				if err != nil {
-					return err
-				}
-				targets = append(targets, objs...)
+			targets, err := a.batchTargets(ctx, c, args[:len(args)-1], recursive)
+			if err != nil {
+				return err
 			}
-			targets = uniqueObjects(targets)
 			return a.applyVisibility(ctx, c, targets, vis)
 		},
 		ValidArgsFunction: a.completeRemote(),
 	}
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "apply to everything below directories")
 	return cmd
+}
+
+// batchTargets resolves every argument of a batch command before anything
+// changes, so that a typo cannot leave the command half done or report a
+// hollow success.
+func (a *App) batchTargets(ctx context.Context, c *client.Client, args []string, recursive bool) ([]api.Object, error) {
+	var targets []api.Object
+	for _, raw := range args {
+		objs, err := a.resolveTargets(ctx, c, raw, recursive)
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, objs...)
+	}
+	return uniqueObjects(targets), nil
 }
 
 // resolveTargets turns a vis argument into objects. With recursive, a path
