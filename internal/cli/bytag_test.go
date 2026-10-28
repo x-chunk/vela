@@ -338,3 +338,33 @@ func TestTrashLsByTag(t *testing.T) {
 		t.Fatalf("trash ls other/ --by-tag = %+v", list.Entries)
 	}
 }
+
+func TestTrashPurgeByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	h.ok("rm", "--by-tag", "math", "--by-tag", "q1", "-y")
+	count := func() int {
+		var list api.TrashList
+		h.ok("trash", "ls", "--json").json(t, &list)
+		return len(list.Entries)
+	}
+
+	if r := h.ok("trash", "purge", "--by-tag", "math", "--dry-run"); len(strings.Split(strings.TrimSpace(r.stdout), "\n")) != 2 || count() != 4 {
+		t.Fatalf("dry run = %q", r.stdout)
+	}
+	if r := h.exec("", "trash", "purge", "--by-tag", "math"); r.code != exitUsage || count() != 4 {
+		t.Fatalf("no terminal: exit %d", r.code)
+	}
+	h.ok("trash", "purge", "--by-tag", "math", "docs/sub/", "-y")
+	if count() != 3 {
+		t.Fatalf("scoped purge left %d entries", count())
+	}
+	if r := h.exec("", "trash", "purge", "--by-tag", "q1", "--older-than", "7d", "-y"); r.code != exitNotFound || count() != 3 {
+		t.Fatalf("--older-than: exit %d, %d entries", r.code, count())
+	}
+	h.ok("trash", "purge", "--by-tag", "q1", "-y")
+	if count() != 1 {
+		t.Fatalf("purge left %d entries", count())
+	}
+}
