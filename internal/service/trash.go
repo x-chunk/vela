@@ -175,13 +175,13 @@ func (s *Service) ListTrash(ctx context.Context, p Principal, tp TrashParams) (a
 	}
 	now := s.now()
 	for _, e := range entries {
-		out.Entries = append(out.Entries, s.trashDTO(e, now))
+		out.Entries = append(out.Entries, s.trashDTO(e, p.Prefix, now))
 	}
 	return out, nil
 }
 
-func (s *Service) trashDTO(e domain.TrashEntry, now time.Time) api.TrashEntry {
-	obj := s.objectDTO(e.Object, now)
+func (s *Service) trashDTO(e domain.TrashEntry, prefix string, now time.Time) api.TrashEntry {
+	obj := s.objectDTO(e.Object, prefix, now)
 	obj.URL = nil // trashed objects are not served
 	return api.TrashEntry{
 		ID:           e.ID,
@@ -251,7 +251,7 @@ func (s *Service) Restore(ctx context.Context, p Principal, id string, req api.R
 	if err != nil {
 		return api.Object{}, err
 	}
-	return s.objectDTO(result, now), nil
+	return s.objectDTO(result, p.Prefix, now), nil
 }
 
 // PurgeTrashEntry permanently deletes one trash entry (admin only).

@@ -86,7 +86,7 @@ func (s *Service) List(ctx context.Context, p Principal, lp ListParams) (api.Lis
 		out.Dirs = []string{}
 	}
 	for _, o := range res.Objects {
-		out.Objects = append(out.Objects, s.objectDTO(o, now))
+		out.Objects = append(out.Objects, s.objectDTO(o, p.Prefix, now))
 	}
 	if res.More {
 		out.NextCursor = encodeCursor(res.Last)
@@ -120,7 +120,7 @@ func (s *Service) Stat(ctx context.Context, p Principal, path string) (api.Objec
 	if err != nil {
 		return api.Object{}, err
 	}
-	return s.ObjectDTO(o), nil
+	return s.objectDTO(o, p.Prefix, s.now()), nil
 }
 
 // Download locates an object's content for an API download. Unlike public
@@ -326,7 +326,7 @@ func (s *Service) Create(ctx context.Context, p Principal, req api.CreateObjectR
 		s.deleteBlob(b.id)
 		return api.Object{}, err
 	}
-	return s.objectDTO(o, now), nil
+	return s.objectDTO(o, p.Prefix, now), nil
 }
 
 // checkFree fails if path is taken by an object or conflicts with one.
@@ -439,7 +439,7 @@ func (s *Service) Upload(ctx context.Context, p Principal, in UploadInput) (api.
 		s.deleteBlob(b.id)
 		return api.Object{}, false, err
 	}
-	return s.objectDTO(result, now), created, nil
+	return s.objectDTO(result, p.Prefix, now), created, nil
 }
 
 // uploadTarget evaluates the upload preconditions and returns the object to
@@ -592,7 +592,7 @@ func (s *Service) Patch(ctx context.Context, p Principal, rawPath string, patch 
 		if err != nil {
 			return api.Object{}, err
 		}
-		return s.objectDTO(result, now), nil
+		return s.objectDTO(result, p.Prefix, now), nil
 	}
 }
 

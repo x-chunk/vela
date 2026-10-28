@@ -153,12 +153,9 @@ func (s *Service) Health(ctx context.Context) error {
 	return s.blobs.Check(ctx)
 }
 
-// ObjectDTO converts an object to its API representation.
-func (s *Service) ObjectDTO(o domain.Object) api.Object {
-	return s.objectDTO(o, s.now())
-}
-
-func (s *Service) objectDTO(o domain.Object, now time.Time) api.Object {
+// objectDTO converts an object to its API representation for a key with
+// prefix; see symlinkTargetDTO for what a prefix hides.
+func (s *Service) objectDTO(o domain.Object, prefix string, now time.Time) api.Object {
 	dto := api.Object{
 		ID:                  o.ID,
 		Path:                o.Path,
@@ -185,7 +182,16 @@ func (s *Service) objectDTO(o domain.Object, now time.Time) api.Object {
 		t := o.ExpiresAt.UTC().Truncate(time.Second)
 		dto.ExpiresAt = &t
 	}
-	if o.Visibility != api.Private {
+	if o.IsSymlink() {
+		dto.Kind = api.KindSymlink
+		dto.EffectiveVisibility = o.EffectiveVisibility()
+		dto.Target = symlinkTargetDTO(o, prefix, now)
+		if dto.Target.State != api.TargetOK {
+			// Content fields describe the target, which this key cannot see.
+			dto.Size, dto.SHA256, dto.ContentType = 0, "", ""
+		}
+	}
+	if dto.EffectiveVisibility != api.Private {
 		u := api.PublicURL(s.opts.PublicURL, o.Path)
 		dto.URL = &u
 	}
