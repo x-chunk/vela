@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -149,6 +150,60 @@ func TestVisTargets(t *testing.T) {
 	h.ok("vis", "-r", "dir/", "dir/sub/", "dir", "file.txt", "private", "--json").json(t, &objs)
 	if len(objs) != 3 {
 		t.Fatalf("nested and mixed targets = %d objects", len(objs))
+	}
+}
+
+// TestMetaRecursive covers meta -r: per-object tag edits, mixed and nested
+// targets, symlinks, refused flags, and objects that already match.
+func TestMetaRecursive(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.seed("file.txt", "x", api.Public)
+	h.seed("dir/a.txt", "a", api.Public)
+	h.seed("dir/sub/b.txt", "b", api.Public)
+	h.ok("meta", "dir/a.txt", "--tag", "keep", "--tag", "old")
+	h.ok("ln", "file.txt", "dir/link.txt")
+	stat := func(p string) api.Object {
+		var o api.Object
+		h.ok("stat", p, "--json").json(t, &o)
+		return o
+	}
+
+	var objs []api.Object
+	h.ok("meta", "-r", "dir/", "dir/sub/", "file.txt", "--tag", "new", "--untag", "old",
+		"--disposition", "attachment", "--json").json(t, &objs)
+	if len(objs) != 4 {
+		t.Fatalf("meta -r changed %d objects, want 4", len(objs))
+	}
+	if got := stat("dir/a.txt").Tags; !slices.Equal(got, []string{"keep", "new"}) {
+		t.Fatalf("tags of dir/a.txt = %v", got)
+	}
+	for _, p := range []string{"file.txt", "dir/sub/b.txt", "dir/link.txt"} {
+		if o := stat(p); !slices.Equal(o.Tags, []string{"new"}) || o.Disposition != api.Attachment {
+			t.Fatalf("%s = %v %s", p, o.Tags, o.Disposition)
+		}
+	}
+
+	rev := stat("file.txt").Revision
+	r := h.ok("meta", "-r", "dir", "file.txt", "--tag", "new")
+	if !strings.Contains(r.stdout, "4 object(s) checked (0 changed)") || stat("file.txt").Revision != rev {
+		t.Fatalf("a no-op batch must not patch: %q", r.stdout)
+	}
+
+	for _, args := range [][]string{
+		{"meta", "-r", "dir/", "--title", "x"},
+		{"meta", "-r", "dir/", "--content-type", "text/plain"},
+		{"meta", "-r", "dir/"},
+		{"meta", "file.txt", "dir/a.txt", "--tag", "x"},
+		{"meta", "dir/", "--tag", "x"},
+	} {
+		if r := h.exec("", args...); r.code != exitUsage {
+			t.Errorf("%v = %+v", args, r)
+		}
+	}
+	if r := h.exec("", "meta", "-r", "dir/", "missing/", "--tag", "x"); r.code != exitNotFound ||
+		slices.Contains(stat("dir/a.txt").Tags, "x") {
+		t.Fatalf("a missing target must stop the command before any change: %+v", r)
 	}
 }
 

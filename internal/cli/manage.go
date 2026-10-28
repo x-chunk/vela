@@ -250,54 +250,57 @@ func (a *App) metaCommand() *cobra.Command {
 	var (
 		title, description, contentType, disposition, expires string
 		tags, untags                                          []string
+		recursive                                             bool
 	)
 	cmd := &cobra.Command{
-		Use:   "meta PATH [flags]",
+		Use:   "meta PATH... [flags]",
 		Short: "Show or change metadata",
 		Long: "Without flags, show the metadata of a file. With flags, change it. The change is applied\n" +
-			"only if nobody modified the file in between (optimistic locking on the revision).",
+			"only if nobody modified the file in between (optimistic locking on the revision).\n\n" +
+			"With -r, change files and everything below directories (they may be mixed, as with vis).\n" +
+			"Tags are added and removed per object; --title and --content-type are refused, because one\n" +
+			"value is almost never right for many files. Objects that already match are left alone.",
 		Example: "  vela meta report.pdf\n  vela meta report.pdf --title 'Q1 report' --tag q1 --untag draft\n" +
-			"  vela meta report.pdf --expires 7d\n  vela meta report.pdf --expires none --disposition attachment",
-		Args:              exactArgs(1),
+			"  vela meta report.pdf --expires 7d\n  vela meta report.pdf --expires none --disposition attachment\n" +
+			"  vela meta -r photos/2026/ --tag trip --untag inbox",
+		Args:              minArgs(1),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := remotePath(args[0])
-			if err != nil {
-				return err
-			}
-			c, _, err := a.client()
-			if err != nil {
-				return err
-			}
-			ctx, cancel := a.ctx(cmd)
-			defer cancel()
-			cur, err := c.Stat(ctx, path)
-			if err != nil {
-				return a.notFoundHint(ctx, c, err, path)
-			}
 			changed := cmd.Flags().Changed
-			var patch api.ObjectPatch
+			if !recursive && len(args) != 1 {
+				return usagef("meta takes one path (use -r for several)")
+			}
+			if recursive {
+				for _, name := range []string{"title", "content-type"} {
+					if changed(name) {
+						return usagef("--%s cannot be used with -r", name)
+					}
+				}
+			}
+			// Validate every flag before any request, so that a typo never
+			// leaves a batch half applied.
+			var base api.ObjectPatch
 			if changed("title") {
 				if err := api.ValidateTitle(title); err != nil {
 					return usageError(err)
 				}
-				patch.Title = api.Some(title)
+				base.Title = api.Some(title)
 			}
 			if changed("description") {
 				if err := api.ValidateDescription(description); err != nil {
 					return usageError(err)
 				}
-				patch.Description = api.Some(description)
+				base.Description = api.Some(description)
 			}
 			if changed("content-type") {
-				patch.ContentType = api.Some(contentType)
+				base.ContentType = api.Some(contentType)
 			}
 			if changed("disposition") {
 				d, err := api.ParseDisposition(disposition)
 				if err != nil {
 					return usageError(err)
 				}
-				patch.Disposition = api.Some(d)
+				base.Disposition = api.Some(d)
 			}
 			if changed("expires") {
 				t, err := api.ParseExpiry(expires, a.Now())
@@ -305,30 +308,69 @@ func (a *App) metaCommand() *cobra.Command {
 					return usageError(err)
 				}
 				if t == nil {
-					patch.ExpiresAt = api.Null[time.Time]()
+					base.ExpiresAt = api.Null[time.Time]()
 				} else {
-					patch.ExpiresAt = api.Some(*t)
+					base.ExpiresAt = api.Some(*t)
 				}
 			}
-			if len(tags) > 0 || len(untags) > 0 {
-				add, err := api.NormalizeTags(tags)
-				if err != nil {
-					return usageError(err)
+			add, err := api.NormalizeTags(tags)
+			if err != nil {
+				return usageError(err)
+			}
+			remove, err := api.NormalizeTags(untags)
+			if err != nil {
+				return usageError(err)
+			}
+			editTags := len(tags) > 0 || len(untags) > 0
+			if recursive && base.IsEmpty() && !editTags {
+				return usagef("meta -r needs at least one change (use ls -l -r to show metadata)")
+			}
+			patchFor := func(cur api.Object) api.ObjectPatch {
+				patch := base
+				if editTags {
+					patch.Tags = api.Some(applyTags(cur.Tags, add, remove))
 				}
-				remove, err := api.NormalizeTags(untags)
-				if err != nil {
-					return usageError(err)
-				}
-				// Add first, then remove, so that --untag wins over --tag.
-				next := slices.Clone(cur.Tags)
-				for _, t := range add {
-					if !slices.Contains(next, t) {
-						next = append(next, t)
+				return patch
+			}
+
+			c, _, err := a.client()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := a.ctx(cmd)
+			defer cancel()
+			if recursive {
+				var targets []api.Object
+				for _, raw := range args {
+					objs, err := a.resolveTargets(ctx, c, raw, true)
+					if err != nil {
+						return err
 					}
+					targets = append(targets, objs...)
 				}
-				next = slices.DeleteFunc(next, func(t string) bool { return slices.Contains(remove, t) })
-				patch.Tags = api.Some(next)
+				targets = uniqueObjects(targets)
+				updated, n, err := applyPatches(ctx, c, "metadata change", targets, func(o api.Object) api.ObjectPatch {
+					return dropUnchanged(patchFor(o), o)
+				})
+				if err != nil {
+					return err
+				}
+				if a.jsonOut {
+					return a.printer.JSONValue(updated)
+				}
+				a.printer.Printf("%d object(s) checked (%d changed)\n", len(targets), n)
+				return nil
 			}
+
+			path, err := remotePath(args[0])
+			if err != nil {
+				return err
+			}
+			cur, err := c.Stat(ctx, path)
+			if err != nil {
+				return a.notFoundHint(ctx, c, err, path)
+			}
+			patch := patchFor(*cur)
 			if patch.IsEmpty() {
 				if a.jsonOut {
 					return a.printer.JSONValue(cur)
@@ -355,7 +397,39 @@ func (a *App) metaCommand() *cobra.Command {
 	f.StringVar(&contentType, "content-type", "", "set the MIME type")
 	f.StringVar(&disposition, "disposition", "", "inline or attachment")
 	f.StringVar(&expires, "expires", "", "expire after a duration (7d), at an RFC 3339 time, or none")
+	f.BoolVarP(&recursive, "recursive", "r", false, "apply to several paths and everything below directories")
 	return cmd
+}
+
+// applyTags adds and then removes tags, so that --untag wins over --tag.
+func applyTags(cur, add, remove []string) []string {
+	next := slices.Clone(cur)
+	for _, t := range add {
+		if !slices.Contains(next, t) {
+			next = append(next, t)
+		}
+	}
+	return slices.DeleteFunc(next, func(t string) bool { return slices.Contains(remove, t) })
+}
+
+// dropUnchanged clears the fields of patch that o already has, so that a
+// batch does not bump revisions of objects it would not change.
+func dropUnchanged(patch api.ObjectPatch, o api.Object) api.ObjectPatch {
+	if patch.Description.HasValue() && patch.Description.Value == o.Description {
+		patch.Description = api.Optional[string]{}
+	}
+	if patch.Disposition.HasValue() && patch.Disposition.Value == o.Disposition {
+		patch.Disposition = api.Optional[api.Disposition]{}
+	}
+	if patch.Tags.HasValue() && slices.Equal(patch.Tags.Value, o.Tags) {
+		patch.Tags = api.Optional[[]string]{}
+	}
+	switch {
+	case patch.ExpiresAt.Null && o.ExpiresAt == nil,
+		patch.ExpiresAt.HasValue() && o.ExpiresAt != nil && patch.ExpiresAt.Value.Equal(*o.ExpiresAt):
+		patch.ExpiresAt = api.Optional[time.Time]{}
+	}
+	return patch
 }
 
 func (a *App) visCommand() *cobra.Command {
