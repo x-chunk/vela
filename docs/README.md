@@ -25,6 +25,7 @@ extension and its implementation decisions. Read those decisions alongside the
 original text: some initial proposals were deliberately superseded.
 [SPEC-dirs.md](SPEC-dirs.md) describes directory policies and accepted compatibility
 decisions. [SPEC-web.md](SPEC-web.md) describes the optional read-only web sign-in.
+[SPEC-symlinks.md](SPEC-symlinks.md) describes symlinks to files by ID.
 [OSS-AUDIT.md](OSS-AUDIT.md) is a dated preparation report, not a current release
 or deployment status page. Release changes belong in [CHANGELOG.md](../CHANGELOG.md).
 

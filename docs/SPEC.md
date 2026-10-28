@@ -468,6 +468,8 @@ https://store.example.com/s/{linkID}/{filename}?exp={unix_seconds}&sig={signatur
 CLI вызывает его в `vela login`, `vela whoami`, `vela version` и при несовместимости `api_version` выдаёт понятную ошибку.
 
 #### `GET /api/v1/objects` — листинг
+Симлинки (`kind`, `target`, `POST /api/v1/symlinks`, фильтры `kind`/`broken`/`target`) — см. [SPEC-symlinks.md](SPEC-symlinks.md) §4.
+
 Query: `prefix` (директория, с завершающим `/` или пустой для корня), `recursive` (bool, default false), `visibility` (фильтр, можно несколько через запятую), `limit` (1–1000, default 200), `cursor` (непрозрачный).
 
 ```json
@@ -679,6 +681,7 @@ key = "vela_..."
 | `vela links revoke <id>...` | отзыв |
 | `vela url <path>` | напечатать публичный URL (для private — ошибка с подсказкой про `share`) |
 | `vela open <path>` | открыть публичный URL в браузере (`xdg-open`/`open`/`start`) |
+| `vela ln <src>... <dst> [-r] [-f]` | символическая ссылка на файл по ID объекта, см. [SPEC-symlinks.md](SPEC-symlinks.md) §8 |
 | `vela completion bash\|zsh\|fish` | автодополнение; **удалённые пути дополняются динамически** через `ls` (с таймаутом ~1.5s, при ошибке — без подсказок, без шума в терминале) |
 
 ### 12.4 `vela put` — подробно
@@ -764,6 +767,8 @@ velad migrate                  # run migrations explicitly (serve also runs them
 - Panic recovery middleware → 500 + лог со стеком.
 
 ### 13.1 Схема БД (ориентир, финальная — на усмотрение реализации)
+
+Колонки `kind` и `target_id` у `objects` и `trash` — см. [SPEC-symlinks.md](SPEC-symlinks.md) §7.
 
 ```sql
 CREATE TABLE objects (
@@ -1115,3 +1120,4 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 | 2026-10-12 | §12.3; SPEC-dirs §11 | Existing CLI long listings and directory URL/open commands detect a missing /dirs collection and retain legacy behavior with older API v1 servers. Individual 404s, authorization/transport errors, and supported-server disabled indexes do not bypass policy resolution. R-004. | Additive endpoints must not force synchronized CLI/server upgrades. |
 | 2026-10-18 | §1, §7.3–7.6, §11; SPEC-web | Optional read-only web sign-in (`VELA_WEB_AUTH`, default off). An API key is accepted once in the body of a same-origin `POST /_vela/login` and exchanged for a cookie with a random session ID whose SHA-256 is stored; the key is re-read on every request. Sessions see the anonymous view plus their key's prefix, get `private, no-store` responses, and public responses vary by `Cookie`. Failed sign-ins have a separate budget of 5 per minute per IP. `velad session revoke-all` ends every session. | Owner browsing of private and hidden content without a new credential type; decisions in SPEC-web. |
 | 2026-10-18 | §11.3, §19.8; SPEC-web | While web sign-in is enabled, uploads other than raster images, audio, video, PDF and plain text (HTML, SVG and any XML included) are served with a CSP sandbox in every delivery mode; accel carries it and `Vary` as `X-Vela-*` headers. | §19.8 relied on an origin without cookies; with a session cookie an uploaded page could read and leak private files. |
+| 2026-10-28 | §10.2, §10.3, §10.4, §12.3, §13.1; SPEC-symlinks | New object kind `symlink` that points to a file by ID, not by path (unlike POSIX symlinks, renames do not break it). Effective visibility is the stricter of the symlink and its target; prefixes are checked for both paths. Broken symlinks list with `size = 0`, `sha256 = ""`, `content_type = ""`. New endpoint `POST /api/v1/symlinks`, listing filters, `symlinks_affected`, `features`, and error code `is_symlink` (409) for writing content through a symlink. | Sort originals into several places without copying content; all changes are additive to API v1. |
