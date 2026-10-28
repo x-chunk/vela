@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -73,5 +75,39 @@ func TestStatAndURLByTag(t *testing.T) {
 	}
 	if r := h.exec("", "url", "--by-tag", "q1"); r.code != exitError {
 		t.Errorf("url of private selection: exit %d", r.code)
+	}
+}
+
+func TestOpenByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	h.ok("vis", "docs/math.pdf", "docs/sub/math2.pdf", "public")
+	var opened []string
+	h.run = func(_ context.Context, _ io.Reader, _ bool, _ string, args ...string) error {
+		opened = append(opened, args[len(args)-1])
+		return nil
+	}
+
+	if r := h.ok("open", "--by-tag", "math", "--dry-run"); len(strings.Fields(r.stdout)) != 2 || len(opened) != 0 {
+		t.Fatalf("dry run: stdout %q, opened %v", r.stdout, opened)
+	}
+	if r := h.exec("", "open", "--by-tag", "math"); r.code != exitUsage || len(opened) != 0 {
+		t.Fatalf("no terminal: exit %d, opened %v", r.code, opened)
+	}
+	h.tty = true
+	r := h.exec("n\n", "open", "--by-tag", "math")
+	if r.code != exitError || len(opened) != 0 || !strings.Contains(r.stderr, "Open 2 browser tab(s)? [y/N]") ||
+		!strings.Contains(r.stderr, "/docs/sub/math2.pdf") {
+		t.Fatalf("declined: exit %d, opened %v, stderr %q", r.code, opened, r.stderr)
+	}
+	if r := h.exec("y\n", "open", "--by-tag", "math"); r.code != 0 || len(opened) != 2 {
+		t.Fatalf("accepted: exit %d, opened %v, stderr %q", r.code, opened, r.stderr)
+	}
+	h.tty = false
+	opened = nil
+	h.ok("open", "--by-tags", "math draft", "-y")
+	if len(opened) != 1 || !strings.HasSuffix(opened[0], "/docs/math.pdf") {
+		t.Fatalf("-y opened %v", opened)
 	}
 }

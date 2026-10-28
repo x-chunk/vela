@@ -10,6 +10,7 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/client"
+	"go.xchunk.org/vela/internal/cli/output"
 )
 
 // tagFlags are --by-tag and --by-tags, which select objects by their tags
@@ -107,4 +108,37 @@ func (t *tagFlags) args(normal cobra.PositionalArgs) cobra.PositionalArgs {
 		}
 		return normal(cmd, args)
 	}
+}
+
+// confirmPlan shows what a command is about to do to a tag selection and
+// asks once, because a tag can reach files the user did not think of. The
+// preview goes to stderr, so that stdout keeps the command's result. With
+// dryRun it prints the plan as the result instead (plan with --json) and
+// reports that nothing should be done.
+func (a *App) confirmPlan(lines []string, plan any, question string, yes, dryRun bool) (bool, error) {
+	if dryRun {
+		if a.jsonOut {
+			return false, a.printer.JSONValue(plan)
+		}
+		for _, l := range lines {
+			a.printer.Println(l)
+		}
+		return false, nil
+	}
+	if !yes && a.InIsTerminal() {
+		for _, l := range lines {
+			_, _ = fmt.Fprintln(a.Err, "  "+output.Clean(l))
+		}
+	}
+	return true, a.confirm(question, yes)
+}
+
+// confirmFlags are -y and --dry-run of commands that act on a tag selection.
+type confirmFlags struct {
+	yes, dryRun bool
+}
+
+func (c *confirmFlags) register(cmd *cobra.Command, yesUsage string) {
+	cmd.Flags().BoolVarP(&c.yes, "yes", "y", false, yesUsage)
+	cmd.Flags().BoolVar(&c.dryRun, "dry-run", false, "with --by-tag, only show what would be done")
 }

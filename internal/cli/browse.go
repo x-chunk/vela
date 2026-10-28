@@ -445,12 +445,22 @@ func (a *App) publicURL(cmd *cobra.Command, raw string) (string, error) {
 }
 
 func (a *App) openCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:               "open PATH",
-		Short:             "Open the public URL of an object or directory in a browser",
-		Args:              exactArgs(1),
+	var byTag tagFlags
+	var conf confirmFlags
+	cmd := &cobra.Command{
+		Use:   "open PATH",
+		Short: "Open the public URL of an object or directory in a browser",
+		Long: "Open the public URL of an object or directory index in a browser. With --by-tag or\n" +
+			"--by-tags, open one tab per object with these tags below the given paths (everything\n" +
+			"by default); private objects are skipped. It shows the URLs and asks before opening\n" +
+			"them unless -y is given.",
+		Example:           "  vela open docs/a.pdf\n  vela open --by-tag slides --dry-run",
+		Args:              byTag.args(exactArgs(1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				return a.openTagged(cmd, args, &byTag, conf)
+			}
 			u, err := a.publicURL(cmd, args[0])
 			if err != nil {
 				return err
@@ -466,6 +476,35 @@ func (a *App) openCommand() *cobra.Command {
 			return nil
 		},
 	}
+	byTag.register(cmd)
+	conf.register(cmd, "open the tabs without asking")
+	return cmd
+}
+
+func (a *App) openTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags, conf confirmFlags) error {
+	urls, err := a.taggedURLs(cmd, scopes, byTag)
+	if err != nil {
+		return err
+	}
+	lines := make([]string, len(urls))
+	for i, u := range urls {
+		lines[i] = u.URL
+	}
+	ok, err := a.confirmPlan(lines, urls, fmt.Sprintf("Open %d browser tab(s)?", len(urls)), conf.yes, conf.dryRun)
+	if err != nil || !ok {
+		return err
+	}
+	for _, u := range urls {
+		name, openArgs := browserCommand(u.URL)
+		if err := a.Run(cmd.Context(), nil, false, name, openArgs...); err != nil {
+			return fmt.Errorf("open a browser with %s: %w (the URL is %s)", name, err, u.URL)
+		}
+		a.printer.Infof("Opened %s", u.URL)
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(urls)
+	}
+	return nil
 }
 
 func browserCommand(u string) (string, []string) {
