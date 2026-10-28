@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -566,5 +567,37 @@ func TestLnByTagPruneMovedOut(t *testing.T) {
 	if !strings.Contains(r.stdout, "Moved L/math.pdf to the trash (the file moved out of scope)") ||
 		exists("L/math.pdf") || !exists("L/own.pdf") || !exists("L/math2.pdf") {
 		t.Fatalf("moved out = %+v", r)
+	}
+}
+
+func TestLnByTagSyncCopyMeta(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "-y")
+	var before api.Object
+	h.ok("stat", "--json", "L/math.pdf").json(t, &before)
+	h.ok("meta", "docs/math.pdf", "--title", "Math", "--tag", "exam")
+
+	r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta", "--dry-run")
+	if got := strings.TrimSpace(r.stdout); got != "~ L/math.pdf (title, tags)" {
+		t.Fatalf("plan = %q", got)
+	}
+	if r := h.exec("", "ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta"); r.code != exitUsage {
+		t.Fatalf("no terminal: exit %d", r.code)
+	}
+	var res struct {
+		Updated []api.Object `json:"updated"`
+	}
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta", "-y", "--json").json(t, &res)
+	if len(res.Updated) != 1 {
+		t.Fatalf("updated = %+v", res)
+	}
+	if u := res.Updated[0]; u.ID != before.ID || u.Title != "Math" || !slices.Contains(u.Tags, "exam") {
+		t.Errorf("symlink after update = %+v", u)
+	}
+	if r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta", "-y"); !strings.Contains(r.stderr, "Nothing to do") {
+		t.Errorf("second run = %+v", r)
 	}
 }

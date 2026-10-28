@@ -114,6 +114,8 @@ type taggedMove struct {
 	To   string `json:"to"`
 	// id is the object's ID, for plans that compare it with symlink targets.
 	id string
+	// obj is the object itself, for plans that compare its metadata.
+	obj api.Object
 }
 
 // mvTagged moves the objects of a tag selection into the directory dest. It
@@ -213,7 +215,7 @@ func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []st
 				return nil, err
 			}
 			if to != o.Path {
-				moves = append(moves, taggedMove{From: o.Path, To: to, id: o.ID})
+				moves = append(moves, taggedMove{From: o.Path, To: to, id: o.ID, obj: o})
 			}
 		}
 	}

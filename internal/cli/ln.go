@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -67,7 +68,10 @@ func (a *App) lnCommand() *cobra.Command {
 			"Symlinks to files outside SCOPE are kept, unless the file still has the tags: then it\n" +
 			"was most likely moved out of SCOPE, and its symlink is pruned too. Files are never\n" +
 			"touched. A new symlink may take the place of a pruned one, with a warning; --strict\n" +
-			"refuses that as a conflict instead.",
+			"refuses that as a conflict instead. --sync --copy-meta copies the metadata of each\n" +
+			"selected file again to its symlinks in DEST whose title, description, tags,\n" +
+			"disposition or visibility differ, in place: their URLs and signed links keep working,\n" +
+			"and changes made to the symlinks themselves are overwritten.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
@@ -134,7 +138,7 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVarP(&f.recursive, "recursive", "r", false, "link every file under a directory")
 	fl.BoolVarP(&f.force, "force", "f", false, "replace existing destinations (retarget symlinks, trash files)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "show what would be linked without changing anything")
-	fl.BoolVar(&f.copyMeta, "copy-meta", false, "copy the source's metadata again when retargeting with -f")
+	fl.BoolVar(&f.copyMeta, "copy-meta", false, "copy the source's metadata again when retargeting with -f (with --sync: to every symlink)")
 	fl.BoolVar(&f.noCopyMeta, "no-copy-meta", false, "do not copy the source's metadata to new symlinks")
 	cmd.MarkFlagsMutuallyExclusive("copy-meta", "no-copy-meta")
 	fl.BoolVar(&f.public, "public", false, "listed in the index and served by URL")
@@ -293,11 +297,15 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree, keep)
 	upToDate := 0
 	var prune []linkPrune
+	var updates []linkUpdate
 	if err == nil && f.sync {
 		var l *api.Listing
 		if l, err = c.ListAll(ctx, client.ListOptions{Prefix: dest, Recursive: true, Limit: 1000}); err != nil {
 			err = fmt.Errorf("list %s: %w", dest, err)
 		} else {
+			if f.copyMeta {
+				updates = metaUpdates(l.Objects, plan, allMetaFields)
+			}
 			if f.prune {
 				prune = pruneLinks(l.Objects, plan, scopes, f.pruneTrashed)
 				var moved []linkPrune
@@ -324,8 +332,8 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 	if f.sync && upToDate > 0 {
 		a.printer.Infof("%d symlink(s) up to date.", upToDate)
 	}
-	if f.prune {
-		return a.lnSyncPrune(cmd, f, req, plan, prune)
+	if f.prune || f.sync && f.copyMeta {
+		return a.lnSyncApply(cmd, f, req, plan, prune, updates)
 	}
 	if len(plan) == 0 {
 		a.printer.Infof("Nothing to link.")
@@ -486,25 +494,95 @@ func inScopes(p string, scopes []string) bool {
 	return false
 }
 
-// lnSyncResult is the --json result of ln --sync --prune.
+// metaField is one piece of metadata that ln --sync --copy-meta compares
+// and copies.
+type metaField struct {
+	name string
+	same func(link, file *api.Object) bool
+	set  func(r *api.CreateSymlinkRequest, file *api.Object)
+}
+
+// allMetaFields are the fields a new symlink copies from its file (D3).
+var allMetaFields = []metaField{
+	{"title", func(l, o *api.Object) bool { return l.Title == o.Title },
+		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Title = ptrTo(o.Title) }},
+	{"description", func(l, o *api.Object) bool { return l.Description == o.Description },
+		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Description = ptrTo(o.Description) }},
+	{"tags", func(l, o *api.Object) bool { return slices.Equal(l.Tags, o.Tags) },
+		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Tags = ptrTo(slices.Clone(o.Tags)) }},
+	{"disposition", func(l, o *api.Object) bool { return l.Disposition == o.Disposition },
+		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Disposition = ptrTo(o.Disposition) }},
+	{"visibility", func(l, o *api.Object) bool { return l.Visibility == o.Visibility },
+		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Visibility = ptrTo(o.Visibility) }},
+}
+
+// linkUpdate is a symlink whose metadata ln --sync --copy-meta copies
+// again from its file.
+type linkUpdate struct {
+	Path   string   `json:"path"`
+	Source string   `json:"source"`
+	Fields []string `json:"fields"`
+	req    api.CreateSymlinkRequest
+}
+
+// metaUpdates returns the symlinks among existing that point at a file of
+// plan and differ from it in any of fields. Each update retargets the
+// symlink in place to the same file with those fields set explicitly, so
+// the server keeps its ID and nothing else changes.
+func metaUpdates(existing []api.Object, plan []taggedMove, fields []metaField) []linkUpdate {
+	files := make(map[string]*api.Object, len(plan))
+	for i := range plan {
+		files[plan[i].id] = &plan[i].obj
+	}
+	var out []linkUpdate
+	for i := range existing {
+		l := &existing[i]
+		if l.Kind != api.KindSymlink || l.Target == nil || l.Target.State != api.TargetOK {
+			continue
+		}
+		file, ok := files[l.Target.ID]
+		if !ok {
+			continue
+		}
+		u := linkUpdate{Path: l.Path, Source: file.Path,
+			req: api.CreateSymlinkRequest{Source: file.Path, Path: l.Path, Overwrite: true, CopyMeta: ptrTo(false)}}
+		for _, fl := range fields {
+			if !fl.same(l, file) {
+				u.Fields = append(u.Fields, fl.name)
+				fl.set(&u.req, file)
+			}
+		}
+		if len(u.Fields) > 0 {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// lnSyncResult is the --json result of ln --sync with --prune or
+// --copy-meta.
 type lnSyncResult struct {
 	Created []*api.Object `json:"created"`
+	Updated []*api.Object `json:"updated"`
 	Pruned  []string      `json:"pruned"`
 }
 
-// lnSyncPlan is the --dry-run --json plan of ln --sync --prune.
+// lnSyncPlan is the --dry-run --json plan of ln --sync with --prune or
+// --copy-meta.
 type lnSyncPlan struct {
 	Create []taggedMove `json:"create"`
+	Update []linkUpdate `json:"update"`
 	Prune  []linkPrune  `json:"prune"`
 }
 
-// lnSyncPrune confirms and carries out a synchronization with pruning:
-// stale symlinks go to the trash first, then the missing ones are created.
-func (a *App) lnSyncPrune(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, plan []taggedMove, prune []linkPrune) error {
-	if len(plan) == 0 && len(prune) == 0 {
+// lnSyncApply confirms and carries out a synchronization with pruning or
+// metadata updates: stale symlinks go to the trash first, then the missing
+// ones are created and the others updated.
+func (a *App) lnSyncApply(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, plan []taggedMove, prune []linkPrune, updates []linkUpdate) error {
+	if len(plan) == 0 && len(prune) == 0 && len(updates) == 0 {
 		a.printer.Infof("Nothing to do.")
 		if a.jsonOut && !f.dryRun {
-			return a.printer.JSONValue(lnSyncResult{Created: []*api.Object{}, Pruned: []string{}})
+			return a.printer.JSONValue(lnSyncResult{Created: []*api.Object{}, Updated: []*api.Object{}, Pruned: []string{}})
 		}
 		return nil
 	}
@@ -512,11 +590,14 @@ func (a *App) lnSyncPrune(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRe
 	for _, m := range plan {
 		lines = append(lines, "+ "+m.To+" -> "+m.From)
 	}
+	for _, u := range updates {
+		lines = append(lines, "~ "+u.Path+" ("+strings.Join(u.Fields, ", ")+")")
+	}
 	for _, p := range prune {
 		lines = append(lines, "- "+p.Path+" ("+p.Reason+")")
 	}
-	q := fmt.Sprintf("Create %d symlink(s) and move %d to the trash?", len(plan), len(prune))
-	if ok, err := a.confirmPlan(lines, lnSyncPlan{Create: nonNil(plan), Prune: nonNil(prune)}, q, f.yes, f.dryRun); err != nil || !ok {
+	q := fmt.Sprintf("Create %d symlink(s), update %d and move %d to the trash?", len(plan), len(updates), len(prune))
+	if ok, err := a.confirmPlan(lines, lnSyncPlan{Create: nonNil(plan), Update: nonNil(updates), Prune: nonNil(prune)}, q, f.yes, f.dryRun); err != nil || !ok {
 		return err
 	}
 	c, _, err := a.client()
@@ -525,7 +606,7 @@ func (a *App) lnSyncPrune(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRe
 	}
 	ctx, cancel := a.ctx(cmd)
 	defer cancel()
-	res := lnSyncResult{Created: []*api.Object{}, Pruned: []string{}}
+	res := lnSyncResult{Created: []*api.Object{}, Updated: []*api.Object{}, Pruned: []string{}}
 	var errs []error
 	var paths []string
 	for _, p := range prune {
@@ -550,6 +631,18 @@ func (a *App) lnSyncPrune(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRe
 		}
 		res.Created = append(res.Created, o)
 		a.printSymlink(o)
+	}
+	for _, u := range updates {
+		o, _, err := c.CreateSymlink(ctx, u.req)
+		if err != nil {
+			err = fmt.Errorf("%s: %w", u.Path, a.symlinkError(ctx, c, err, u.Source))
+		}
+		errs, paths = append(errs, err), append(paths, u.Path)
+		if err != nil {
+			continue
+		}
+		res.Updated = append(res.Updated, o)
+		a.printer.Printf("Updated %s (%s)\n", u.Path, strings.Join(u.Fields, ", "))
 	}
 	if err := batchResult("sync", len(errs), errs, paths); err != nil {
 		return err
