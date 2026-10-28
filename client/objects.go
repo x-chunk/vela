@@ -21,9 +21,16 @@ func escape(p string) string { return api.EscapePath(strings.TrimLeft(p, "/")) }
 // ListOptions are the parameters of List.
 type ListOptions struct {
 	// Prefix is the directory to list; "" is the root.
-	Prefix     string
-	Recursive  bool
+	Prefix    string
+	Recursive bool
+	// Visibility filters by effective visibility.
 	Visibility []api.Visibility
+	// Kind selects files or symlinks; "" selects both.
+	Kind api.ObjectKind
+	// Broken selects only symlinks whose target is not live.
+	Broken bool
+	// Target selects only symlinks that refer to the object at this path.
+	Target string
 	// Limit is the page size (server default 200, maximum 1000).
 	Limit  int
 	Cursor string
@@ -43,6 +50,15 @@ func (o ListOptions) query() url.Values {
 			vs[i] = string(v)
 		}
 		q.Set("visibility", strings.Join(vs, ","))
+	}
+	if o.Kind != "" {
+		q.Set("kind", string(o.Kind))
+	}
+	if o.Broken {
+		q.Set("broken", "true")
+	}
+	if o.Target != "" {
+		q.Set("target", strings.TrimLeft(o.Target, "/"))
 	}
 	if o.Limit > 0 {
 		q.Set("limit", strconv.Itoa(o.Limit))
