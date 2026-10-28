@@ -654,3 +654,15 @@ func TestCreateSymlinkTree(t *testing.T) {
 		t.Errorf("prefixed tree = %+v, %v", res, err)
 	}
 }
+
+func TestSymlinkIndexFlags(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("orig/a.txt", "a", api.Public)
+	e.ln(e.admin, "orig/a.txt", "pub/a.txt")
+	viewer := e.principal(api.ScopeRO, "")
+	listing, err := e.svc.IndexFor(e.ctx, "pub/", &viewer)
+	if err != nil || len(listing.Files) != 1 || !listing.Files[0].IsSymlink() {
+		t.Fatalf("session index = %+v, %v", listing.Files, err)
+	}
+}

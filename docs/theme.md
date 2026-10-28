@@ -60,7 +60,7 @@ Nested fields:
   `Flags` (`[]string`: `hidden`, `no-index`).
 - `File`: `Name`, `URL`, `Title`, `Description`, `HumanSize`, `ContentType`,
   `Kind` (strings); `Tags` (`[]string`), `Size` (int64 bytes), `UpdatedAt`
-  (UTC `time.Time`), `Flags` (`[]string`: `private`, `unlisted`).
+  (UTC `time.Time`), `Flags` (`[]string`: `symlink`, `private`, `unlisted`).
 - `Session`: `Prefix` (the key's directory prefix, empty with full access),
   `Full` (bool, the key has no prefix), `SignOutURL` (the action of the
   sign-out form).
@@ -75,8 +75,9 @@ receive API keys, session IDs, signatures, or blob identifiers.
 
 `Flags` are always empty for anonymous visitors. On signed-in pages they mark
 what anonymous visitors cannot find: private and unlisted files, hidden
-directories, and directories whose index is disabled. Public files have no
-flag. Unknown flags render nothing, so themes may ignore them.
+directories, and directories whose index is disabled, plus `symlink` on
+symlinks, which anonymous visitors see as plain files. Public regular files
+have no flag. Unknown flags render nothing, so themes may ignore them.
 
 Error pages receive `ErrorPage`: `Site`, `Status` (int), `Title`, `Message`
 (strings), `GeneratedAt` (UTC `time.Time`), `Version` (string), `Session`, and

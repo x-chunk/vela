@@ -25,6 +25,7 @@ var iconPaths = map[string]string{
 	"lock":     `<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4M12 15v2"/>`,
 	"unlisted": `<path d="M9 8H7a4 4 0 0 0 0 8h2M15 8h2a4 4 0 0 1 0 8h-2M8 12h8"/>`,
 	"hidden":   `<path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/>`,
+	"symlink":  `<path d="M14 4h6v6"/><path d="M10 14L20 4"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>`,
 	"no-index": `<path d="M4 6h16M4 11h9M4 16h6"/><circle cx="17" cy="16" r="4"/><path d="M14.2 18.8l5.6-5.6"/>`,
 }
 
@@ -34,6 +35,7 @@ var flags = map[string]struct{ icon, tip string }{
 	FlagUnlisted: {"unlisted", "Unlisted: anyone with the URL can open it"},
 	FlagHidden:   {"hidden", "Hidden: not shown to anonymous visitors in the parent listing"},
 	FlagNoIndex:  {"no-index", "Index disabled for anonymous visitors"},
+	FlagSymlink:  {"symlink", "Symlink: serves the content of another file"},
 }
 
 const fileBase = `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>`

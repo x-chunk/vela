@@ -15,7 +15,8 @@ import (
 
 // These fixtures were captured before directory policies were implemented.
 // Since then only the stylesheet's content hash has changed, when web sign-in
-// added its styles; the markup of anonymous pages is unchanged.
+// added its styles and again for the symlink flag; the markup of anonymous
+// pages is unchanged.
 func TestIndexWithoutPoliciesGolden(t *testing.T) {
 	h := newHarness(t, testutil.WithStartTime(time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)))
 	for _, p := range []string{"top.txt", "docs/a.txt", "docs/sub/b.txt", "docs/sub/c.txt"} {

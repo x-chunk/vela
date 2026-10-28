@@ -261,6 +261,14 @@ func TestFlags(t *testing.T) {
 	if s := string(b); !strings.Contains(s, `"session":{"prefix":"a/","full":false}`) || !strings.Contains(s, `"flags":["hidden","no-index"]`) {
 		t.Fatalf("signed-in JSON = %s", s)
 	}
+	target := &domain.Target{State: domain.ObjectLive, Visibility: api.Unlisted}
+	links := []domain.Object{{Path: "l", Kind: domain.KindSymlink, Visibility: api.Public, Target: target}}
+	if got := BuildPage(Site{}, "", "", nil, links, now, &Session{Full: true}).Files[0].Flags; len(got) != 2 || got[0] != FlagSymlink || got[1] != FlagUnlisted {
+		t.Fatalf("symlink flags = %v", got)
+	}
+	if got := BuildPage(Site{}, "", "", nil, links, now, nil).Files[0].Flags; got != nil {
+		t.Fatalf("anonymous symlink flags = %v", got)
+	}
 	if flagSVG("unknown") != "" {
 		t.Fatal("unknown flag rendered")
 	}

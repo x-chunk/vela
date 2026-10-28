@@ -21,6 +21,8 @@ const (
 	FlagUnlisted = "unlisted"
 	FlagHidden   = "hidden"
 	FlagNoIndex  = "no-index"
+	// FlagSymlink marks a file that serves the content of another file.
+	FlagSymlink = "symlink"
 )
 
 // Session describes the signed-in web session a page is rendered for. Pages
@@ -198,7 +200,7 @@ func BuildPage(site Site, version, prefix string, dirs []DirEntry, files []domai
 			ContentType: o.ContentType,
 			UpdatedAt:   o.UpdatedAt.UTC(),
 			Kind:        KindOf(o.Path, o.ContentType),
-			Flags:       fileFlags(session, o.EffectiveVisibility()),
+			Flags:       fileFlags(session, o),
 		})
 	}
 	sort.SliceStable(p.Dirs, func(i, j int) bool { return NaturalLess(p.Dirs[i].Name, p.Dirs[j].Name) })
@@ -217,19 +219,25 @@ func dirFlags(d DirEntry) []string {
 	return flags
 }
 
-// fileFlags marks files that anonymous visitors cannot find in the index.
-// Public files get no indicator, which keeps the list quiet.
-func fileFlags(session *Session, v api.Visibility) []string {
-	switch {
-	case session == nil:
-		return nil
-	case v == api.Private:
-		return []string{FlagPrivate}
-	case v == api.Unlisted:
-		return []string{FlagUnlisted}
-	default:
+// fileFlags marks, for signed-in pages only, symlinks and files that
+// anonymous visitors cannot find in the index. Anonymous visitors see a
+// symlink as a plain file: how content is organized is not theirs to know.
+// Public regular files get no indicator, which keeps the list quiet.
+func fileFlags(session *Session, o domain.Object) []string {
+	if session == nil {
 		return nil
 	}
+	var flags []string
+	if o.IsSymlink() {
+		flags = append(flags, FlagSymlink)
+	}
+	switch o.EffectiveVisibility() {
+	case api.Private:
+		flags = append(flags, FlagPrivate)
+	case api.Unlisted:
+		flags = append(flags, FlagUnlisted)
+	}
+	return flags
 }
 
 func breadcrumbs(site Site, prefix string) []Crumb {

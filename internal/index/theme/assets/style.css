@@ -23,6 +23,7 @@
   --k-presentation: #e8590c;
   --k-font: #5f3dc4;
   --k-text: #55595f;
+  --flag-symlink: #228be6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -47,6 +48,7 @@
     --k-presentation: #ffa94d;
     --k-font: #b197fc;
     --k-text: #adb5bd;
+    --flag-symlink: #4dabf7;
   }
 }
 
@@ -134,6 +136,7 @@ header.site { padding-top: 28px; padding-bottom: 4px; }
 .flag { flex: none; display: inline-flex; border-radius: 4px; cursor: help; }
 .flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .entry .flag .icon { width: 16px; height: 16px; color: var(--muted); }
+.entry .flag-symlink .icon { color: var(--flag-symlink); }
 .flag::after {
   content: attr(data-tip);
   position: absolute;
