@@ -13,6 +13,10 @@
   question, `--dry-run` only shows it). `get` keeps the directory structure;
   `mv` moves flat or with `--save-structure` and reports every conflict
   before the first move.
+- `vela ln --by-tag` and `--by-tags` link a tag selection into a directory,
+  flat or with `--save-structure`. Conflicts stop it before the first
+  symlink; `--skip` leaves conflicting objects out silently and
+  `--skip-explicitly` reports each one.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
