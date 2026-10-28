@@ -110,27 +110,7 @@ func (a *App) linksCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if a.jsonOut {
-				return a.printer.JSONValue(list)
-			}
-			if len(list.Links) == 0 {
-				a.printer.Infof("No links.")
-				return nil
-			}
-			rows := make([][]any, 0, len(list.Links))
-			for _, l := range list.Links {
-				status := a.printer.Remaining(l.ExpiresAt)
-				if l.RevokedAt != nil {
-					status = "revoked"
-				}
-				var path any = l.Path
-				if l.Path == "" {
-					path = a.printer.Dim("(in trash or deleted)")
-				}
-				rows = append(rows, []any{l.ID, status, path, l.Note})
-			}
-			a.printer.Table([]string{"ID", "EXPIRES IN", "PATH", "NOTE"}, rows)
-			return nil
+			return a.printLinks(list)
 		},
 	}
 	ls.Flags().BoolVar(&all, "all", false, "include expired and revoked links")
@@ -162,4 +142,28 @@ func (a *App) linksCommand() *cobra.Command {
 	}
 	cmd.AddCommand(ls, revoke)
 	return cmd
+}
+
+func (a *App) printLinks(list *api.LinkList) error {
+	if a.jsonOut {
+		return a.printer.JSONValue(list)
+	}
+	if len(list.Links) == 0 {
+		a.printer.Infof("No links.")
+		return nil
+	}
+	rows := make([][]any, 0, len(list.Links))
+	for _, l := range list.Links {
+		status := a.printer.Remaining(l.ExpiresAt)
+		if l.RevokedAt != nil {
+			status = "revoked"
+		}
+		var path any = l.Path
+		if l.Path == "" {
+			path = a.printer.Dim("(in trash or deleted)")
+		}
+		rows = append(rows, []any{l.ID, status, path, l.Note})
+	}
+	a.printer.Table([]string{"ID", "EXPIRES IN", "PATH", "NOTE"}, rows)
+	return nil
 }
