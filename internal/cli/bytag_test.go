@@ -271,3 +271,54 @@ func TestRmByTag(t *testing.T) {
 		t.Errorf("--dry-run without --by-tag: exit %d", r.code)
 	}
 }
+
+func TestMvByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	r := h.ok("mv", "--by-tag", "math", "archive/", "--dry-run")
+	if got := strings.TrimSpace(r.stdout); got != "docs/math.pdf -> archive/math.pdf\ndocs/sub/math2.pdf -> archive/math2.pdf" {
+		t.Fatalf("flat dry run = %q", got)
+	}
+	r = h.ok("mv", "--by-tag", "math", "docs/", "archive/", "--save-structure", "--dry-run")
+	if got := strings.TrimSpace(r.stdout); got != "docs/math.pdf -> archive/math.pdf\ndocs/sub/math2.pdf -> archive/sub/math2.pdf" {
+		t.Fatalf("structured dry run = %q", got)
+	}
+	if r := h.exec("", "mv", "--by-tag", "math", "archive/"); r.code != exitUsage || !exists("docs/math.pdf") {
+		t.Fatalf("no terminal: exit %d", r.code)
+	}
+
+	// Two q1 files share no name, but "a.txt" collides with an existing file:
+	// nothing moves, and every conflict is reported.
+	h.seedTagged("dest/a.txt")
+	h.seedTagged("x/q1.txt", "q1")
+	r = h.exec("", "mv", "--by-tag", "q1", "dest/", "-y")
+	if r.code != exitConflict || !strings.Contains(r.stderr, "a.txt -> dest/a.txt: the destination exists") ||
+		!strings.Contains(r.stderr, "would both move to dest/q1.txt") || !exists("a.txt") || !exists("other/q1.txt") {
+		t.Fatalf("conflicts: exit %d, stderr %q", r.code, r.stderr)
+	}
+	// --save-structure avoids the name clash; --force replaces dest/a.txt.
+	h.ok("mv", "--by-tag", "q1", "dest/", "--save-structure", "--force", "-y")
+	for _, p := range []string{"dest/a.txt", "dest/other/q1.txt", "dest/x/q1.txt"} {
+		if !exists(p) {
+			t.Errorf("%s missing after the move", p)
+		}
+	}
+	if exists("a.txt") || exists("x/q1.txt") {
+		t.Error("sources left behind")
+	}
+
+	h.tty = true
+	if r := h.exec("y\n", "mv", "--by-tags", "math draft", "archive/"); r.code != 0 || !exists("archive/math.pdf") {
+		t.Fatalf("confirmed move: exit %d, stderr %q", r.code, r.stderr)
+	}
+	h.tty = false
+	if r := h.ok("mv", "--by-tags", "math draft", "archive/"); !strings.Contains(r.stderr, "already in place") {
+		t.Errorf("no-op move: stderr %q", r.stderr)
+	}
+	if r := h.exec("", "mv", "a", "b", "--save-structure"); r.code != exitUsage {
+		t.Errorf("--save-structure without --by-tag: exit %d", r.code)
+	}
+}

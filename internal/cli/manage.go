@@ -15,16 +15,35 @@ import (
 )
 
 func (a *App) mvCommand() *cobra.Command {
-	var force bool
+	var force, keepTree bool
+	var byTag tagFlags
+	var conf confirmFlags
 	cmd := &cobra.Command{
 		Use:   "mv FROM TO",
 		Short: "Rename or move files and directories",
 		Long: "Rename or move. FROM ending with / moves a whole directory in one atomic step. TO ending\n" +
 			"with / moves a file into that directory under its own name. Public URLs change; signed\n" +
-			"links keep working.",
-		Example: "  vela mv notes/a.md notes/b.md\n  vela mv report.pdf archive/\n  vela mv docs/math/ archive/math/",
-		Args:    exactArgs(2),
+			"links keep working.\n\n" +
+			"With --by-tag or --by-tags, \"mv [FROM...] TO/\" moves every object with these tags below\n" +
+			"FROM (everything by default) into the directory TO: each under its own name, or with\n" +
+			"--save-structure under its path relative to FROM. Every conflict (two objects with one\n" +
+			"destination, an existing destination without --force) is reported before anything\n" +
+			"moves. The moves are shown and need a confirmation unless -y is given.",
+		Example: "  vela mv notes/a.md notes/b.md\n  vela mv report.pdf archive/\n  vela mv docs/math/ archive/math/\n" +
+			"  vela mv --by-tag q1 docs/ archive/q1/ --save-structure --dry-run",
+		Args: byTag.args(exactArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				if len(args) == 0 {
+					return usagef("%s --by-tag needs a destination directory", cmd.CommandPath())
+				}
+				return a.mvTagged(cmd, args[:len(args)-1], args[len(args)-1], &byTag, mvTaggedOptions{
+					force: force, keepTree: keepTree, confirm: conf,
+				})
+			}
+			if keepTree || conf.dryRun || conf.yes {
+				return usagef("--save-structure, --dry-run and -y need --by-tag or --by-tags")
+			}
 			from, to := strings.TrimLeft(args[0], "/"), strings.TrimLeft(args[1], "/")
 			req := api.MoveRequest{Overwrite: force}
 			if strings.HasSuffix(from, "/") {
@@ -78,7 +97,200 @@ func (a *App) mvCommand() *cobra.Command {
 		ValidArgsFunction: a.completeRemote(),
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing destinations (they go to the trash)")
+	cmd.Flags().BoolVar(&keepTree, "save-structure", false, "with --by-tag, keep paths relative to FROM instead of moving flat")
+	byTag.register(cmd)
+	conf.register(cmd, "move without asking")
 	return cmd
+}
+
+type mvTaggedOptions struct {
+	force, keepTree bool
+	confirm         confirmFlags
+}
+
+// taggedMove is one planned move of "vela mv --by-tag".
+type taggedMove struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// mvTagged moves the objects of a tag selection into the directory dest. It
+// plans every move and checks every destination before the first one, so
+// that a conflict never leaves the selection half moved.
+func (a *App) mvTagged(cmd *cobra.Command, scopes []string, dest string, byTag *tagFlags, opts mvTaggedOptions) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	dest = strings.TrimLeft(dest, "/")
+	if dest != "" && !strings.HasSuffix(dest, "/") {
+		dest += "/"
+	}
+	if dest, err = remotePrefix(dest); err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	moves, err := a.planTaggedMoves(ctx, c, scopes, dest, f, opts.keepTree)
+	if err != nil {
+		return err
+	}
+	if len(moves) == 0 {
+		a.printer.Infof("Every object tagged %s is already in place.", f.String())
+		if a.jsonOut {
+			return a.printer.JSONValue([]taggedMove{})
+		}
+		return nil
+	}
+	if err := checkTaggedMoves(ctx, c, moves, opts.force); err != nil {
+		return err
+	}
+	lines := make([]string, len(moves))
+	for i, m := range moves {
+		lines[i] = m.From + " -> " + m.To
+	}
+	if ok, err := a.confirmPlan(lines, moves, fmt.Sprintf("Move %d object(s)?", len(moves)), opts.confirm.yes, opts.confirm.dryRun); err != nil || !ok {
+		return err
+	}
+	errs := make([]error, len(moves))
+	paths := make([]string, len(moves))
+	done := []taggedMove{}
+	for i, m := range moves {
+		paths[i] = m.From
+		if _, err := c.Move(ctx, api.MoveRequest{From: m.From, To: m.To, Overwrite: opts.force}); err != nil {
+			errs[i] = fmt.Errorf("%s: %w", m.From, err)
+			continue
+		}
+		done = append(done, m)
+		a.printer.Printf("Moved %s -> %s\n", m.From, m.To)
+	}
+	if err := batchResult("move", len(moves), errs, paths); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(done)
+	}
+	return nil
+}
+
+// planTaggedMoves maps every object of the selection to its destination
+// below dest: its base name, or with keepTree its path relative to the scope
+// it was found in (a file scope keeps only its name). Objects already at
+// their destination are left out.
+func (a *App) planTaggedMoves(ctx context.Context, c *client.Client, scopes []string, dest string, f api.TagFilter, keepTree bool) ([]taggedMove, error) {
+	if len(scopes) == 0 {
+		scopes = []string{""}
+	}
+	var moves []taggedMove
+	seen := map[string]bool{}
+	for _, raw := range scopes {
+		objs, err := a.selectTagged(ctx, c, []string{raw}, f)
+		if err != nil {
+			return nil, err
+		}
+		dir := strings.TrimLeft(raw, "/")
+		if dir != "" && !strings.HasSuffix(dir, "/") {
+			dir += "/"
+		}
+		for _, o := range objs {
+			if seen[o.ID] {
+				continue
+			}
+			seen[o.ID] = true
+			rel := api.BaseName(o.Path)
+			if keepTree && o.Path+"/" != dir {
+				rel = strings.TrimPrefix(o.Path, dir)
+			}
+			to, err := remotePath(dest + rel)
+			if err != nil {
+				return nil, err
+			}
+			if to != o.Path {
+				moves = append(moves, taggedMove{From: o.Path, To: to})
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil, errNothingTagged(f)
+	}
+	return moves, nil
+}
+
+// checkTaggedMoves reports every conflict among the planned moves at once:
+// two objects with one destination, a destination that is another object
+// being moved, a directory, or below a file, and (without force) an
+// existing destination.
+func checkTaggedMoves(ctx context.Context, c *client.Client, moves []taggedMove, force bool) error {
+	sources := make(map[string]bool, len(moves))
+	for _, m := range moves {
+		sources[m.From] = true
+	}
+	var problems []string
+	claimed := map[string]string{}
+	isFile := map[string]bool{}
+	fileAt := func(p string) (bool, error) {
+		if v, ok := isFile[p]; ok {
+			return v, nil
+		}
+		_, err := c.Stat(ctx, p)
+		switch {
+		case err == nil:
+			isFile[p] = true
+		case api.IsCode(err, api.CodeNotFound):
+			isFile[p] = false
+		default:
+			return false, fmt.Errorf("check %s: %w", p, err)
+		}
+		return isFile[p], nil
+	}
+	for _, m := range moves {
+		if other, ok := claimed[m.To]; ok {
+			problems = append(problems, fmt.Sprintf("%s and %s would both move to %s", other, m.From, m.To))
+			continue
+		}
+		claimed[m.To] = m.From
+		if sources[m.To] {
+			problems = append(problems, fmt.Sprintf("%s -> %s: the destination is also being moved", m.From, m.To))
+			continue
+		}
+		exists, err := fileAt(m.To)
+		if err != nil {
+			return err
+		}
+		if exists && !force {
+			problems = append(problems, fmt.Sprintf("%s -> %s: the destination exists", m.From, m.To))
+		}
+		for _, anc := range api.Ancestors(m.To) {
+			file, err := fileAt(anc)
+			if err != nil {
+				return err
+			}
+			if file {
+				problems = append(problems, fmt.Sprintf("%s -> %s: %s is a file", m.From, m.To, anc))
+			}
+		}
+		l, err := c.List(ctx, client.ListOptions{Prefix: m.To + "/", Recursive: true, Limit: 1})
+		if err != nil {
+			return fmt.Errorf("check %s: %w", m.To, err)
+		}
+		if len(l.Objects) > 0 {
+			problems = append(problems, fmt.Sprintf("%s -> %s: the destination is a directory", m.From, m.To))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	hint := ""
+	if !force {
+		hint = "use --force to overwrite existing destinations (they go to the trash)"
+	}
+	return &cliError{code: exitConflict, slug: string(api.CodeConflict),
+		msg:  fmt.Sprintf("nothing moved: %d conflict(s):\n  %s", len(problems), strings.Join(problems, "\n  ")),
+		hint: hint}
 }
 
 func (a *App) rmCommand() *cobra.Command {
