@@ -27,6 +27,9 @@
   Symlinks to trashed files are kept unless `--prune-trashed` is given,
   since restoring the file repairs them; symlinks to tagged files moved out
   of scope are pruned.
+- `vela ln --by-tag … --sync --copy-meta` copies changed metadata of the
+  files to their existing symlinks in place (URLs and signed links keep
+  working); `--copy-meta=title,tags` limits it to these fields.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
