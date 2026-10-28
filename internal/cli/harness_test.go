@@ -138,7 +138,7 @@ func (h *harness) seedTagged(path string, tags ...string) {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	opts := client.UploadOptions{Size: int64(len(path)), Tags: tags}
+	opts := client.UploadOptions{Size: int64(len(path)), Visibility: api.Private, Tags: tags}
 	if _, _, err := c.Upload(context.Background(), path, strings.NewReader(path), opts); err != nil {
 		h.t.Fatal(err)
 	}

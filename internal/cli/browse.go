@@ -184,12 +184,19 @@ func (a *App) printListing(l *api.Listing, long bool, policies map[string]api.Di
 }
 
 func (a *App) statCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:               "stat PATH",
-		Short:             "Show all metadata of an object",
-		Args:              exactArgs(1),
+	var byTag tagFlags
+	cmd := &cobra.Command{
+		Use:   "stat PATH",
+		Short: "Show all metadata of an object",
+		Long: "Show all metadata of an object. With --by-tag or --by-tags, show every object with\n" +
+			"these tags below the given paths (everything by default); --json prints an array.",
+		Example:           "  vela stat docs/a.pdf\n  vela stat --by-tag q1 docs/",
+		Args:              byTag.args(exactArgs(1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				return a.statTagged(cmd, args, &byTag)
+			}
 			path, err := remotePath(args[0])
 			if err != nil {
 				return err
@@ -211,6 +218,38 @@ func (a *App) statCommand() *cobra.Command {
 			return nil
 		},
 	}
+	byTag.register(cmd)
+	return cmd
+}
+
+func (a *App) statTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	objs, err := a.selectTagged(ctx, c, scopes, f)
+	if err != nil {
+		return err
+	}
+	if len(objs) == 0 {
+		return errNothingTagged(f)
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(objs)
+	}
+	for i := range objs {
+		if i > 0 {
+			a.printer.Println()
+		}
+		a.printObject(ctx, c, &objs[i])
+	}
+	return nil
 }
 
 // notFoundHint turns "not found" for a directory into a hint about -r or a
@@ -267,12 +306,30 @@ func (a *App) printObject(ctx context.Context, c *client.Client, o *api.Object) 
 }
 
 func (a *App) urlCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:               "url PATH",
-		Short:             "Print the public URL of an object or directory index",
-		Args:              exactArgs(1),
+	var byTag tagFlags
+	cmd := &cobra.Command{
+		Use:   "url PATH",
+		Short: "Print the public URL of an object or directory index",
+		Long: "Print the public URL of an object or directory index. With --by-tag or --by-tags,\n" +
+			"print the URLs of every object with these tags below the given paths (everything by\n" +
+			"default), one per line; private objects have none and are reported on stderr.",
+		Example:           "  vela url docs/a.pdf\n  vela url docs/\n  vela url --by-tag handout",
+		Args:              byTag.args(exactArgs(1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				urls, err := a.taggedURLs(cmd, args, &byTag)
+				if err != nil {
+					return err
+				}
+				if a.jsonOut {
+					return a.printer.JSONValue(urls)
+				}
+				for _, u := range urls {
+					a.printer.Println(u.URL)
+				}
+				return nil
+			}
 			u, err := a.publicURL(cmd, args[0])
 			if err != nil {
 				return err
@@ -284,6 +341,49 @@ func (a *App) urlCommand() *cobra.Command {
 			return nil
 		},
 	}
+	byTag.register(cmd)
+	return cmd
+}
+
+// taggedURL is one entry of "vela url --by-tag --json".
+type taggedURL struct {
+	Path string `json:"path"`
+	URL  string `json:"url"`
+}
+
+// taggedURLs returns the public URLs of a tag selection. Private objects are
+// skipped with a warning; a selection without any public URL is an error.
+func (a *App) taggedURLs(cmd *cobra.Command, scopes []string, byTag *tagFlags) ([]taggedURL, error) {
+	f, err := byTag.filter()
+	if err != nil {
+		return nil, err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	objs, err := a.selectTagged(ctx, c, scopes, f)
+	if err != nil {
+		return nil, err
+	}
+	if len(objs) == 0 {
+		return nil, errNothingTagged(f)
+	}
+	urls := []taggedURL{}
+	for _, o := range objs {
+		if o.URL == nil {
+			a.printer.Warnf("%s is private and has no public URL (vela share %s)", o.Path, o.Path)
+			continue
+		}
+		urls = append(urls, taggedURL{Path: o.Path, URL: *o.URL})
+	}
+	if len(urls) == 0 {
+		return nil, &cliError{code: exitError, slug: "private", msg: "every object tagged " + f.String() + " is private",
+			hint: "create temporary links with: vela share --by-tag ..."}
+	}
+	return urls, nil
 }
 
 // publicURL resolves the public URL of an object, or of a directory index

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"go.xchunk.org/vela/api"
 )
 
 // seedTags creates the tagged tree the --by-tag tests share.
@@ -41,5 +43,35 @@ func TestLsByTag(t *testing.T) {
 		if r := h.exec("", bad...); r.code != exitUsage {
 			t.Errorf("vela %s: exit %d, want %d (%s)", strings.Join(bad, " "), r.code, exitUsage, r.stderr)
 		}
+	}
+}
+
+func TestStatAndURLByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	h.ok("vis", "docs/math.pdf", "public")
+
+	var objs []api.Object
+	h.ok("stat", "--by-tag", "math", "--json").json(t, &objs)
+	if len(objs) != 2 || objs[0].Path != "docs/math.pdf" || objs[1].Path != "docs/sub/math2.pdf" {
+		t.Fatalf("stat --by-tag = %+v", objs)
+	}
+	if r := h.ok("stat", "--by-tag", "math"); strings.Count(r.stdout, "Path") != 2 {
+		t.Errorf("human stat = %s", r.stdout)
+	}
+	if r := h.exec("", "stat", "--by-tag", "nope"); r.code != exitNotFound {
+		t.Errorf("stat of nothing: exit %d", r.code)
+	}
+
+	r := h.ok("url", "--by-tag", "math")
+	if lines := strings.Fields(r.stdout); len(lines) != 1 || !strings.HasSuffix(lines[0], "/docs/math.pdf") {
+		t.Errorf("url --by-tag stdout = %q", r.stdout)
+	}
+	if !strings.Contains(r.stderr, "docs/sub/math2.pdf is private") {
+		t.Errorf("url --by-tag stderr = %q", r.stderr)
+	}
+	if r := h.exec("", "url", "--by-tag", "q1"); r.code != exitError {
+		t.Errorf("url of private selection: exit %d", r.code)
 	}
 }
