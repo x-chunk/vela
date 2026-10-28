@@ -27,6 +27,7 @@ type lnFlags struct {
 	skipSymlinks              bool
 	yes                       bool
 	sync, prune, strict       bool
+	pruneTrashed              bool
 }
 
 func (a *App) lnCommand() *cobra.Command {
@@ -60,7 +61,9 @@ func (a *App) lnCommand() *cobra.Command {
 			"--sync makes a repeated run link only what is missing: symlinks already in DEST that\n" +
 			"point at a selected file count as done, wherever they are, and symlinks are never\n" +
 			"selected (--skip-symlinks is implied). --prune also moves to the trash the symlinks in\n" +
-			"DEST whose file lies in SCOPE but is no longer selected or is in the trash. Files and\n" +
+			"DEST whose file lies in SCOPE but is no longer selected; with --prune-trashed also\n" +
+			"those whose file is in the trash (restoring the file would have repaired them, but\n" +
+			"a new symlink gets a new URL and loses the old one's signed links). Files and\n" +
 			"symlinks to anything outside SCOPE are never touched. A new symlink may take the place\n" +
 			"of a pruned one, with a warning; --strict refuses that as a conflict instead.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
@@ -85,13 +88,13 @@ func (a *App) lnCommand() *cobra.Command {
 				if f.prune && !f.sync {
 					return usagef("--prune needs --sync")
 				}
-				if f.strict && !f.prune {
-					return usagef("--strict needs --prune")
+				if (f.strict || f.pruneTrashed) && !f.prune {
+					return usagef("--strict and --prune-trashed need --prune")
 				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune || f.strict {
-				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune, --strict and -y need --by-tag or --by-tags")
+			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune || f.strict || f.pruneTrashed {
+				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune, --prune-trashed, --strict and -y need --by-tag or --by-tags")
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -151,6 +154,7 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
 	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
 	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE that are no longer selected")
+	fl.BoolVar(&f.pruneTrashed, "prune-trashed", false, "with --prune, also trash symlinks to files in the trash")
 	fl.BoolVar(&f.strict, "strict", false, "with --prune, treat the place of a pruned symlink as taken")
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
@@ -293,7 +297,7 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 			err = fmt.Errorf("list %s: %w", dest, err)
 		} else {
 			if f.prune {
-				prune = pruneLinks(l.Objects, plan, scopes)
+				prune = pruneLinks(l.Objects, plan, scopes, f.pruneTrashed)
 			}
 			plan, upToDate = a.syncLinkPlan(l.Objects, plan)
 		}
@@ -387,11 +391,13 @@ type linkPrune struct {
 }
 
 // pruneLinks returns the symlinks among existing (the contents of DEST)
-// whose file lies in one of scopes but is not in plan: it lost its tags or
-// is in the trash. A gone target is left alone, because "gone" also means
+// whose file lies in one of scopes but is not in plan: it lost its tags or,
+// with trashed, is in the trash. Without trashed such a symlink is kept,
+// because restoring the file repairs it with its URL and signed links. A
+// gone target is left alone, because "gone" also means
 // outside the key's prefix, where the symlink may well work for others;
 // vela rm --broken removes such symlinks deliberately.
-func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string) []linkPrune {
+func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string, trashed bool) []linkPrune {
 	selected := make(map[string]bool, len(plan))
 	for _, m := range plan {
 		selected[m.id] = true
@@ -406,6 +412,9 @@ func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string) []lin
 		case api.TargetOK:
 			out = append(out, linkPrune{Path: o.Path, Reason: "no longer selected"})
 		case api.TargetTrashed:
+			if !trashed {
+				continue
+			}
 			out = append(out, linkPrune{Path: o.Path, Reason: "the file is in the trash"})
 		}
 	}

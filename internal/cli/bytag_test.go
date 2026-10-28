@@ -500,7 +500,12 @@ func TestLnByTagPrune(t *testing.T) {
 	h.ok("meta", "docs/math.pdf", "--untag", "math")
 	h.ok("rm", "docs/sub/math2.pdf")
 
+	// Without --prune-trashed, the symlink to the trashed file is kept.
 	r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "--dry-run")
+	if got := strings.TrimSpace(r.stdout); got != "+ L/new.pdf -> docs/new.pdf\n- L/math.pdf (no longer selected)" {
+		t.Fatalf("plan without --prune-trashed = %q", got)
+	}
+	r = h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "--prune-trashed", "--dry-run")
 	want := "+ L/new.pdf -> docs/new.pdf\n- L/math.pdf (no longer selected)\n- L/math2.pdf (the file is in the trash)"
 	if got := strings.TrimSpace(r.stdout); got != want {
 		t.Fatalf("plan = %q", got)
@@ -509,12 +514,15 @@ func TestLnByTagPrune(t *testing.T) {
 		Created []api.Object `json:"created"`
 		Pruned  []string     `json:"pruned"`
 	}
-	h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "-y", "--json").json(t, &res)
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "--prune-trashed", "-y", "--json").json(t, &res)
 	if len(res.Created) != 1 || len(res.Pruned) != 2 || exists("L/math.pdf") || !exists("L/manual.pdf") || !exists("L/new.pdf") {
 		t.Fatalf("prune = %+v", res)
 	}
 	if r := h.exec("", "ln", "--by-tag", "math", "L/", "--prune", "-y"); r.code != exitUsage {
 		t.Errorf("--prune without --sync: exit %d", r.code)
+	}
+	if r := h.exec("", "ln", "--by-tag", "math", "L/", "--sync", "--prune-trashed", "-y"); r.code != exitUsage {
+		t.Errorf("--prune-trashed without --prune: exit %d", r.code)
 	}
 }
 
