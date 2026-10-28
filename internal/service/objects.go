@@ -228,6 +228,7 @@ func (s *Service) newObjectFrom(path string, b blobInfo, m *metaInput, now time.
 	o := domain.Object{
 		ID:          s.ids.New(),
 		Path:        path,
+		Kind:        domain.KindFile,
 		BlobID:      b.id,
 		Size:        b.size,
 		SHA256:      b.sha256,

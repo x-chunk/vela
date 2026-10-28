@@ -12,7 +12,7 @@ import (
 	"go.xchunk.org/vela/internal/domain"
 )
 
-const objectCols = `id, path, blob_id, size, sha256, content_type, disposition, visibility,
+const objectCols = `id, path, kind, target_id, blob_id, size, sha256, content_type, disposition, visibility,
 	title, description, tags, created_at, updated_at, expires_at, revision`
 
 type scanner interface {
@@ -22,15 +22,18 @@ type scanner interface {
 func scanObject(sc scanner) (domain.Object, error) {
 	var (
 		o                domain.Object
+		kind             string
+		target, blobID   sql.NullString
 		disp, vis, tags  string
 		created, updated int64
 		expires          sql.NullInt64
 	)
-	err := sc.Scan(&o.ID, &o.Path, &o.BlobID, &o.Size, &o.SHA256, &o.ContentType, &disp, &vis,
+	err := sc.Scan(&o.ID, &o.Path, &kind, &target, &blobID, &o.Size, &o.SHA256, &o.ContentType, &disp, &vis,
 		&o.Title, &o.Description, &tags, &created, &updated, &expires, &o.Revision)
 	if err != nil {
 		return domain.Object{}, mapErr(err)
 	}
+	o.Kind, o.TargetID, o.BlobID = domain.Kind(kind), target.String, blobID.String
 	o.Disposition = api.Disposition(disp)
 	o.Visibility = api.Visibility(vis)
 	if err := json.Unmarshal([]byte(tags), &o.Tags); err != nil {
@@ -54,7 +57,21 @@ func objectArgs(o *domain.Object) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode tags: %w", err)
 	}
-	return []any{o.ID, o.Path, o.BlobID, o.Size, o.SHA256, o.ContentType, string(o.Disposition),
+	kind := o.Kind
+	if kind == "" {
+		kind = domain.KindFile
+	}
+	var target, blobID sql.NullString
+	size, sum, contentType := o.Size, o.SHA256, o.ContentType
+	if kind == domain.KindSymlink {
+		// A symlink owns no content; what readers see comes from the target,
+		// so nothing derived from it may be persisted on the symlink row.
+		target = sql.NullString{String: o.TargetID, Valid: true}
+		size, sum, contentType = 0, "", ""
+	} else {
+		blobID = sql.NullString{String: o.BlobID, Valid: true}
+	}
+	return []any{o.ID, o.Path, string(kind), target, blobID, size, sum, contentType, string(o.Disposition),
 		string(o.Visibility), o.Title, o.Description, string(tagJSON), ms(o.CreatedAt), ms(o.UpdatedAt),
 		nullMS(o.ExpiresAt), o.Revision}, nil
 }
@@ -333,7 +350,7 @@ func (t *Tx) InsertObject(ctx context.Context, o domain.Object) error {
 	if err != nil {
 		return err
 	}
-	_, err = t.tx.ExecContext(ctx, `INSERT INTO objects (`+objectCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+	_, err = t.tx.ExecContext(ctx, `INSERT INTO objects (`+objectCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 	if err != nil {
 		return fmt.Errorf("insert object: %w", mapErr(err))
 	}
@@ -346,7 +363,7 @@ func (t *Tx) UpdateObject(ctx context.Context, o domain.Object) error {
 	if err != nil {
 		return err
 	}
-	res, err := t.tx.ExecContext(ctx, `UPDATE objects SET id = ?, path = ?, blob_id = ?, size = ?, sha256 = ?,
+	res, err := t.tx.ExecContext(ctx, `UPDATE objects SET id = ?, path = ?, kind = ?, target_id = ?, blob_id = ?, size = ?, sha256 = ?,
 		content_type = ?, disposition = ?, visibility = ?, title = ?, description = ?, tags = ?,
 		created_at = ?, updated_at = ?, expires_at = ?, revision = ? WHERE id = ?`, append(args, o.ID)...)
 	if err != nil {

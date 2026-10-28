@@ -12,7 +12,7 @@ import (
 
 // trashCols mirrors objectCols with the object ID and path renamed, followed
 // by the trash-specific columns.
-const trashCols = `object_id, original_path, blob_id, size, sha256, content_type, disposition, visibility,
+const trashCols = `object_id, original_path, kind, target_id, blob_id, size, sha256, content_type, disposition, visibility,
 	title, description, tags, created_at, updated_at, expires_at, revision, id, deleted_at, deleted_by_key, seq`
 
 func scanTrash(sc scanner) (domain.TrashEntry, error) {
@@ -121,7 +121,7 @@ func (t *Tx) InsertTrash(ctx context.Context, e domain.TrashEntry) error {
 		return fmt.Errorf("number trash entry: %w", err)
 	}
 	args = append(args, e.ID, ms(e.DeletedAt), by, seq)
-	_, err = t.tx.ExecContext(ctx, `INSERT INTO trash (`+trashCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
+	_, err = t.tx.ExecContext(ctx, `INSERT INTO trash (`+trashCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args...)
 	if err != nil {
 		return fmt.Errorf("insert trash entry: %w", mapErr(err))
 	}

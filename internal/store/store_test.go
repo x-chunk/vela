@@ -32,7 +32,7 @@ var gen = ids.NewULID(nil)
 
 func newObject(path string, vis api.Visibility) domain.Object {
 	return domain.Object{
-		ID: gen.New(), Path: path, BlobID: gen.New(), Size: 1, SHA256: "00",
+		ID: gen.New(), Path: path, Kind: domain.KindFile, BlobID: gen.New(), Size: 1, SHA256: "00",
 		ContentType: "text/plain", Disposition: api.Inline, Visibility: vis,
 		Tags: []string{"a"}, CreatedAt: t0, UpdatedAt: t0, Revision: 1,
 	}

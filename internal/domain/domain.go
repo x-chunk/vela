@@ -18,11 +18,27 @@ var (
 	ErrDuplicate = errors.New("duplicate")
 )
 
+// Kind tells a file from a symlink.
+type Kind string
+
+// Object kinds.
+const (
+	// KindFile is an object with its own blob.
+	KindFile Kind = "file"
+	// KindSymlink is an object without a blob that refers to a file by ID.
+	KindSymlink Kind = "symlink"
+)
+
 // Object is a stored file: a logical path, metadata and a reference to the
-// blob holding its bytes.
+// blob holding its bytes. A symlink has no blob; it refers to a file through
+// TargetID, and its stored size, digest and content type are empty.
 type Object struct {
-	ID          string
-	Path        string
+	ID   string
+	Path string
+	// Kind is KindFile or KindSymlink; the empty value means a file.
+	Kind Kind
+	// TargetID is the ID of the file a symlink refers to, "" for files.
+	TargetID    string
 	BlobID      string
 	Size        int64
 	SHA256      string
@@ -37,6 +53,9 @@ type Object struct {
 	ExpiresAt   *time.Time
 	Revision    int64
 }
+
+// IsSymlink reports whether o is a symlink.
+func (o *Object) IsSymlink() bool { return o.Kind == KindSymlink }
 
 // ExpiredAt reports whether the object's own TTL has passed at now. An object
 // whose expires_at equals now is still alive; it expires strictly after.
