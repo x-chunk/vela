@@ -21,7 +21,9 @@
   the plan and asks first (`-y`, `--dry-run`).
 - `vela ln --by-tag … --sync` links only what is missing in DEST, so it can
   be rerun to keep a tag view current; `--prune` also moves to the trash
-  the symlinks whose file in scope lost its tags or is in the trash.
+  the symlinks whose file in scope lost its tags or is in the trash. A new
+  symlink may take a pruned one's place (with a warning); `--strict` makes
+  that a conflict.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
