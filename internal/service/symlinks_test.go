@@ -576,3 +576,81 @@ func TestSymlinkPurgeAndExpiry(t *testing.T) {
 		t.Errorf("target content after purging a symlink directly: %v", err)
 	}
 }
+
+func TestCreateSymlinkTree(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	a := e.put("orig/a.txt", "a", api.Public)
+	e.put("orig/sub/b.txt", "b", api.Public)
+	e.put("gone.txt", "g", api.Public)
+	e.ln(e.admin, "gone.txt", "orig/broken")
+	e.ln(e.admin, "orig/a.txt", "orig/sub/link-to-a")
+	if _, err := e.svc.Delete(e.ctx, e.admin, service.DeleteParams{Path: "gone.txt", Purge: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.svc.PutDir(e.ctx, e.admin, "orig/sub/", api.DirPolicyRequest{Hidden: true}, service.DirWriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "sorted/", Recursive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created != 3 || res.Replaced != 0 || !reflect.DeepEqual(res.Skipped, []string{"orig/broken"}) {
+		t.Errorf("tree = %+v", res)
+	}
+	o, err := e.svc.Stat(e.ctx, e.admin, "sorted/sub/link-to-a")
+	if err != nil || o.Target.ID != a.ID {
+		t.Errorf("dereferenced = %+v, %v", o, err)
+	}
+	if dir, err := e.svc.ShowDir(e.ctx, e.admin, "sorted/sub/"); err != nil || dir.Rule != nil {
+		t.Errorf("directory policy was copied: %+v, %v", dir.Rule, err)
+	}
+
+	// Conflicts fail the whole request.
+	e.put("other/a.txt", "x", api.Public)
+	e.put("clash/sub", "file in the way", api.Public)
+	_, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "other/", Recursive: true})
+	wantErr(t, err, service.ErrAlreadyExists)
+	if res, _ := e.svc.List(e.ctx, e.admin, service.ListParams{Prefix: "other/", Recursive: true}); len(res.Objects) != 1 {
+		t.Errorf("partial tree created: %+v", res.Objects)
+	}
+	_, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "clash/", Recursive: true, Overwrite: true})
+	wantErr(t, err, service.ErrPathConflict)
+
+	// Overwrite retargets symlinks and trashes files.
+	res, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "other/", Recursive: true, Overwrite: true})
+	if err != nil || res.Created != 2 || res.Replaced != 1 {
+		t.Errorf("overwrite = %+v, %v", res, err)
+	}
+	res, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "other/", Recursive: true, Overwrite: true})
+	if err != nil || res.Created != 0 || res.Replaced != 3 {
+		t.Errorf("second overwrite = %+v, %v", res, err)
+	}
+
+	for name, tc := range map[string]struct {
+		p    service.Principal
+		req  api.CreateSymlinkRequest
+		want error
+	}{
+		"into itself":   {e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "orig/x/"}, service.ErrInvalidRequest},
+		"empty source":  {e.admin, api.CreateSymlinkRequest{Source: "nothing/", Path: "x/"}, service.ErrNotFound},
+		"source prefix": {e.principal(api.ScopeRW, "sorted/"), api.CreateSymlinkRequest{Source: "orig/", Path: "sorted/x/"}, service.ErrForbidden},
+		"path prefix":   {e.principal(api.ScopeRW, "orig/"), api.CreateSymlinkRequest{Source: "orig/sub/", Path: "x/"}, service.ErrForbidden},
+		"reserved path": {e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "api/"}, service.ErrInvalidPath},
+	} {
+		tc.req.Recursive = true
+		if _, err := e.svc.CreateSymlinkTree(e.ctx, tc.p, tc.req); !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v; want %v", name, err, tc.want)
+		}
+	}
+
+	// A prefixed key skips symlinks whose target is outside its prefix.
+	e.put("secret/s.txt", "s", api.Private)
+	e.ln(e.admin, "secret/s.txt", "k/src/to-secret")
+	e.put("k/src/own.txt", "o", api.Private)
+	res, err = e.svc.CreateSymlinkTree(e.ctx, e.principal(api.ScopeRW, "k/"), api.CreateSymlinkRequest{Source: "k/src/", Path: "k/dst/", Recursive: true})
+	if err != nil || res.Created != 1 || !reflect.DeepEqual(res.Skipped, []string{"k/src/to-secret"}) {
+		t.Errorf("prefixed tree = %+v, %v", res, err)
+	}
+}

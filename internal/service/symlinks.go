@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -148,7 +149,7 @@ func (s *Service) CreateSymlink(ctx context.Context, p Principal, req api.Create
 		return api.Object{}, false, err
 	}
 	if req.Recursive {
-		return api.Object{}, false, invalidf("recursive symlink requests return a summary; use CreateSymlinkTree")
+		return api.Object{}, false, invalidf("recursive requests are handled by CreateSymlinkTree")
 	}
 	source, isDir, err := api.CleanPath(req.Source)
 	if err != nil {
@@ -278,4 +279,139 @@ func symlinkTargetDTO(o domain.Object, prefix string, now time.Time) *api.Symlin
 	out.State, out.Visibility = api.TargetOK, &vis
 	out.Expired = t.ExpiresAt != nil && now.After(*t.ExpiresAt)
 	return out
+}
+
+// CreateSymlinkTree links every object under the prefix req.Source to the
+// same relative path under the prefix req.Path, in one transaction: either
+// every symlink is created or none is. It is a snapshot; objects added to the
+// source later are not linked. Symlinks in the source are dereferenced, and
+// broken ones are skipped and reported. Directory policies are not copied:
+// this sorts content, it does not move it.
+func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.CreateSymlinkRequest) (api.SymlinkTreeResponse, error) {
+	out := api.SymlinkTreeResponse{Skipped: []string{}}
+	if err := p.require(api.ScopeRW); err != nil {
+		return out, err
+	}
+	source, err := api.CleanPrefix(req.Source)
+	if err != nil {
+		return out, pathError(err)
+	}
+	path, err := api.CleanPrefix(req.Path)
+	if err != nil {
+		return out, pathError(err)
+	}
+	if api.IsWithin(path, source) {
+		return out, invalidf("cannot link %s into itself (%s)", source, path)
+	}
+	if err := p.checkPath(source); err != nil {
+		return out, err
+	}
+	if err := p.checkPath(path); err != nil {
+		return out, err
+	}
+	sm, err := s.symlinkMetaFrom(req)
+	if err != nil {
+		return out, err
+	}
+	now := s.now()
+	err = s.store.Update(ctx, func(w Writer) error {
+		objs, err := w.ObjectsUnder(ctx, source)
+		if err != nil {
+			return err
+		}
+		if len(objs) == 0 {
+			return notFoundf("no objects under %s", source)
+		}
+		if len(objs) > api.MaxSymlinkTree {
+			return newErr(ErrInvalidRequest, map[string]any{"limit": api.MaxSymlinkTree},
+				"%s holds %d objects; link at most %d at once (link its subdirectories separately)", source, len(objs), api.MaxSymlinkTree)
+		}
+		type plan struct {
+			src      domain.Object
+			targetID string
+			path     string
+			existing *domain.Object
+		}
+		var (
+			plans                 []plan
+			skipped               []string
+			occupied, conflicting []string
+		)
+		for _, o := range objs {
+			targetID, targetPath := o.ID, o.Path
+			if o.IsSymlink() {
+				if !targetVisibleTo(o, p.Prefix) {
+					skipped = append(skipped, o.Path)
+					continue
+				}
+				targetID, targetPath = o.TargetID, o.Target.Path
+			}
+			np := path + o.Path[len(source):]
+			// Re-validate: the new path may be too long or start with a
+			// reserved name when linking into the root.
+			if clean, err := api.CleanObjectPath(np); err != nil || clean != np {
+				if err == nil {
+					err = &api.PathError{Path: np, Reason: "not normalized"}
+				}
+				return pathError(err)
+			}
+			if np == targetPath {
+				return invalidf("a symlink cannot replace its own target: %s", np)
+			}
+			pl := plan{src: o, targetID: targetID, path: np}
+			existing, err := w.ObjectByPath(ctx, np)
+			switch {
+			case err == nil:
+				pl.existing = &existing
+				occupied = append(occupied, np)
+			case !isNotFound(err):
+				return err
+			default:
+				if err := checkConflicts(ctx, w, np, nil); err != nil {
+					if errors.Is(err, ErrPathConflict) {
+						conflicting = append(conflicting, np)
+						continue
+					}
+					return err
+				}
+			}
+			plans = append(plans, pl)
+		}
+		if len(conflicting) > 0 {
+			return newErr(ErrPathConflict, map[string]any{"conflicts": capList(conflicting)},
+				"%d destination path(s) conflict with existing files or directories", len(conflicting))
+		}
+		if len(occupied) > 0 && !req.Overwrite {
+			return newErr(ErrAlreadyExists, map[string]any{"conflicts": capList(occupied)},
+				"%d destination path(s) already exist; use overwrite", len(occupied))
+		}
+		for _, pl := range plans {
+			target := domain.Object{ID: pl.targetID}
+			switch {
+			case pl.existing == nil:
+				_, err = s.insertSymlink(ctx, w, pl.path, pl.src, target, sm, now)
+				out.Created++
+			case pl.existing.IsSymlink():
+				_, err = s.retargetSymlink(ctx, w, *pl.existing, pl.src, target, sm, now)
+				out.Replaced++
+			default:
+				if _, err := s.trashObject(ctx, w, *pl.existing, p.KeyID, now); err != nil {
+					return err
+				}
+				_, err = s.insertSymlink(ctx, w, pl.path, pl.src, target, sm, now)
+				out.Replaced++
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if len(skipped) > 0 {
+			out.Skipped = capList(skipped)
+		}
+		return nil
+	})
+	if err != nil {
+		return api.SymlinkTreeResponse{Skipped: []string{}}, err
+	}
+	return out, nil
 }
