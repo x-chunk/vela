@@ -142,3 +142,12 @@ func (c *confirmFlags) register(cmd *cobra.Command, yesUsage string) {
 	cmd.Flags().BoolVarP(&c.yes, "yes", "y", false, yesUsage)
 	cmd.Flags().BoolVar(&c.dryRun, "dry-run", false, "with --by-tag, only show what would be done")
 }
+
+// objectPaths returns the paths of objs, for previews.
+func objectPaths(objs []api.Object) []string {
+	out := make([]string, len(objs))
+	for i, o := range objs {
+		out[i] = o.Path
+	}
+	return out
+}

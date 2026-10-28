@@ -14,24 +14,32 @@ import (
 func (a *App) shareCommand() *cobra.Command {
 	var ttl, note string
 	var copyURL bool
+	var byTag tagFlags
+	var conf confirmFlags
 	cmd := &cobra.Command{
 		Use:   "share PATH [--ttl 2h] [--note TEXT] [--copy]",
 		Short: "Create a temporary signed link to a file",
 		Long: "Create a signed link that gives access to one file, of any visibility, until it expires.\n" +
 			"Links cannot be permanent (use unlisted for that) and survive renames. Revoke them with\n" +
-			"\"vela links revoke\".",
-		Example:           "  vela share private/report.pdf --ttl 2h --note 'for the reviewer' --copy",
-		Args:              exactArgs(1),
+			"\"vela links revoke\".\n\n" +
+			"--by-tag and --by-tags create one link per object with these tags below the given paths\n" +
+			"(everything by default), after showing them and asking unless -y is given.",
+		Example: "  vela share private/report.pdf --ttl 2h --note 'for the reviewer' --copy\n" +
+			"  vela share --by-tag review --ttl 7d --dry-run",
+		Args:              byTag.args(exactArgs(1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := remotePath(args[0])
-			if err != nil {
-				return err
-			}
 			if ttl != "" {
 				if _, err := api.ParseDuration(ttl); err != nil {
 					return usageError(err)
 				}
+			}
+			if byTag.used() {
+				return a.shareTagged(cmd, args, &byTag, conf, api.CreateLinkRequest{TTL: ttl, Note: note}, copyURL)
+			}
+			path, err := remotePath(args[0])
+			if err != nil {
+				return err
 			}
 			c, _, err := a.client()
 			if err != nil {
@@ -63,7 +71,75 @@ func (a *App) shareCommand() *cobra.Command {
 	cmd.Flags().StringVar(&ttl, "ttl", "", "lifetime, e.g. 90m, 2h, 7d (default: server default, 24h)")
 	cmd.Flags().StringVar(&note, "note", "", "free-text note shown in \"vela links ls\"")
 	cmd.Flags().BoolVar(&copyURL, "copy", false, "copy the URL to the clipboard")
+	byTag.register(cmd)
+	conf.register(cmd, "create the links without asking")
 	return cmd
+}
+
+// shareTagged creates one link per object of a tag selection, from req
+// without its path.
+func (a *App) shareTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags, conf confirmFlags, req api.CreateLinkRequest, copyURL bool) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	objs, err := a.selectTagged(ctx, c, scopes, f)
+	if err != nil {
+		return err
+	}
+	if len(objs) == 0 {
+		return errNothingTagged(f)
+	}
+	paths := objectPaths(objs)
+	ok, err := a.confirmPlan(paths, objs, fmt.Sprintf("Create %d signed link(s)?", len(objs)), conf.yes, conf.dryRun)
+	if err != nil || !ok {
+		return err
+	}
+	links := []*api.Link{}
+	errs := make([]error, len(objs))
+	var rows [][]any
+	var urls []string
+	for i, o := range objs {
+		req.Path = o.Path
+		l, err := c.CreateLink(ctx, req)
+		if err != nil {
+			errs[i] = fmt.Errorf("%s: %w", o.Path, err)
+			continue
+		}
+		links = append(links, l)
+		u := ""
+		if l.URL != nil {
+			u = *l.URL
+			urls = append(urls, u)
+		}
+		rows = append(rows, []any{o.Path, u})
+	}
+	if !a.jsonOut {
+		a.printer.Table(nil, rows)
+	}
+	if copyURL && len(urls) > 0 {
+		if err := a.copyToClipboard(cmd, strings.Join(urls, "\n")); err != nil {
+			a.printer.Warnf("could not copy to the clipboard: %v", err)
+		} else {
+			a.printer.Infof("Copied %d URL(s) to the clipboard.", len(urls))
+		}
+	}
+	if err := batchResult("share", len(objs), errs, paths); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(links)
+	}
+	if len(links) > 0 {
+		a.printer.Infof("Expire %s (in %s). Revoke with: vela links revoke --by-tag ...", output.Time(links[0].ExpiresAt), a.printer.Remaining(links[0].ExpiresAt))
+	}
+	return nil
 }
 
 // copyToClipboard uses whichever clipboard tool exists; there is no portable

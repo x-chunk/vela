@@ -194,3 +194,22 @@ func TestMetaAndVisByTag(t *testing.T) {
 		t.Error("vis --by-tag ignored its scope")
 	}
 }
+
+func TestShareAndLinksByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+
+	if r := h.ok("share", "--by-tag", "math", "--dry-run"); strings.Fields(r.stdout)[0] != "docs/math.pdf" {
+		t.Fatalf("dry run = %q", r.stdout)
+	}
+	if r := h.exec("", "share", "--by-tag", "math"); r.code != exitUsage {
+		t.Fatalf("no terminal: exit %d", r.code)
+	}
+	var links []api.Link
+	h.ok("share", "--by-tag", "math", "--ttl", "2h", "--note", "batch", "-y", "--json").json(t, &links)
+	if len(links) != 2 || links[0].Path != "docs/math.pdf" || links[0].Note != "batch" {
+		t.Fatalf("share --by-tag = %+v", links)
+	}
+	h.ok("share", "a.txt")
+}
