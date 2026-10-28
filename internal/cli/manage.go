@@ -82,7 +82,8 @@ func (a *App) mvCommand() *cobra.Command {
 }
 
 func (a *App) rmCommand() *cobra.Command {
-	var recursive, purge, yes, broken bool
+	var recursive, purge, yes, broken, dryRun bool
+	var byTag tagFlags
 	cmd := &cobra.Command{
 		Use:   "rm PATH...",
 		Short: "Delete files (to the trash)",
@@ -91,10 +92,23 @@ func (a *App) rmCommand() *cobra.Command {
 			"(admin keys only). -r and --purge ask for confirmation; -y skips it, and is required\n" +
 			"when stdin is not a terminal. Removing a symlink never touches the file it points at;\n" +
 			"removing a file breaks the symlinks pointing at it. --broken removes the broken\n" +
-			"symlinks in the given directories (with -r, also below them).",
-		Example: "  vela rm notes/old.md\n  vela rm -r drafts/\n  vela rm --purge -y secret.pdf\n  vela rm --broken -r sorted/",
-		Args:    minArgs(1),
+			"symlinks in the given directories (with -r, also below them).\n\n" +
+			"--by-tag and --by-tags delete every object with these tags below the given paths\n" +
+			"(everything by default). They always show the objects and ask unless -y is given;\n" +
+			"--dry-run only lists them.",
+		Example: "  vela rm notes/old.md\n  vela rm -r drafts/\n  vela rm --purge -y secret.pdf\n  vela rm --broken -r sorted/\n" +
+			"  vela rm --by-tag draft --dry-run",
+		Args: byTag.args(minArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if byTag.used() {
+				if broken {
+					return usagef("--broken cannot be combined with --by-tag")
+				}
+				return a.rmTagged(cmd, args, &byTag, purge, confirmFlags{yes: yes, dryRun: dryRun})
+			}
+			if dryRun {
+				return usagef("--dry-run needs --by-tag or --by-tags")
+			}
 			if broken {
 				return a.rmBroken(cmd, args, recursive, purge, yes)
 			}
@@ -168,7 +182,66 @@ func (a *App) rmCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&purge, "purge", false, "delete permanently, bypassing the trash (admin)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	cmd.Flags().BoolVar(&broken, "broken", false, "remove the broken symlinks in the given directories")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "with --by-tag, only show what would be deleted")
+	byTag.register(cmd)
 	return cmd
+}
+
+// rmTagged deletes the objects of a tag selection after a confirmation.
+func (a *App) rmTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags, purge bool, conf confirmFlags) error {
+	f, err := byTag.filter()
+	if err != nil {
+		return err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	objs, err := a.selectTagged(ctx, c, scopes, f)
+	if err != nil {
+		return err
+	}
+	if len(objs) == 0 {
+		return errNothingTagged(f)
+	}
+	paths := objectPaths(objs)
+	q := fmt.Sprintf("Move %d object(s) to the trash?", len(objs))
+	if purge {
+		q = fmt.Sprintf("Permanently delete %d object(s)?", len(objs))
+	}
+	if ok, err := a.confirmPlan(paths, objs, q, conf.yes, conf.dryRun); err != nil || !ok {
+		return err
+	}
+	errs := make([]error, len(objs))
+	results := []*api.DeleteResponse{}
+	affected := 0
+	for i, p := range paths {
+		res, err := c.Delete(ctx, p, client.DeleteOptions{Purge: purge})
+		if err != nil {
+			errs[i] = fmt.Errorf("%s: %w", p, err)
+			continue
+		}
+		results = append(results, res)
+		affected += res.SymlinksAffected
+		if purge {
+			a.printer.Printf("Deleted %s permanently\n", p)
+		} else {
+			a.printer.Printf("Moved %s to the trash\n", p)
+		}
+	}
+	a.warnSymlinksAffected(affected, purge)
+	if err := batchResult("delete", len(paths), errs, paths); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printer.JSONValue(results)
+	}
+	if !purge {
+		a.printer.Infof("Restore with: vela trash restore <path>")
+	}
+	return nil
 }
 
 // warnSymlinksAffected reports symlinks a deletion left broken.

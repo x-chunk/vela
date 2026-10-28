@@ -237,3 +237,37 @@ func TestShareAndLinksByTag(t *testing.T) {
 		t.Errorf("revoke of nothing: exit %d", r.code)
 	}
 }
+
+func TestRmByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	if r := h.ok("rm", "--by-tag", "math", "--dry-run"); strings.Join(strings.Fields(r.stdout), " ") != "docs/math.pdf docs/sub/math2.pdf" ||
+		!exists("docs/math.pdf") {
+		t.Fatalf("dry run = %q", r.stdout)
+	}
+	if r := h.exec("", "rm", "--by-tag", "math"); r.code != exitUsage || !exists("docs/math.pdf") {
+		t.Fatalf("no terminal: exit %d", r.code)
+	}
+	h.tty = true
+	r := h.exec("n\n", "rm", "--by-tag", "math")
+	if r.code != exitError || !exists("docs/math.pdf") || !strings.Contains(r.stderr, "Move 2 object(s) to the trash? [y/N]") {
+		t.Fatalf("declined: exit %d, stderr %q", r.code, r.stderr)
+	}
+	if r := h.exec("y\n", "rm", "--by-tags", "math draft"); r.code != 0 || exists("docs/math.pdf") || !exists("docs/sub/math2.pdf") {
+		t.Fatalf("accepted: exit %d, stderr %q", r.code, r.stderr)
+	}
+	h.tty = false
+	h.ok("rm", "--by-tag", "q1", "other/", "-y")
+	if exists("other/q1.txt") || !exists("a.txt") {
+		t.Error("rm --by-tag ignored its scope")
+	}
+	if r := h.exec("", "rm", "--by-tag", "q1", "--broken", "-y"); r.code != exitUsage {
+		t.Errorf("--broken with --by-tag: exit %d", r.code)
+	}
+	if r := h.exec("", "rm", "a.txt", "--dry-run"); r.code != exitUsage {
+		t.Errorf("--dry-run without --by-tag: exit %d", r.code)
+	}
+}
