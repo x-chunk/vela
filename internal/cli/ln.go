@@ -63,9 +63,11 @@ func (a *App) lnCommand() *cobra.Command {
 			"selected (--skip-symlinks is implied). --prune also moves to the trash the symlinks in\n" +
 			"DEST whose file lies in SCOPE but is no longer selected; with --prune-trashed also\n" +
 			"those whose file is in the trash (restoring the file would have repaired them, but\n" +
-			"a new symlink gets a new URL and loses the old one's signed links). Files and\n" +
-			"symlinks to anything outside SCOPE are never touched. A new symlink may take the place\n" +
-			"of a pruned one, with a warning; --strict refuses that as a conflict instead.",
+			"a new symlink gets a new URL and loses the old one's signed links).\n" +
+			"Symlinks to files outside SCOPE are kept, unless the file still has the tags: then it\n" +
+			"was most likely moved out of SCOPE, and its symlink is pruned too. Files are never\n" +
+			"touched. A new symlink may take the place of a pruned one, with a warning; --strict\n" +
+			"refuses that as a conflict instead.",
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
@@ -298,6 +300,10 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 		} else {
 			if f.prune {
 				prune = pruneLinks(l.Objects, plan, scopes, f.pruneTrashed)
+				var moved []linkPrune
+				if moved, err = movedOutLinks(ctx, c, l.Objects, scopes, filter); err == nil {
+					prune = append(prune, moved...)
+				}
 			}
 			plan, upToDate = a.syncLinkPlan(l.Objects, plan)
 		}
@@ -438,6 +444,31 @@ func (a *App) freedByPrune(plan []taggedMove, conflicts []planConflict, prune []
 		kept = append(kept, p)
 	}
 	return kept
+}
+
+// movedOutLinks returns the symlinks among existing whose file lies outside
+// scopes but still matches f: the file was most likely selected once and
+// moved out since, so the symlink is stale. A symlink to any other file
+// outside scopes is someone's own and is kept.
+func movedOutLinks(ctx context.Context, c *client.Client, existing []api.Object, scopes []string, f api.TagFilter) ([]linkPrune, error) {
+	var out []linkPrune
+	for _, o := range existing {
+		t := o.Target
+		if o.Kind != api.KindSymlink || t == nil || t.Path == nil || t.State != api.TargetOK || inScopes(*t.Path, scopes) {
+			continue
+		}
+		target, err := c.Stat(ctx, *t.Path)
+		switch {
+		case api.IsCode(err, api.CodeNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("check %s: %w", *t.Path, err)
+		}
+		if target.ID == t.ID && f.Match(target.Tags) {
+			out = append(out, linkPrune{Path: o.Path, Reason: "the file moved out of scope"})
+		}
+	}
+	return out, nil
 }
 
 // inScopes reports whether p is one of the file scopes or below one of the

@@ -550,3 +550,21 @@ func TestLnByTagPruneFreesPlace(t *testing.T) {
 		t.Errorf("--strict without --prune: exit %d", r.code)
 	}
 }
+
+func TestLnByTagPruneMovedOut(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	seedTags(h)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+
+	h.ok("ln", "--by-tag", "math", "docs/", "L/", "-y")
+	h.seedTagged("own.pdf")
+	h.ok("ln", "own.pdf", "L/own.pdf")
+	h.ok("mv", "docs/math.pdf", "elsewhere/math.pdf")
+
+	r := h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--prune", "-y")
+	if !strings.Contains(r.stdout, "Moved L/math.pdf to the trash (the file moved out of scope)") ||
+		exists("L/math.pdf") || !exists("L/own.pdf") || !exists("L/math2.pdf") {
+		t.Fatalf("moved out = %+v", r)
+	}
+}
