@@ -162,13 +162,24 @@ func (a *App) copyToClipboard(cmd *cobra.Command, text string) error {
 func (a *App) linksCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "links", Short: "List or revoke signed links"}
 	var all bool
+	var lsTags, revokeTags tagFlags
+	var revokeConf confirmFlags
 	ls := &cobra.Command{
-		Use:               "ls [PATH]",
-		Short:             "List signed links (active ones by default)",
-		Args:              rangeArgs(0, 1),
+		Use:   "ls [PATH]",
+		Short: "List signed links (active ones by default)",
+		Long: "List signed links, active ones by default. --by-tag and --by-tags list the links of\n" +
+			"objects with these tags below the given paths (everything by default).",
+		Args:              lsTags.args(rangeArgs(0, 1)),
 		ValidArgsFunction: a.completeRemote(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := client.LinkListOptions{IncludeExpired: all, IncludeRevoked: all}
+			if lsTags.used() {
+				list, err := a.taggedLinks(cmd, args, &lsTags, opts)
+				if err != nil {
+					return err
+				}
+				return a.printLinks(list)
+			}
 			if len(args) == 1 {
 				p, err := remotePath(args[0])
 				if err != nil {
@@ -190,11 +201,35 @@ func (a *App) linksCommand() *cobra.Command {
 		},
 	}
 	ls.Flags().BoolVar(&all, "all", false, "include expired and revoked links")
+	lsTags.register(ls)
 	revoke := &cobra.Command{
 		Use:   "revoke ID...",
 		Short: "Revoke signed links; they stop working immediately",
-		Args:  minArgs(1),
+		Long: "Revoke signed links by ID. --by-tag and --by-tags revoke the active links of objects\n" +
+			"with these tags below the given paths (everything by default), after showing them and\n" +
+			"asking unless -y is given.",
+		Example: "  vela links revoke 01jb6z...\n  vela links revoke --by-tag review docs/",
+		Args:    revokeTags.args(minArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if revokeTags.used() {
+				list, err := a.taggedLinks(cmd, args, &revokeTags, client.LinkListOptions{})
+				if err != nil {
+					return err
+				}
+				if len(list.Links) == 0 {
+					return &cliError{code: exitNotFound, slug: string(api.CodeNotFound), msg: "no active links to the tagged objects"}
+				}
+				lines := make([]string, len(list.Links))
+				args = make([]string, len(list.Links))
+				for i, l := range list.Links {
+					lines[i] = l.ID + "  " + l.Path
+					args[i] = l.ID
+				}
+				ok, err := a.confirmPlan(lines, list, fmt.Sprintf("Revoke %d link(s)?", len(list.Links)), revokeConf.yes, revokeConf.dryRun)
+				if err != nil || !ok {
+					return err
+				}
+			}
 			c, _, err := a.client()
 			if err != nil {
 				return err
@@ -216,6 +251,8 @@ func (a *App) linksCommand() *cobra.Command {
 			return nil
 		},
 	}
+	revokeTags.register(revoke)
+	revokeConf.register(revoke, "revoke without asking")
 	cmd.AddCommand(ls, revoke)
 	return cmd
 }
@@ -242,4 +279,41 @@ func (a *App) printLinks(list *api.LinkList) error {
 	}
 	a.printer.Table([]string{"ID", "EXPIRES IN", "PATH", "NOTE"}, rows)
 	return nil
+}
+
+// taggedLinks returns the links (selected by opts) of the objects of a tag
+// selection. Links carry no tags, so they are matched by object ID.
+func (a *App) taggedLinks(cmd *cobra.Command, scopes []string, byTag *tagFlags, opts client.LinkListOptions) (*api.LinkList, error) {
+	f, err := byTag.filter()
+	if err != nil {
+		return nil, err
+	}
+	c, _, err := a.client()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := a.ctx(cmd)
+	defer cancel()
+	objs, err := a.selectTagged(ctx, c, scopes, f)
+	if err != nil {
+		return nil, err
+	}
+	out := &api.LinkList{Links: []api.Link{}}
+	if len(objs) == 0 {
+		return out, nil
+	}
+	ids := make(map[string]bool, len(objs))
+	for _, o := range objs {
+		ids[o.ID] = true
+	}
+	list, err := c.ListLinks(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range list.Links {
+		if ids[l.ObjectID] {
+			out.Links = append(out.Links, l)
+		}
+	}
+	return out, nil
 }

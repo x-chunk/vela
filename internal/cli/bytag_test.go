@@ -212,4 +212,28 @@ func TestShareAndLinksByTag(t *testing.T) {
 		t.Fatalf("share --by-tag = %+v", links)
 	}
 	h.ok("share", "a.txt")
+
+	var list api.LinkList
+	h.ok("links", "ls", "--by-tag", "math", "--json").json(t, &list)
+	if len(list.Links) != 2 {
+		t.Fatalf("links ls --by-tag = %+v", list)
+	}
+	h.ok("links", "ls", "--by-tag", "math", "docs/sub/", "--json").json(t, &list)
+	if len(list.Links) != 1 || list.Links[0].Path != "docs/sub/math2.pdf" {
+		t.Fatalf("links ls --by-tag docs/sub/ = %+v", list)
+	}
+
+	h.tty = true
+	if r := h.exec("n\n", "links", "revoke", "--by-tags", "math draft"); r.code != exitError {
+		t.Fatalf("declined revoke: exit %d", r.code)
+	}
+	h.tty = false
+	h.ok("links", "revoke", "--by-tags", "math draft", "-y")
+	h.ok("links", "ls", "--json").json(t, &list)
+	if len(list.Links) != 2 {
+		t.Fatalf("after revoke: %+v", list)
+	}
+	if r := h.exec("", "links", "revoke", "--by-tags", "math draft", "-y"); r.code != exitNotFound {
+		t.Errorf("revoke of nothing: exit %d", r.code)
+	}
 }
