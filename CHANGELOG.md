@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- `vela meta -r` changes tags, description, disposition and expiry of several
+  files and everything below directories. Tags are edited per object, objects
+  that already match are left alone, and `--title` and `--content-type` are
+  refused with `-r`.
+
 ## v0.4.0 — 2026-10-28
 
 ### Added

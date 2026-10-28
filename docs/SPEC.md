@@ -675,6 +675,7 @@ key = "vela_..."
 | `vela trash purge [<id>...] [--older-than 7d] [-y]` | окончательное удаление |
 | `vela meta <path>` | показать метаданные |
 | `vela meta <path> --title t --description d --tag x --untag y --content-type ct --disposition attachment --expires 7d\|<RFC3339>\|none` | изменить метаданные (PATCH с If-Match текущей ревизии) |
+| `vela meta -r <path>... --description d --tag x --untag y --disposition attachment --expires ...` | то же для нескольких путей и всего под директориями; теги меняются у каждого объекта отдельно, совпадающие объекты не патчатся, `--title` и `--content-type` с `-r` запрещены |
 | `vela vis <path>... <public\|unlisted\|private> [-r]` | быстрая смена видимости (в т.ч. для всего префикса) |
 | `vela share <path> [--ttl 2h] [--note s] [--copy]` | создать подписанную ссылку и напечатать URL. `--copy` копирует в буфер обмена (`wl-copy` / `xclip` / `pbcopy` / `clip.exe`, если доступны; иначе предупреждение) |
 | `vela links ls [path] [--all]` | список ссылок (по умолчанию только активные) с оставшимся временем |
