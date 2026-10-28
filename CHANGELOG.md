@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- Tag selection: `--by-tag x` (one tag; repeated flags are alternatives) and
+  `--by-tags "a b"` (all of the tags) select objects instead of paths in
+  `ls`, `stat`, `url`, `open`, `get`, `meta`, `vis`, `share`, `links ls`,
+  `links revoke`, `rm`, `mv`, `trash ls`, `trash purge` and `trash restore`.
+  Paths narrow the search. `rm`, `mv`, `share`, `open`, `links revoke` and
+  the trash commands show the plan and ask before acting (`-y` skips the
+  question, `--dry-run` only shows it). `get` keeps the directory structure;
+  `mv` moves flat or with `--save-structure` and reports every conflict
+  before the first move.
+- `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
+  parameter (comma-separated groups, OR-ed); the Go client also filters the
+  results, so older servers cannot widen a selection.
+
 ## v0.5.0 — 2026-10-28
 
 ### Added
