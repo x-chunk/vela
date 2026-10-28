@@ -470,7 +470,7 @@ CLI вызывает его в `vela login`, `vela whoami`, `vela version` и п
 #### `GET /api/v1/objects` — листинг
 Симлинки (`kind`, `target`, `POST /api/v1/symlinks`, фильтры `kind`/`broken`/`target`) — см. [SPEC-symlinks.md](SPEC-symlinks.md) §4.
 
-Query: `prefix` (директория, с завершающим `/` или пустой для корня), `recursive` (bool, default false), `visibility` (фильтр, можно несколько через запятую), `limit` (1–1000, default 200), `cursor` (непрозрачный).
+Query: `prefix` (директория, с завершающим `/` или пустой для корня), `recursive` (bool, default false), `visibility` (фильтр, можно несколько через запятую), `tag` (фильтр по тегам, см. ниже), `limit` (1–1000, default 200), `cursor` (непрозрачный).
 
 ```json
 {
@@ -483,6 +483,7 @@ Query: `prefix` (директория, с завершающим `/` или пу
 - Нерекурсивный режим возвращает непосредственных потомков: объекты и «директории» (common prefixes). Рекурсивный — только объекты, `dirs` пуст.
 - Сортировка по `path` (байтовая). Пагинация курсором (последний path), стабильна.
 - Ключ с префиксом видит только свой префикс; запрос за его пределами → 403.
+- `tag` повторяется; каждое значение — группа тегов через запятую, которые объект должен иметь все (И), а группы объединяются через ИЛИ: `?tag=math,draft&tag=q1` — «(math и draft) или q1». Теги нормализуются как в §10.2, не больше 32 групп; пустая группа или недопустимый тег → 400 `invalid_request`. Симлинки сравниваются по своим тегам. В нерекурсивном режиме `dirs` содержит только директории с подходящими объектами. Фильтр только сужает выборку и не меняет проверки префикса.
 
 #### `GET /api/v1/objects/{path...}` — stat
 `200` Object + `ETag: "r<revision>"`.
@@ -553,7 +554,7 @@ Query: `recursive` (для префикса, путь с завершающим 
 - `If-Match` поддерживается для одиночного объекта.
 
 #### Корзина
-- `GET /api/v1/trash?prefix=&limit=&cursor=` → `{"entries":[{ "id", "original_path", "deleted_at", "purge_at", "object": {...Object} }], "next_cursor": ""}`
+- `GET /api/v1/trash?prefix=&tag=&limit=&cursor=` (`tag` — как в листинге, по тегам удалённого объекта) → `{"entries":[{ "id", "original_path", "deleted_at", "purge_at", "object": {...Object} }], "next_cursor": ""}`
 - `POST /api/v1/trash/{id}/restore` с телом `{"path": "<optional new path>", "overwrite": false}` → `200` Object. Восстанавливает тот же `id` объекта (ссылки снова работают). Конфликт пути → 409.
 - `DELETE /api/v1/trash/{id}` → окончательное удаление (`admin`). `204`.
 - `DELETE /api/v1/trash?older_than=7d` → очистка (`admin`). `{"purged": n}`. Без `older_than` чистит всё.
@@ -1122,3 +1123,4 @@ Astra читает `AGENTS.md` и `docs/SPEC.md`, проводит ревью н
 | 2026-10-18 | §1, §7.3–7.6, §11; SPEC-web | Optional read-only web sign-in (`VELA_WEB_AUTH`, default off). An API key is accepted once in the body of a same-origin `POST /_vela/login` and exchanged for a cookie with a random session ID whose SHA-256 is stored; the key is re-read on every request. Sessions see the anonymous view plus their key's prefix, get `private, no-store` responses, and public responses vary by `Cookie`. Failed sign-ins have a separate budget of 5 per minute per IP. `velad session revoke-all` ends every session. | Owner browsing of private and hidden content without a new credential type; decisions in SPEC-web. |
 | 2026-10-18 | §11.3, §19.8; SPEC-web | While web sign-in is enabled, uploads other than raster images, audio, video, PDF and plain text (HTML, SVG and any XML included) are served with a CSP sandbox in every delivery mode; accel carries it and `Vary` as `X-Vela-*` headers. | §19.8 relied on an origin without cookies; with a session cookie an uploaded page could read and leak private files. |
 | 2026-10-28 | §10.2, §10.3, §10.4, §12.3, §13.1; SPEC-symlinks | New object kind `symlink` that points to a file by ID, not by path (unlike POSIX symlinks, renames do not break it). Effective visibility is the stricter of the symlink and its target; prefixes are checked for both paths. Broken symlinks list with `size = 0`, `sha256 = ""`, `content_type = ""`. New endpoint `POST /api/v1/symlinks`, listing filters, `symlinks_affected`, `features`, and error code `is_symlink` (409) for writing content through a symlink. | Sort originals into several places without copying content; all changes are additive to API v1. |
+| 2026-10-28 | §10.4 | Object and trash listings accept a repeated `tag` parameter: comma-separated tag groups, AND within a group, OR between groups. The Go client also applies the filter to returned objects. | Tag selection for the CLI (`--by-tag`, `--by-tags`). Older servers ignore unknown parameters, so the client re-checks results: deleting or moving by tag never touches objects that do not match. |
