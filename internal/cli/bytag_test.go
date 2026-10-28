@@ -584,6 +584,18 @@ func TestLnByTagSyncCopyMeta(t *testing.T) {
 	if got := strings.TrimSpace(r.stdout); got != "~ L/math.pdf (title, tags)" {
 		t.Fatalf("plan = %q", got)
 	}
+	r = h.ok("ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta=tags,visibility", "--dry-run")
+	if got := strings.TrimSpace(r.stdout); got != "~ L/math.pdf (tags)" {
+		t.Fatalf("plan for tags = %q", got)
+	}
+	for _, args := range [][]string{
+		{"ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta=size", "-y"},
+		{"ln", "-f", "--copy-meta=tags", "docs/math.pdf", "L/math.pdf"},
+	} {
+		if r := h.exec("", args...); r.code != exitUsage {
+			t.Errorf("%v: exit %d", args, r.code)
+		}
+	}
 	if r := h.exec("", "ln", "--by-tag", "math", "docs/", "L/", "--sync", "--copy-meta"); r.code != exitUsage {
 		t.Fatalf("no terminal: exit %d", r.code)
 	}

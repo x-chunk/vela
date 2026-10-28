@@ -16,8 +16,11 @@ import (
 // an absent visibility flag means "copy it from the source", not the
 // profile's default visibility.
 type lnFlags struct {
-	recursive, force, dryRun  bool
-	copyMeta, noCopyMeta      bool
+	recursive, force, dryRun bool
+	copyMeta, noCopyMeta     bool
+	// copyMetaRaw is the value of --copy-meta: "all" or a field list.
+	copyMetaRaw               string
+	metaFields                []metaField
 	public, unlisted, private bool
 	title, description        string
 	tags                      []string
@@ -138,7 +141,9 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVarP(&f.recursive, "recursive", "r", false, "link every file under a directory")
 	fl.BoolVarP(&f.force, "force", "f", false, "replace existing destinations (retarget symlinks, trash files)")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "show what would be linked without changing anything")
-	fl.BoolVar(&f.copyMeta, "copy-meta", false, "copy the source's metadata again when retargeting with -f (with --sync: to every symlink)")
+	fl.StringVar(&f.copyMetaRaw, "copy-meta", "", "copy the source's metadata again, when retargeting with -f or to every symlink with --sync\n"+
+		"(all, or with --sync a list of title, description, tags, disposition, visibility)")
+	fl.Lookup("copy-meta").NoOptDefVal = "all"
 	fl.BoolVar(&f.noCopyMeta, "no-copy-meta", false, "do not copy the source's metadata to new symlinks")
 	cmd.MarkFlagsMutuallyExclusive("copy-meta", "no-copy-meta")
 	fl.BoolVar(&f.public, "public", false, "listed in the index and served by URL")
@@ -170,6 +175,16 @@ func (a *App) lnCommand() *cobra.Command {
 // request builds the metadata part of a symlink request from the flags.
 func (f *lnFlags) request(cmd *cobra.Command, a *App) (api.CreateSymlinkRequest, error) {
 	req := api.CreateSymlinkRequest{Overwrite: f.force}
+	if cmd.Flags().Changed("copy-meta") {
+		fields, err := parseMetaFields(f.copyMetaRaw)
+		if err != nil {
+			return req, err
+		}
+		if len(fields) < len(allMetaFields) && !f.sync {
+			return req, usagef("--copy-meta with a field list needs --by-tag and --sync")
+		}
+		f.copyMeta, f.metaFields = true, fields
+	}
 	switch {
 	case f.copyMeta:
 		req.CopyMeta = ptrTo(true)
@@ -304,7 +319,7 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 			err = fmt.Errorf("list %s: %w", dest, err)
 		} else {
 			if f.copyMeta {
-				updates = metaUpdates(l.Objects, plan, allMetaFields)
+				updates = metaUpdates(l.Objects, plan, f.metaFields)
 			}
 			if f.prune {
 				prune = pruneLinks(l.Objects, plan, scopes, f.pruneTrashed)
@@ -514,6 +529,27 @@ var allMetaFields = []metaField{
 		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Disposition = ptrTo(o.Disposition) }},
 	{"visibility", func(l, o *api.Object) bool { return l.Visibility == o.Visibility },
 		func(r *api.CreateSymlinkRequest, o *api.Object) { r.Visibility = ptrTo(o.Visibility) }},
+}
+
+// parseMetaFields parses the value of --copy-meta: "all" (or "true", for
+// those who spell out the old boolean) or a comma-separated list of fields.
+func parseMetaFields(raw string) ([]metaField, error) {
+	switch strings.TrimSpace(raw) {
+	case "all", "true":
+		return allMetaFields, nil
+	}
+	var out []metaField
+	for name := range strings.SplitSeq(raw, ",") {
+		name = strings.TrimSpace(name)
+		i := slices.IndexFunc(allMetaFields, func(m metaField) bool { return m.name == name })
+		if i < 0 {
+			return nil, usagef("--copy-meta: unknown field %q (use title, description, tags, disposition, visibility or all)", name)
+		}
+		if !slices.ContainsFunc(out, func(m metaField) bool { return m.name == name }) {
+			out = append(out, allMetaFields[i])
+		}
+	}
+	return out, nil
 }
 
 // linkUpdate is a symlink whose metadata ln --sync --copy-meta copies
