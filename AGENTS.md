@@ -125,6 +125,7 @@ Use reserved example domains, documentation IP ranges, and neutral paths in sour
 12. Paths are validated in one place (`api.CleanObjectPath`/`CleanPrefix`): NFC, no empty/dot segments, no control characters or backslashes, length limits, reserved first segments (`api`, `s`, `_vela`, `_blobs`, `healthz`, `robots.txt`, `favicon.ico`). Non-canonical API URLs are rejected rather than redirected.
 13. In accel mode, velad never sends `Cache-Control` directly (nginx would forward it *and* add the `X-Vela-Cache-Control` copy); the e2e test checks that every header arrives exactly once and nothing internal leaks.
 14. Web sessions (`docs/web-auth.md`) are read-only, re-read their key on every request (revocation is immediate) and see only the anonymous view plus their key's prefix; elsewhere they get the anonymous answer, 404 included. Every response for a session is `private, no-store`, public responses vary by `Cookie`, sign-in and sign-out accept only same-origin POSTs, and failed sign-ins are rate limited per IP. While sign-in is enabled, every upload except raster images, audio, video, PDF and plain text is served with a CSP sandbox, because the origin holds the session cookie.
+15. Symlinks (`docs/SPEC-symlinks.md`) resolve one level, by object ID, to a file. The key prefix must cover the symlink's path and its target's current path, at creation and on every authenticated read (a target outside the prefix is `gone`, 404 to download, never 403). Anonymous delivery, the index, web sessions and signed links use the effective visibility, the stricter of the symlink's and its target's, and need a live target. Content is never written through a symlink (`409 is_symlink`), and symlinks never reference or queue blobs.
 
 ## What counts as a breaking change in API v1
 
@@ -147,7 +148,8 @@ Not breaking: new endpoints, new optional request fields or headers, new respons
 - Let a web session write anything, or serve uploads that browsers may run as documents without the sandbox while sign-in is enabled.
 - Let nginx make access decisions or serve `blobs/` outside the internal location.
 - Answer 403 where existence must stay hidden (public side, signed links).
-- Bypass `api` path validation or the service's prefix checks.
+- Bypass `api` path validation or the service's prefix checks, including the target prefix check of symlinks.
+- Let a symlink point at another symlink, write content through one, or serve one by its own visibility alone.
 - Add an HTTP endpoint that manages API keys.
 - Store blobs under logical paths, or move blob files on rename (renames are database-only).
 

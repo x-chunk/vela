@@ -12,6 +12,12 @@
   `velad session revoke-all`. See [web sign-in](docs/web-auth.md).
 - Theme contract: `Flags`, `Session`, `SignInURL`, the `flagIcon` helper and an
   optional `login.html`. Themes without them keep working.
+- Symlinks: `vela ln` (and `POST /api/v1/symlinks`) creates entries that serve
+  another file's content, referring to it by ID, so renames keep them working
+  and deletions leave them broken. Anonymous visitors get the stricter of the
+  two visibilities. Listings gain `kind`, `broken` and `target` filters
+  (`vela ls --type/--broken/--target`), deletes report `symlinks_affected`, and
+  `vela rm --broken` cleans up. See [symlinks](docs/SPEC-symlinks.md).
 
 ### Changed
 
@@ -24,6 +30,10 @@
 
 ### Upgrading
 
+- `velad serve` applies migration `0006_symlinks` on start, which rebuilds the
+  `objects` and `trash` tables; take a backup first, as an older image cannot
+  use the migrated database. Writing content to the path of a symlink fails
+  with the new error code `is_symlink` (409).
 - `velad serve` applies migration `0005_web_sessions` on start; take a backup
   first, as an older image cannot use the migrated database.
 - Before enabling web sign-in with nginx accel, add the new `Vary` and

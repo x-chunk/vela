@@ -48,6 +48,28 @@ restoration retains its object ID. Expired objects become inaccessible publicly
 immediately, but authenticated API reads remain possible until janitor cleanup.
 Physical content deletion follows the [storage durability rules](storage.md).
 
+A [symlink](SPEC-symlinks.md) (`kind: symlink`) is an object without a blob that
+refers to a file by ID, so moves of the file keep it working, overwrites change
+what it serves, and trash or purge break it until the file is restored. Targets
+resolve one level only: a symlink always points at a file, and a symlink source
+is dereferenced when another symlink is created from it. The store resolves the
+target in the same statement as every object read (`internal/store/objects.go`),
+and listings, index trees and directory statistics compute effective visibility
+and liveness in SQL. Access rules live in `internal/service/symlinks.go`:
+
+- the key prefix must cover both the symlink and its target when the symlink is
+  created, and again on every authenticated read; a target outside the prefix is
+  reported as `gone` and cannot be downloaded, shared or linked again;
+- anonymous delivery, the index and signed links use the effective visibility,
+  the stricter of the symlink's and its target's, and require both to be live;
+- web sessions follow a symlink inside their prefix only to a target that is
+  effectively non-private or also inside the prefix;
+- content is never written through a symlink (`409 is_symlink`), and purging a
+  symlink never queues a blob.
+
+Delivery substitutes the target's blob, digest and content type, and keeps the
+symlink's name, disposition and directory policies.
+
 API keys and HMAC signing keys have separate lifecycles. API key creation prints
 the secret once; the database stores its hash. `velad signing rotate` retires
 older signing keys while preserving their links until expiry. `--revoke-all`
@@ -70,6 +92,7 @@ accept HEAD. Routing lives in [`internal/server/api.go`](../internal/server/api.
 | GET / PATCH / DELETE | `/objects/{path...}` | Stat / merge patch / delete |
 | GET / PUT | `/content/{path...}` | Download / streaming upload |
 | POST | `/move` | Atomic logical move, optionally recursive |
+| POST | `/symlinks` | Create or retarget a symlink, or link a directory tree atomically |
 | GET / DELETE | `/trash` | List / purge trash |
 | DELETE | `/trash/{id}` | Purge one trash entry |
 | POST | `/trash/{id}/restore` | Restore an entry |
