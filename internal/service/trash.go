@@ -125,7 +125,9 @@ func (s *Service) Delete(ctx context.Context, p Principal, dp DeleteParams) (api
 type TrashParams struct {
 	Prefix string
 	// Path selects entries with exactly this original path.
-	Path   string
+	Path string
+	// Tags selects entries by the tags of their object.
+	Tags   api.TagFilter
 	Limit  int
 	Cursor string
 }
@@ -135,7 +137,7 @@ func (s *Service) ListTrash(ctx context.Context, p Principal, tp TrashParams) (a
 	if err := p.require(api.ScopeRW); err != nil {
 		return api.TrashList{}, err
 	}
-	q := domain.TrashQuery{}
+	q := domain.TrashQuery{Tags: tp.Tags}
 	var err error
 	if q.Prefix, err = api.CleanPrefix(tp.Prefix); err != nil {
 		return api.TrashList{}, pathError(err)

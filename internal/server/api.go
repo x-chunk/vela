@@ -390,8 +390,12 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request, p servi
 	if err != nil {
 		return err
 	}
+	tags, err := api.ParseTagFilter(q["tag"])
+	if err != nil {
+		return requestError(service.ErrInvalidRequest, err.Error())
+	}
 	list, err := s.svc.ListTrash(r.Context(), p, service.TrashParams{
-		Prefix: q.Get("prefix"), Path: q.Get("path"), Limit: limit, Cursor: q.Get("cursor"),
+		Prefix: q.Get("prefix"), Path: q.Get("path"), Tags: tags, Limit: limit, Cursor: q.Get("cursor"),
 	})
 	if err != nil {
 		return err

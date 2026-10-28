@@ -262,6 +262,8 @@ type TrashQuery struct {
 	Within string
 	// Path selects entries with exactly this original path.
 	Path string
+	// Tags, when non-empty, selects entries whose object's tags match it.
+	Tags api.TagFilter
 	// BeforeSeq is the exclusive cursor: entries with a smaller Seq follow.
 	// Zero means from the newest.
 	BeforeSeq int64

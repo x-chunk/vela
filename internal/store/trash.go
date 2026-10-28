@@ -83,6 +83,11 @@ func (q reads) ListTrash(ctx context.Context, tq domain.TrashQuery) ([]domain.Tr
 		conds = append(conds, "x.original_path = ?")
 		args = append(args, tq.Path)
 	}
+	if len(tq.Tags) > 0 {
+		cond, tagArgs := tagFilterSQL("x", tq.Tags)
+		conds = append(conds, cond)
+		args = append(args, tagArgs...)
+	}
 	if tq.BeforeSeq > 0 {
 		conds = append(conds, "x.seq < ?")
 		args = append(args, tq.BeforeSeq)

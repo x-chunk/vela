@@ -607,3 +607,22 @@ func TestListByTag(t *testing.T) {
 	expectStatus(t, h.admin("GET", api.RouteObject+"?tag=a/b", ""), 400)
 	expectStatus(t, h.admin("GET", api.RouteObject+"?tag=", ""), 400)
 }
+
+func TestTrashListByTag(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.upload("a.pdf", "a", api.HeaderTags, "math,draft")
+	h.upload("b.pdf", "b", api.HeaderTags, "math")
+	h.upload("c.pdf", "c")
+	for _, p := range []string{"a.pdf", "b.pdf", "c.pdf"} {
+		expectStatus(t, h.admin("DELETE", api.ObjectRoute(p), ""), 200)
+	}
+	r := h.admin("GET", api.RouteTrash+"?tag=draft,math&tag=nope", "")
+	expectStatus(t, r, 200)
+	var l api.TrashList
+	r.json(t, &l)
+	if len(l.Entries) != 1 || l.Entries[0].OriginalPath != "a.pdf" {
+		t.Fatalf("trash by tag = %+v", l.Entries)
+	}
+	expectStatus(t, h.admin("GET", api.RouteTrash+"?tag=bad%20tag%2F", ""), 400)
+}
