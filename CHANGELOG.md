@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## v0.9.0 — 2026-10-31
+
+### Added
+
+- `vela ln --by-tag … --sync --copy-meta` copies changed metadata of the
+  files to their existing symlinks in place (URLs and signed links keep
+  working); `--copy-meta=title,tags` limits it to these fields.
+
+### Fixed
+
+- Conflicts of a refused `mv --by-tag`, `ln --by-tag` or
+  `trash restore --by-tag` are listed on separate lines instead of one line
+  joined by a literal `\n`.
+
+## v0.8.0 — 2026-10-28
+
+### Added
+
+- `vela ln --by-tag … --sync` links only what is missing in DEST, so it can
+  be rerun to keep a tag view current; `--prune` also moves to the trash
+  the symlinks whose file in scope lost its tags or is in the trash. A new
+  symlink may take a pruned one's place (with a warning); `--strict` makes
+  that a conflict.
+  Symlinks to trashed files are kept unless `--prune-trashed` is given,
+  since restoring the file repairs them; symlinks to tagged files moved out
+  of scope are pruned.
+
+## v0.7.0 — 2026-10-28
+
+### Added
+
+- `vela ln --by-tag` and `--by-tags` link a tag selection into a directory,
+  flat or with `--save-structure`. Conflicts stop it before the first
+  symlink; `--skip` leaves conflicting objects out silently and
+  `--skip-explicitly` reports each one. `--skip-symlinks` leaves symlinks,
+  which copy their file's tags, out of the selection. Like `mv`, it shows
+  the plan and asks first (`-y`, `--dry-run`).
+
+## v0.6.0 — 2026-10-28
+
 ### Added
 
 - Tag selection: `--by-tag x` (one tag; repeated flags are alternatives) and
@@ -13,32 +53,9 @@
   question, `--dry-run` only shows it). `get` keeps the directory structure;
   `mv` moves flat or with `--save-structure` and reports every conflict
   before the first move.
-- `vela ln --by-tag` and `--by-tags` link a tag selection into a directory,
-  flat or with `--save-structure`. Conflicts stop it before the first
-  symlink; `--skip` leaves conflicting objects out silently and
-  `--skip-explicitly` reports each one. `--skip-symlinks` leaves symlinks,
-  which copy their file's tags, out of the selection. Like `mv`, it shows
-  the plan and asks first (`-y`, `--dry-run`).
-- `vela ln --by-tag … --sync` links only what is missing in DEST, so it can
-  be rerun to keep a tag view current; `--prune` also moves to the trash
-  the symlinks whose file in scope lost its tags or is in the trash. A new
-  symlink may take a pruned one's place (with a warning); `--strict` makes
-  that a conflict.
-  Symlinks to trashed files are kept unless `--prune-trashed` is given,
-  since restoring the file repairs them; symlinks to tagged files moved out
-  of scope are pruned.
-- `vela ln --by-tag … --sync --copy-meta` copies changed metadata of the
-  files to their existing symlinks in place (URLs and signed links keep
-  working); `--copy-meta=title,tags` limits it to these fields.
 - `GET /api/v1/objects` and `GET /api/v1/trash` accept a repeated `tag`
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
-
-### Fixed
-
-- Conflicts of a refused `mv --by-tag`, `ln --by-tag` or
-  `trash restore --by-tag` are listed on separate lines instead of one line
-  joined by a literal `\n`.
 
 ## v0.5.0 — 2026-10-28
 
