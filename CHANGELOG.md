@@ -34,6 +34,12 @@
   parameter (comma-separated groups, OR-ed); the Go client also filters the
   results, so older servers cannot widen a selection.
 
+### Fixed
+
+- Conflicts of a refused `mv --by-tag`, `ln --by-tag` or
+  `trash restore --by-tag` are listed on separate lines instead of one line
+  joined by a literal `\n`.
+
 ## v0.5.0 — 2026-10-28
 
 ### Added
