@@ -52,7 +52,10 @@ func (a *App) lnCommand() *cobra.Command {
 			"With several SOURCEs, DEST must be a directory (ending with /). -r links every file\n" +
 			"under a directory at once; files added to it later are not linked. -f replaces an\n" +
 			"existing DEST: a symlink is retargeted in place (its URL and signed links follow the\n" +
-			"new file), a file goes to the trash.\n\n" +
+			"new file), a file goes to the trash. With -r, --skip links the rest and leaves out\n" +
+			"destinations that conflict (existing ones unless -f), --skip-explicitly also reports\n" +
+			"each, and --skip-symlinks leaves the symlinks under SOURCE out. A DEST inside SOURCE\n" +
+			"is never walked, so the tree can be linked into its own subdirectory again.\n\n" +
 			"With --by-tag or --by-tags, \"ln [SCOPE...] DEST/\" links every object with these tags\n" +
 			"below SCOPE (everything by default) into the directory DEST: each under its own name,\n" +
 			"or with --save-structure under its path relative to SCOPE. Every conflict (two objects\n" +
@@ -78,6 +81,7 @@ func (a *App) lnCommand() *cobra.Command {
 		Example: "  vela ln originals/a.jpg sorted/travel/a.jpg\n" +
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
+			"  vela ln -r --skip --skip-symlinks notes/ notes/all/\n" +
 			"  vela ln -f originals/new.pdf latest.pdf\n" +
 			"  vela ln --by-tag travel originals/ sorted/travel/ --skip-explicitly\n" +
 			"  vela ln --by-tag travel originals/ sorted/travel/ --save-structure --sync -y",
@@ -159,15 +163,15 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVarP(&f.symbolic, "symbolic", "s", false, "accepted for compatibility with ln -s; has no effect")
 	_ = fl.MarkHidden("symbolic")
 	fl.BoolVar(&f.keepTree, "save-structure", false, "with --by-tag, keep paths relative to SCOPE instead of linking flat")
-	fl.BoolVar(&f.skip, "skip", false, "with --by-tag, leave conflicting objects out silently and link the rest")
-	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag, leave conflicting objects out, report each, and link the rest")
+	fl.BoolVar(&f.skip, "skip", false, "with --by-tag or -r, leave conflicting objects out silently and link the rest")
+	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag or -r, leave conflicting objects out, report each, and link the rest")
 	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
 	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
 	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE that are no longer selected")
 	fl.BoolVar(&f.pruneTrashed, "prune-trashed", false, "with --prune, also trash symlinks to files in the trash")
 	fl.BoolVar(&f.strict, "strict", false, "with --prune, treat the place of a pruned symlink as taken")
-	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
+	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag or -r, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
 }
@@ -176,14 +180,15 @@ func (a *App) lnCommand() *cobra.Command {
 // ones that were given rather than every flag of the group.
 func (f *lnFlags) tagOnly() error {
 	var used []string
+	tree := f.recursive
 	for _, fl := range []struct {
 		name string
 		set  bool
 	}{
 		{"--save-structure", f.keepTree},
-		{"--skip", f.skip},
-		{"--skip-explicitly", f.skipExplicitly},
-		{"--skip-symlinks", f.skipSymlinks},
+		{"--skip", f.skip && !tree},
+		{"--skip-explicitly", f.skipExplicitly && !tree},
+		{"--skip-symlinks", f.skipSymlinks && !tree},
 		{"--sync", f.sync},
 		{"--prune", f.prune},
 		{"--prune-trashed", f.pruneTrashed},
@@ -198,10 +203,19 @@ func (f *lnFlags) tagOnly() error {
 	case 0:
 		return nil
 	case 1:
-		return usagef("%s needs --by-tag or --by-tags", used[0])
+		return usagef("%s needs --by-tag or --by-tags%s", used[0], f.treeHint())
 	default:
-		return usagef("%s need --by-tag or --by-tags", strings.Join(used, ", "))
+		return usagef("%s need --by-tag or --by-tags%s", strings.Join(used, ", "), f.treeHint())
 	}
+}
+
+// treeHint points at -r when only the skip flags would have worked without
+// a tag selection.
+func (f *lnFlags) treeHint() string {
+	if !f.recursive && (f.skip || f.skipExplicitly || f.skipSymlinks) {
+		return " (--skip, --skip-explicitly and --skip-symlinks also work with -r)"
+	}
+	return ""
 }
 
 // request builds the metadata part of a symlink request from the flags.
@@ -788,6 +802,9 @@ func (a *App) lnTree(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest
 			if dest != source && api.IsWithin(dest, source) && api.IsWithin(o.Path, dest) {
 				continue // the server leaves a nested destination out too
 			}
+			if f.skipSymlinks && o.Kind == api.KindSymlink {
+				continue
+			}
 			if o.Kind == api.KindSymlink && (o.Target == nil || o.Target.State != api.TargetOK) {
 				a.printer.Printf("would skip %s (broken symlink)\n", o.Path)
 				continue
@@ -797,6 +814,17 @@ func (a *App) lnTree(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest
 		return nil
 	}
 	req.Source, req.Path = source, dest
+	req.SkipSymlinks, req.SkipConflicts = f.skipSymlinks, f.skip || f.skipExplicitly
+	if req.SkipSymlinks || req.SkipConflicts {
+		// An older server would ignore the fields and link the symlinks or
+		// refuse the whole tree, so ask before sending them.
+		if info, err := c.Info(ctx); err != nil {
+			return err
+		} else if !info.Features.SymlinkTreeSkip {
+			return &cliError{code: exitError, slug: "unsupported", msg: "the server does not support --skip or --skip-symlinks with -r",
+				hint: "upgrade velad"}
+		}
+	}
 	res, err := c.CreateSymlinkTree(ctx, req)
 	if err != nil {
 		err = hintFor(err, api.CodeAlreadyExists, "use -f to replace them (symlinks are retargeted, files go to the trash)")
@@ -808,6 +836,11 @@ func (a *App) lnTree(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest
 	a.printer.Printf("Linked %s -> %s: %d created, %d replaced\n", dest, source, res.Created, res.Replaced)
 	for _, p := range res.Skipped {
 		a.printer.Warnf("skipped broken symlink %s", p)
+	}
+	if f.skipExplicitly {
+		for _, p := range res.SkippedConflicts {
+			a.printer.Warnf("skipped %s (destination conflicts)", p)
+		}
 	}
 	a.printer.Infof("Files added to %s later are not linked automatically.", source)
 	return nil

@@ -81,6 +81,22 @@ func TestLn(t *testing.T) {
 		t.Errorf("nested dry run = %+v", r)
 	}
 
+	// -r --skip-symlinks leaves orig/all/ out; --skip-explicitly reports the
+	// destinations that already exist and links nothing else.
+	r = h.ok("ln", "-r", "--dry-run", "--skip-symlinks", "orig/", "tree/")
+	if strings.Contains(r.stdout, "orig/all/") {
+		t.Errorf("dry run with --skip-symlinks = %+v", r)
+	}
+	h.ok("rm", "tree/a.txt")
+	r = h.ok("ln", "-r", "--skip-explicitly", "--skip-symlinks", "orig/", "tree/")
+	if !strings.Contains(r.stdout, "1 created, 0 replaced") || !strings.Contains(r.stderr, "skipped tree/sub/c.txt (destination conflicts)") ||
+		strings.Contains(r.stderr, "orig/all") {
+		t.Errorf("skip = %+v", r)
+	}
+	if r := h.exec("", "ln", "--skip", "orig/a.txt", "x.txt"); !strings.Contains(r.stderr, "also work with -r") {
+		t.Errorf("hint = %+v", r)
+	}
+
 	// A partial failure exits 7.
 	if r := h.exec("", "ln", "orig/a.txt", "missing.txt", "part/"); r.code != exitPartial {
 		t.Errorf("partial: %+v", r)
