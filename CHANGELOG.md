@@ -8,6 +8,9 @@
   with `--by-tag`: conflicting destinations are left out instead of failing
   the whole tree, and symlinks in the source are not linked. Needs a server
   that announces `features.symlink_tree_skip`.
+- `vela ln -r … --sync` links only what is missing in DEST, like
+  `ln --by-tag … --sync`, and takes `--prune`, `--prune-trashed`, `--strict`,
+  `--copy-meta` and `-y`. Symlinks to files outside SOURCE are never pruned.
 
 ### Changed
 
