@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.10.0 — 2026-10-31
+
 ### Added
 
 - `vela ln -r` takes `--skip`, `--skip-explicitly` and `--skip-symlinks`, as
