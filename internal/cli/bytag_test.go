@@ -459,6 +459,10 @@ func TestLnByTag(t *testing.T) {
 			t.Errorf("%v: exit %d", args, r.code)
 		}
 	}
+	// The usage error names only the flags that were given.
+	if r := h.exec("", "ln", "-y", "--sync", "a.txt", "b.txt"); !strings.Contains(r.stderr, "vela: --sync, -y need --by-tag or --by-tags") {
+		t.Errorf("usage error = %q", r.stderr)
+	}
 }
 
 func TestLnByTagSync(t *testing.T) {

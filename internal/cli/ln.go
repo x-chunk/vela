@@ -102,8 +102,8 @@ func (a *App) lnCommand() *cobra.Command {
 				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
 			}
-			if f.keepTree || f.skip || f.skipExplicitly || f.skipSymlinks || f.yes || f.sync || f.prune || f.strict || f.pruneTrashed {
-				return usagef("--save-structure, --skip, --skip-explicitly, --skip-symlinks, --sync, --prune, --prune-trashed, --strict and -y need --by-tag or --by-tags")
+			if err := f.tagOnly(); err != nil {
+				return err
 			}
 			sources, dest := args[:len(args)-1], strings.TrimLeft(args[len(args)-1], "/")
 			if f.recursive {
@@ -170,6 +170,38 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag, leave symlinks out of the selection")
 	byTag.register(cmd)
 	return cmd
+}
+
+// tagOnly rejects flags that only apply to a tag selection, naming the
+// ones that were given rather than every flag of the group.
+func (f *lnFlags) tagOnly() error {
+	var used []string
+	for _, fl := range []struct {
+		name string
+		set  bool
+	}{
+		{"--save-structure", f.keepTree},
+		{"--skip", f.skip},
+		{"--skip-explicitly", f.skipExplicitly},
+		{"--skip-symlinks", f.skipSymlinks},
+		{"--sync", f.sync},
+		{"--prune", f.prune},
+		{"--prune-trashed", f.pruneTrashed},
+		{"--strict", f.strict},
+		{"-y", f.yes},
+	} {
+		if fl.set {
+			used = append(used, fl.name)
+		}
+	}
+	switch len(used) {
+	case 0:
+		return nil
+	case 1:
+		return usagef("%s needs --by-tag or --by-tags", used[0])
+	default:
+		return usagef("%s need --by-tag or --by-tags", strings.Join(used, ", "))
+	}
 }
 
 // request builds the metadata part of a symlink request from the flags.
