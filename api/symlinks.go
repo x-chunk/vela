@@ -73,6 +73,13 @@ type CreateSymlinkRequest struct {
 	// Overwrite retargets an existing symlink in place, keeping its ID, or
 	// moves an existing file to the trash.
 	Overwrite bool `json:"overwrite"`
+	// SkipSymlinks leaves the symlinks under Source out of a recursive
+	// request instead of dereferencing them.
+	SkipSymlinks bool `json:"skip_symlinks,omitempty"`
+	// SkipConflicts makes a recursive request link the rest and report the
+	// destinations it left out instead of failing: paths under a file or
+	// holding a directory, and existing ones unless Overwrite is set.
+	SkipConflicts bool `json:"skip_conflicts,omitempty"`
 	// CopyMeta defaults to true for new symlinks and false for retargeted
 	// ones.
 	CopyMeta    *bool        `json:"copy_meta,omitempty"`
@@ -91,4 +98,7 @@ type SymlinkTreeResponse struct {
 	// Skipped lists broken symlinks under the source that were not linked,
 	// at most 100.
 	Skipped []string `json:"skipped"`
+	// SkippedConflicts lists the destinations left out by skip_conflicts,
+	// at most 100.
+	SkippedConflicts []string `json:"skipped_conflicts"`
 }

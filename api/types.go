@@ -187,6 +187,9 @@ type Info struct {
 // servers omit the object, which decodes as every feature off.
 type Features struct {
 	Symlinks bool `json:"symlinks"`
+	// SymlinkTreeSkip announces skip_symlinks and skip_conflicts on
+	// recursive symlink requests; older servers ignore unknown fields.
+	SymlinkTreeSkip bool `json:"symlink_tree_skip"`
 }
 
 // Health is the response of GET /healthz.

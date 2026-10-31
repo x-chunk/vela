@@ -151,6 +151,9 @@ func (s *Service) CreateSymlink(ctx context.Context, p Principal, req api.Create
 	if req.Recursive {
 		return api.Object{}, false, invalidf("recursive requests are handled by CreateSymlinkTree")
 	}
+	if req.SkipSymlinks || req.SkipConflicts {
+		return api.Object{}, false, invalidf("skip_symlinks and skip_conflicts need recursive=true")
+	}
 	source, isDir, err := api.CleanPath(req.Source)
 	if err != nil {
 		return api.Object{}, false, pathError(err)
@@ -289,7 +292,7 @@ func symlinkTargetDTO(o domain.Object, prefix string, now time.Time) *api.Symlin
 // broken ones are skipped and reported. Directory policies are not copied:
 // this sorts content, it does not move it.
 func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.CreateSymlinkRequest) (api.SymlinkTreeResponse, error) {
-	out := api.SymlinkTreeResponse{Skipped: []string{}}
+	out := api.SymlinkTreeResponse{Skipped: []string{}, SkippedConflicts: []string{}}
 	if err := p.require(api.ScopeRW); err != nil {
 		return out, err
 	}
@@ -323,9 +326,9 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 		if err != nil {
 			return err
 		}
-		if nested {
-			objs = slices.DeleteFunc(objs, func(o domain.Object) bool { return api.IsWithin(o.Path, path) })
-		}
+		objs = slices.DeleteFunc(objs, func(o domain.Object) bool {
+			return (nested && api.IsWithin(o.Path, path)) || (req.SkipSymlinks && o.IsSymlink())
+		})
 		if len(objs) == 0 {
 			return notFoundf("no objects under %s", source)
 		}
@@ -363,12 +366,20 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 				return pathError(err)
 			}
 			if np == targetPath {
+				if req.SkipConflicts {
+					conflicting = append(conflicting, np)
+					continue
+				}
 				return invalidf("a symlink cannot replace its own target: %s", np)
 			}
 			pl := plan{src: o, targetID: targetID, path: np}
 			existing, err := w.ObjectByPath(ctx, np)
 			switch {
 			case err == nil:
+				if req.SkipConflicts && !req.Overwrite {
+					conflicting = append(conflicting, np)
+					continue
+				}
 				pl.existing = &existing
 				occupied = append(occupied, np)
 			case !isNotFound(err):
@@ -384,7 +395,9 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 			}
 			plans = append(plans, pl)
 		}
-		if len(conflicting) > 0 {
+		if len(conflicting) > 0 && req.SkipConflicts {
+			out.SkippedConflicts = capList(conflicting)
+		} else if len(conflicting) > 0 {
 			return newErr(ErrPathConflict, map[string]any{"conflicts": capList(conflicting)},
 				"%d destination path(s) conflict with existing files or directories", len(conflicting))
 		}
@@ -418,7 +431,7 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 		return nil
 	})
 	if err != nil {
-		return api.SymlinkTreeResponse{Skipped: []string{}}, err
+		return api.SymlinkTreeResponse{Skipped: []string{}, SkippedConflicts: []string{}}, err
 	}
 	return out, nil
 }

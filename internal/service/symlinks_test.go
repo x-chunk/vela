@@ -680,6 +680,40 @@ func TestCreateSymlinkTreeNested(t *testing.T) {
 	wantErr(t, err, service.ErrNotFound)
 }
 
+func TestCreateSymlinkTreeSkip(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("src/a.txt", "a", api.Public)
+	e.put("src/b.txt", "b", api.Public)
+	e.put("src/sub/c.txt", "c", api.Public)
+	e.put("elsewhere.txt", "e", api.Public)
+	e.ln(e.admin, "elsewhere.txt", "src/link")
+	e.put("dst/a.txt", "taken", api.Public)
+	e.put("dst/sub", "file in the way", api.Public)
+
+	req := api.CreateSymlinkRequest{Source: "src/", Path: "dst/", Recursive: true, SkipSymlinks: true, SkipConflicts: true}
+	res, err := e.svc.CreateSymlinkTree(e.ctx, e.admin, req)
+	if err != nil || res.Created != 1 || res.Replaced != 0 ||
+		!reflect.DeepEqual(res.SkippedConflicts, []string{"dst/a.txt", "dst/sub/c.txt"}) {
+		t.Fatalf("skip = %+v, %v", res, err)
+	}
+	if _, err := e.svc.Stat(e.ctx, e.admin, "dst/link"); !errors.Is(err, service.ErrNotFound) {
+		t.Errorf("symlink was linked: %v", err)
+	}
+
+	// With overwrite, existing paths are replaced; only path conflicts are skipped.
+	req.Overwrite, req.SkipSymlinks = true, false
+	res, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, req)
+	if err != nil || res.Created != 1 || res.Replaced != 2 ||
+		!reflect.DeepEqual(res.SkippedConflicts, []string{"dst/sub/c.txt"}) {
+		t.Fatalf("skip with overwrite = %+v, %v", res, err)
+	}
+
+	// The skip fields belong to recursive requests.
+	_, _, err = e.svc.CreateSymlink(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "src/a.txt", Path: "x", SkipSymlinks: true})
+	wantErr(t, err, service.ErrInvalidRequest)
+}
+
 func TestSymlinkIndexFlags(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
