@@ -104,7 +104,11 @@ func (a *App) lnCommand() *cobra.Command {
 				if (f.strict || f.pruneTrashed) && !f.prune {
 					return usagef("--strict and --prune-trashed need --prune")
 				}
-				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], &byTag)
+				filter, err := byTag.filter()
+				if err != nil {
+					return err
+				}
+				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], filter)
 			}
 			if err := f.tagOnly(); err != nil {
 				return err
@@ -334,11 +338,8 @@ func (a *App) lnFiles(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReques
 // plans every symlink and checks every destination before creating the
 // first one: a conflict refuses the whole plan unless --skip or
 // --skip-explicitly drops the conflicting entries.
-func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, scopes []string, dest string, byTag *tagFlags) error {
-	filter, err := byTag.filter()
-	if err != nil {
-		return err
-	}
+func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, scopes []string, dest string, filter api.TagFilter) error {
+	var err error
 	dest = strings.TrimLeft(dest, "/")
 	if dest != "" && !strings.HasSuffix(dest, "/") {
 		dest += "/"
