@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- `vela ln -r` takes `--skip`, `--skip-explicitly` and `--skip-symlinks`, as
+  with `--by-tag`: conflicting destinations are left out instead of failing
+  the whole tree, and symlinks in the source are not linked. Needs a server
+  that announces `features.symlink_tree_skip`.
+
+### Changed
+
+- `vela ln -r DIR/ DIR/sub/` links a directory into its own subdirectory
+  instead of refusing it; the destination is left out of the walk, so a
+  rerun does not nest.
+- Tag-only `ln` flags given without `--by-tag` are named one by one in the
+  usage error.
+
 ## v0.9.0 — 2026-10-31
 
 ### Added
