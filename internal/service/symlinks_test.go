@@ -633,7 +633,7 @@ func TestCreateSymlinkTree(t *testing.T) {
 		req  api.CreateSymlinkRequest
 		want error
 	}{
-		"into itself":   {e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "orig/x/"}, service.ErrInvalidRequest},
+		"into itself":   {e.admin, api.CreateSymlinkRequest{Source: "orig/", Path: "orig/"}, service.ErrInvalidRequest},
 		"empty source":  {e.admin, api.CreateSymlinkRequest{Source: "nothing/", Path: "x/"}, service.ErrNotFound},
 		"source prefix": {e.principal(api.ScopeRW, "sorted/"), api.CreateSymlinkRequest{Source: "orig/", Path: "sorted/x/"}, service.ErrForbidden},
 		"path prefix":   {e.principal(api.ScopeRW, "orig/"), api.CreateSymlinkRequest{Source: "orig/sub/", Path: "x/"}, service.ErrForbidden},
@@ -653,6 +653,31 @@ func TestCreateSymlinkTree(t *testing.T) {
 	if err != nil || res.Created != 1 || !reflect.DeepEqual(res.Skipped, []string{"k/src/to-secret"}) {
 		t.Errorf("prefixed tree = %+v, %v", res, err)
 	}
+}
+
+func TestCreateSymlinkTreeNested(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	e.put("k/a.txt", "a", api.Public)
+	e.put("k/sub/b.txt", "b", api.Public)
+	req := api.CreateSymlinkRequest{Source: "k/", Path: "k/all/", Recursive: true}
+	res, err := e.svc.CreateSymlinkTree(e.ctx, e.admin, req)
+	if err != nil || res.Created != 2 {
+		t.Fatalf("nested tree = %+v, %v", res, err)
+	}
+	// A rerun ignores what the first run created: no k/all/all/.
+	req.Overwrite = true
+	res, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, req)
+	if err != nil || res.Created != 0 || res.Replaced != 2 {
+		t.Fatalf("rerun = %+v, %v", res, err)
+	}
+	if l, _ := e.svc.List(e.ctx, e.admin, service.ListParams{Prefix: "k/all/all/", Recursive: true}); len(l.Objects) != 0 {
+		t.Errorf("destination was walked: %+v", l.Objects)
+	}
+	// A source holding nothing but the destination is empty.
+	e.ln(e.admin, "k/a.txt", "only/dst/a")
+	_, err = e.svc.CreateSymlinkTree(e.ctx, e.admin, api.CreateSymlinkRequest{Source: "only/", Path: "only/dst/", Recursive: true})
+	wantErr(t, err, service.ErrNotFound)
 }
 
 func TestSymlinkIndexFlags(t *testing.T) {

@@ -785,6 +785,9 @@ func (a *App) lnTree(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest
 			return err
 		}
 		for _, o := range l.Objects {
+			if dest != source && api.IsWithin(dest, source) && api.IsWithin(o.Path, dest) {
+				continue // the server leaves a nested destination out too
+			}
 			if o.Kind == api.KindSymlink && (o.Target == nil || o.Target.State != api.TargetOK) {
 				a.printer.Printf("would skip %s (broken symlink)\n", o.Path)
 				continue

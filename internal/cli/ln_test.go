@@ -74,6 +74,13 @@ func TestLn(t *testing.T) {
 		t.Errorf("tree conflict: %+v", r)
 	}
 
+	// A destination inside the source is not walked, in a dry run either.
+	h.ok("ln", "-r", "orig/", "orig/all/")
+	r = h.ok("ln", "-r", "-f", "--dry-run", "orig/", "orig/all/")
+	if strings.Contains(r.stdout, "orig/all/all/") {
+		t.Errorf("nested dry run = %+v", r)
+	}
+
 	// A partial failure exits 7.
 	if r := h.exec("", "ln", "orig/a.txt", "missing.txt", "part/"); r.code != exitPartial {
 		t.Errorf("partial: %+v", r)

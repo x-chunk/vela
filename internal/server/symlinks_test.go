@@ -47,7 +47,7 @@ func TestSymlinkAPIContract(t *testing.T) {
 		`{"source":"orig/a.txt","path":"orig/a.txt/x"}`:          {409, api.CodePathConflict},
 		`{"source":"orig/a.txt","path":"api/x"}`:                 {400, api.CodeInvalidPath},
 		`{"source":"orig/a.txt","path":"ln/x","bogus":1}`:        {400, api.CodeInvalidRequest},
-		`{"source":"orig/","path":"orig/x/","recursive":true}`:   {400, api.CodeInvalidRequest},
+		`{"source":"orig/","path":"orig/","recursive":true}`:     {400, api.CodeInvalidRequest},
 		`{"source":"orig/","path":"ln/","recursive":true}`:       {409, api.CodeAlreadyExists},
 		`{"source":"orig/a.txt","path":"ln/x","tags":["", "a"]}`: {400, api.CodeInvalidRequest},
 	} {

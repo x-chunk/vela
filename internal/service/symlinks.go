@@ -284,7 +284,8 @@ func symlinkTargetDTO(o domain.Object, prefix string, now time.Time) *api.Symlin
 // CreateSymlinkTree links every object under the prefix req.Source to the
 // same relative path under the prefix req.Path, in one transaction: either
 // every symlink is created or none is. It is a snapshot; objects added to the
-// source later are not linked. Symlinks in the source are dereferenced, and
+// source later are not linked. A destination inside the source is excluded
+// from it. Symlinks in the source are dereferenced, and
 // broken ones are skipped and reported. Directory policies are not copied:
 // this sorts content, it does not move it.
 func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.CreateSymlinkRequest) (api.SymlinkTreeResponse, error) {
@@ -300,9 +301,12 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 	if err != nil {
 		return out, pathError(err)
 	}
-	if api.IsWithin(path, source) {
-		return out, invalidf("cannot link %s into itself (%s)", source, path)
+	if path == source {
+		return out, invalidf("cannot link %s into itself", source)
 	}
+	// A destination inside the source is left out of the walk: otherwise a
+	// rerun would link the symlinks of the previous run one level deeper.
+	nested := api.IsWithin(path, source)
 	if err := p.checkPath(source); err != nil {
 		return out, err
 	}
@@ -318,6 +322,9 @@ func (s *Service) CreateSymlinkTree(ctx context.Context, p Principal, req api.Cr
 		objs, err := w.ObjectsUnder(ctx, source)
 		if err != nil {
 			return err
+		}
+		if nested {
+			objs = slices.DeleteFunc(objs, func(o domain.Object) bool { return api.IsWithin(o.Path, path) })
 		}
 		if len(objs) == 0 {
 			return notFoundf("no objects under %s", source)
