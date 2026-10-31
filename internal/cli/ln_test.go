@@ -216,3 +216,52 @@ func TestRmBrokenIgnoresOldServers(t *testing.T) {
 		t.Errorf("keepObjects = %+v; an old server's files must never count as broken", got)
 	}
 }
+
+func TestLnTreeSync(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	exists := func(p string) bool { return h.exec("", "stat", p).code == 0 }
+	h.seedTagged("k/a.txt")
+	h.seedTagged("k/sub/b.txt")
+	h.seedTagged("other/o.txt")
+
+	// DEST inside SOURCE is not walked, so a rerun has nothing to do.
+	h.ok("ln", "-r", "--sync", "-y", "k/", "k/all/")
+	if !exists("k/all/a.txt") || !exists("k/all/sub/b.txt") {
+		t.Fatal("first sync did not link the tree")
+	}
+	r := h.ok("ln", "-r", "--sync", "-y", "k/", "k/all/")
+	if !strings.Contains(r.stderr, "2 symlink(s) up to date") || exists("k/all/all/a.txt") {
+		t.Fatalf("rerun = %+v", r)
+	}
+
+	// New files are linked; symlinks to trashed files are pruned only with
+	// --prune-trashed; symlinks out of the tree are kept, manual or not.
+	h.seedTagged("k/c.txt")
+	h.ok("ln", "other/o.txt", "k/all/manual.txt")
+	h.ok("rm", "k/a.txt")
+	h.ok("mv", "k/sub/b.txt", "out/b.txt")
+	r = h.ok("ln", "-r", "--sync", "--prune", "-y", "k/", "k/all/")
+	if !exists("k/all/c.txt") || !exists("k/all/a.txt") || !exists("k/all/sub/b.txt") || !exists("k/all/manual.txt") {
+		t.Fatalf("prune = %+v", r)
+	}
+	h.ok("ln", "-r", "--sync", "--prune", "--prune-trashed", "-y", "k/", "k/all/")
+	if exists("k/all/a.txt") || !exists("k/all/sub/b.txt") || !exists("k/all/manual.txt") {
+		t.Fatal("--prune-trashed pruned the wrong symlinks")
+	}
+
+	for _, args := range [][]string{
+		{"ln", "-r", "--sync", "--save-structure", "k/", "x/"},
+		{"ln", "-r", "--prune", "k/", "x/"},
+		{"ln", "-r", "--sync", "--strict", "k/", "x/"},
+		{"ln", "-r", "--sync", "k/", "k/"},
+		{"ln", "-r", "--sync", "k/", "other/", "x/"},
+	} {
+		if r := h.exec("", args...); r.code != exitUsage {
+			t.Errorf("%v: exit %d, stderr %q", args, r.code, r.stderr)
+		}
+	}
+	if r := h.exec("", "ln", "-y", "a.txt", "b.txt"); !strings.Contains(r.stderr, "or -r --sync") {
+		t.Errorf("hint = %q", r.stderr)
+	}
+}

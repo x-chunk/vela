@@ -55,7 +55,11 @@ func (a *App) lnCommand() *cobra.Command {
 			"new file), a file goes to the trash. With -r, --skip links the rest and leaves out\n" +
 			"destinations that conflict (existing ones unless -f), --skip-explicitly also reports\n" +
 			"each, and --skip-symlinks leaves the symlinks under SOURCE out. A DEST inside SOURCE\n" +
-			"is never walked, so the tree can be linked into its own subdirectory again.\n\n" +
+			"is never walked, so the tree can be linked into its own subdirectory again.\n" +
+			"-r --sync plans on the client like --by-tag --sync below, with every file under SOURCE\n" +
+			"selected: it links only what is missing and takes --prune, --prune-trashed, --strict,\n" +
+			"--copy-meta and -y. It is not one transaction, and since a tree has no tags to tell a\n" +
+			"file moved out of SOURCE from one linked by hand, --prune keeps symlinks out of SOURCE.\n\n" +
 			"With --by-tag or --by-tags, \"ln [SCOPE...] DEST/\" links every object with these tags\n" +
 			"below SCOPE (everything by default) into the directory DEST: each under its own name,\n" +
 			"or with --save-structure under its path relative to SCOPE. Every conflict (two objects\n" +
@@ -82,6 +86,7 @@ func (a *App) lnCommand() *cobra.Command {
 			"  vela ln originals/a.jpg originals/b.jpg sorted/travel/\n" +
 			"  vela ln -r originals/2026/ sorted/2026/\n" +
 			"  vela ln -r --skip --skip-symlinks notes/ notes/all/\n" +
+			"  vela ln -r --sync --prune -y notes/ notes/all/\n" +
 			"  vela ln -f originals/new.pdf latest.pdf\n" +
 			"  vela ln --by-tag travel originals/ sorted/travel/ --skip-explicitly\n" +
 			"  vela ln --by-tag travel originals/ sorted/travel/ --save-structure --sync -y",
@@ -98,17 +103,17 @@ func (a *App) lnCommand() *cobra.Command {
 				if len(args) == 0 {
 					return usagef("%s --by-tag needs a destination directory", cmd.CommandPath())
 				}
-				if f.prune && !f.sync {
-					return usagef("--prune needs --sync")
-				}
-				if (f.strict || f.pruneTrashed) && !f.prune {
-					return usagef("--strict and --prune-trashed need --prune")
+				if err := f.syncChecks(); err != nil {
+					return err
 				}
 				filter, err := byTag.filter()
 				if err != nil {
 					return err
 				}
 				return a.lnTagged(cmd, f, req, args[:len(args)-1], args[len(args)-1], filter)
+			}
+			if f.recursive && f.sync {
+				return a.lnTreeSync(cmd, f, req, args)
 			}
 			if err := f.tagOnly(); err != nil {
 				return err
@@ -170,9 +175,9 @@ func (a *App) lnCommand() *cobra.Command {
 	fl.BoolVar(&f.skip, "skip", false, "with --by-tag or -r, leave conflicting objects out silently and link the rest")
 	fl.BoolVar(&f.skipExplicitly, "skip-explicitly", false, "with --by-tag or -r, leave conflicting objects out, report each, and link the rest")
 	cmd.MarkFlagsMutuallyExclusive("skip", "skip-explicitly")
-	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag, link without asking")
-	fl.BoolVar(&f.sync, "sync", false, "with --by-tag, link only files that have no symlink in DEST yet")
-	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE that are no longer selected")
+	fl.BoolVarP(&f.yes, "yes", "y", false, "with --by-tag or -r --sync, link without asking")
+	fl.BoolVar(&f.sync, "sync", false, "with --by-tag or -r, link only files that have no symlink in DEST yet")
+	fl.BoolVar(&f.prune, "prune", false, "with --sync, trash symlinks in DEST to files in SCOPE (or SOURCE) that are no longer selected")
 	fl.BoolVar(&f.pruneTrashed, "prune-trashed", false, "with --prune, also trash symlinks to files in the trash")
 	fl.BoolVar(&f.strict, "strict", false, "with --prune, treat the place of a pruned symlink as taken")
 	fl.BoolVar(&f.skipSymlinks, "skip-symlinks", false, "with --by-tag or -r, leave symlinks out of the selection")
@@ -213,13 +218,27 @@ func (f *lnFlags) tagOnly() error {
 	}
 }
 
-// treeHint points at -r when only the skip flags would have worked without
-// a tag selection.
+// treeHint points at what -r accepts without a tag selection when that
+// would have made the given flags work.
 func (f *lnFlags) treeHint() string {
-	if !f.recursive && (f.skip || f.skipExplicitly || f.skipSymlinks) {
+	switch {
+	case f.prune || f.pruneTrashed || f.strict || f.yes:
+		return " (or -r --sync)"
+	case !f.recursive && (f.skip || f.skipExplicitly || f.skipSymlinks):
 		return " (--skip, --skip-explicitly and --skip-symlinks also work with -r)"
 	}
 	return ""
+}
+
+// syncChecks rejects the pruning flags outside the combination they refine.
+func (f *lnFlags) syncChecks() error {
+	if f.prune && !f.sync {
+		return usagef("--prune needs --sync")
+	}
+	if (f.strict || f.pruneTrashed) && !f.prune {
+		return usagef("--strict and --prune-trashed need --prune")
+	}
+	return nil
 }
 
 // request builds the metadata part of a symlink request from the flags.
@@ -334,6 +353,34 @@ func (a *App) lnFiles(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReques
 	}
 }
 
+// lnTreeSync is ln -r --sync: the tag-selection sync with every file under
+// SOURCE selected and the structure kept. Unlike plain ln -r it is planned
+// on the client and not one transaction, so that it can link only what is
+// missing and prune what left the tree.
+func (a *App) lnTreeSync(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkRequest, args []string) error {
+	if len(args) != 2 {
+		return usagef("-r takes exactly one SOURCE directory")
+	}
+	if f.keepTree {
+		return usagef("--save-structure has no effect with -r, which always keeps the structure")
+	}
+	if err := f.syncChecks(); err != nil {
+		return err
+	}
+	source, dest := strings.TrimLeft(args[0], "/"), strings.TrimLeft(args[1], "/")
+	if source != "" && !strings.HasSuffix(source, "/") {
+		source += "/"
+	}
+	if dest != "" && !strings.HasSuffix(dest, "/") {
+		dest += "/"
+	}
+	if source == dest {
+		return usagef("cannot link %s into itself", source)
+	}
+	f.keepTree = true
+	return a.lnTagged(cmd, f, req, []string{source}, dest, nil)
+}
+
 // lnTagged links the objects of a tag selection into the directory dest. It
 // plans every symlink and checks every destination before creating the
 // first one: a conflict refuses the whole plan unless --skip or
@@ -352,9 +399,15 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 		return err
 	}
 	ctx, cancel := a.ctx(cmd)
+	// With -r the selection is the whole tree under scopes[0], and a DEST
+	// inside it is left out, as the server does for ln -r.
+	tree := f.recursive
+	nested := tree && api.IsWithin(dest, strings.TrimLeft(scopes[0], "/"))
 	var keep func(api.Object) bool
 	if f.skipSymlinks || f.sync {
-		keep = func(o api.Object) bool { return o.Kind != api.KindSymlink }
+		keep = func(o api.Object) bool {
+			return o.Kind != api.KindSymlink && (!nested || !api.IsWithin(o.Path, dest))
+		}
 	}
 	plan, err := a.planTaggedMoves(ctx, c, scopes, dest, filter, f.keepTree, keep)
 	upToDate := 0
@@ -370,9 +423,16 @@ func (a *App) lnTagged(cmd *cobra.Command, f lnFlags, req api.CreateSymlinkReque
 			}
 			if f.prune {
 				prune = pruneLinks(l.Objects, plan, scopes, f.pruneTrashed)
-				var moved []linkPrune
-				if moved, err = movedOutLinks(ctx, c, l.Objects, scopes, filter); err == nil {
-					prune = append(prune, moved...)
+				if nested {
+					prune = slices.DeleteFunc(prune, func(p linkPrune) bool { return api.IsWithin(p.target, dest) })
+				}
+				// A tree has no tags to tell a file moved out of it from one
+				// linked by hand, so symlinks out of the tree are always kept.
+				if !tree {
+					var moved []linkPrune
+					if moved, err = movedOutLinks(ctx, c, l.Objects, scopes, filter); err == nil {
+						prune = append(prune, moved...)
+					}
 				}
 			}
 			plan, upToDate = a.syncLinkPlan(l.Objects, plan)
@@ -464,6 +524,7 @@ func (a *App) syncLinkPlan(existing []api.Object, plan []taggedMove) ([]taggedMo
 type linkPrune struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+	target string
 }
 
 // pruneLinks returns the symlinks among existing (the contents of DEST)
@@ -486,12 +547,12 @@ func pruneLinks(existing []api.Object, plan []taggedMove, scopes []string, trash
 		}
 		switch t.State {
 		case api.TargetOK:
-			out = append(out, linkPrune{Path: o.Path, Reason: "no longer selected"})
+			out = append(out, linkPrune{Path: o.Path, Reason: "no longer selected", target: *t.Path})
 		case api.TargetTrashed:
 			if !trashed {
 				continue
 			}
-			out = append(out, linkPrune{Path: o.Path, Reason: "the file is in the trash"})
+			out = append(out, linkPrune{Path: o.Path, Reason: "the file is in the trash", target: *t.Path})
 		}
 	}
 	return out
