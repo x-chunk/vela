@@ -182,15 +182,16 @@ func (a *App) restoreTagged(cmd *cobra.Command, scopes []string, byTag *tagFlags
 			_, err := c.Stat(ctx, e.OriginalPath)
 			switch {
 			case err == nil:
-				taken = append(taken, e.OriginalPath)
+				taken = append(taken, output.Clean(e.OriginalPath))
 			case !api.IsCode(err, api.CodeNotFound):
 				return fmt.Errorf("check %s: %w", e.OriginalPath, err)
 			}
 		}
 		if len(taken) > 0 {
 			return &cliError{code: exitConflict, slug: string(api.CodeAlreadyExists),
-				msg:  fmt.Sprintf("nothing restored: %d path(s) exist:\n  %s", len(taken), strings.Join(taken, "\n  ")),
-				hint: "use --force to overwrite them (they go to the trash)"}
+				msg:       fmt.Sprintf("nothing restored: %d path(s) exist:\n  %s", len(taken), strings.Join(taken, "\n  ")),
+				hint:      "use --force to overwrite them (they go to the trash)",
+				multiline: true}
 		}
 	}
 	q := fmt.Sprintf("Restore %d file(s)?", len(entries))

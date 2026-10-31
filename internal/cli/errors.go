@@ -28,12 +28,15 @@ const (
 // cliError is an error raised by the CLI itself, with an exit code, a
 // machine-readable slug for JSON output and an optional hint.
 type cliError struct {
-	code    int
-	slug    string
-	msg     string
-	hint    string
-	details map[string]any
-	err     error
+	code int
+	slug string
+	msg  string
+	hint string
+	// multiline marks a msg whose lines the CLI joined itself after
+	// cleaning each item, so that its line feeds are printed as they are.
+	multiline bool
+	details   map[string]any
+	err       error
 }
 
 func (e *cliError) Error() string {
@@ -174,8 +177,14 @@ func (a *App) reportError(err error) int {
 	if errors.As(err, &ae) && ae.Message != "" {
 		msg = ae.Message
 	}
-	// Messages can carry data (paths, server text): Errorf cleans them.
-	a.printer.Errorf("vela:", "%s", msg)
+	// Messages can carry data (paths, server text): Errorf cleans them,
+	// except multiline messages, whose items were cleaned when joined.
+	var ce *cliError
+	if errors.As(err, &ce) && ce.multiline && msg == ce.msg {
+		a.printer.Errorf("vela:", "%s", output.Styled(msg))
+	} else {
+		a.printer.Errorf("vela:", "%s", msg)
+	}
 	if hint != "" {
 		_, _ = fmt.Fprintf(a.Err, "  hint: %s\n", output.Clean(hint))
 	}

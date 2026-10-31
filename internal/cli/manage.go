@@ -12,6 +12,7 @@ import (
 
 	"go.xchunk.org/vela/api"
 	"go.xchunk.org/vela/client"
+	"go.xchunk.org/vela/internal/cli/output"
 )
 
 func (a *App) mvCommand() *cobra.Command {
@@ -324,11 +325,12 @@ func taggedConflicts(ctx context.Context, c *client.Client, moves []taggedMove, 
 func conflictError(prefix string, conflicts []planConflict, hint string) error {
 	msgs := make([]string, len(conflicts))
 	for i, p := range conflicts {
-		msgs[i] = p.msg
+		msgs[i] = output.Clean(p.msg)
 	}
 	return &cliError{code: exitConflict, slug: string(api.CodeConflict),
-		msg:  fmt.Sprintf("%s: %d conflict(s):\n  %s", prefix, len(msgs), strings.Join(msgs, "\n  ")),
-		hint: hint}
+		msg:       fmt.Sprintf("%s: %d conflict(s):\n  %s", prefix, len(msgs), strings.Join(msgs, "\n  ")),
+		hint:      hint,
+		multiline: true}
 }
 
 func (a *App) rmCommand() *cobra.Command {

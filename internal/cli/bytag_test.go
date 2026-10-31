@@ -300,6 +300,9 @@ func TestMvByTag(t *testing.T) {
 		!strings.Contains(r.stderr, "would both move to dest/q1.txt") || !exists("a.txt") || !exists("other/q1.txt") {
 		t.Fatalf("conflicts: exit %d, stderr %q", r.code, r.stderr)
 	}
+	if strings.Contains(r.stderr, `\n`) || !strings.Contains(r.stderr, "conflict(s):\n  ") {
+		t.Fatalf("conflicts are not listed on separate lines: %q", r.stderr)
+	}
 	// --save-structure avoids the name clash; --force replaces dest/a.txt.
 	h.ok("mv", "--by-tag", "q1", "dest/", "--save-structure", "--force", "-y")
 	for _, p := range []string{"dest/a.txt", "dest/other/q1.txt", "dest/x/q1.txt"} {
